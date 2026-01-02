@@ -20,6 +20,8 @@ code review is that the changeset exists on disk as normal files.  As normal fil
 normal development workflows (e.g., LSPs) are available to help understand the impact of code
 changes.
 
+![lgtm-file-diff-overview](https://github.com/user-attachments/assets/27c9ad3a-1980-4ea6-af95-5e10dc351a62)
+
 ## Example Workflow
 
 After importing the package with something like:
