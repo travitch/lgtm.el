@@ -211,15 +211,16 @@ where the entire buffer is being redrawn."
           (insert "  " (propertize "Author: " 'font-lock-face 'bold) (lgtm-configuration-author config) "\n")
           (insert "  " (propertize "Created at " 'font-lock-face 'bold) (lgtm--format-timestamp (lgtm-configuration-created-at config)) "\n")
           (insert "  " (propertize "URL: " 'font-lock-face 'bold) (lgtm-configuration-changeset-url config))
-          (insert "\n\n")))
+          (insert "\n\n"))
 
-      (magit-insert-section (magit-section "Description")
-        (magit-insert-heading (insert (propertize "Description" 'font-lock-face '(:background "light gray")))
-        (let ((changeset-description (lgtm-configuration-changeset-description config)))
-          (magit-insert-section-body
-            (insert "\n")
-            (lgtm--render-string-with-comment-mode changeset-description)
-            (insert "\n\n")))))
+
+        (magit-insert-section (list-section)
+          (magit-insert-heading (insert (propertize "Description" 'font-lock-face '(:background "light gray"))))
+          (let ((changeset-description (lgtm-configuration-changeset-description config)))
+            (magit-insert-section-body
+              (insert "\n")
+              (lgtm--render-string-with-comment-mode changeset-description)
+              (insert "\n\n")))))
 
       (magit-insert-section (list-section)
         (magit-insert-heading (insert (propertize "Modified Files" 'font-lock-face '(:background "light gray"))))
