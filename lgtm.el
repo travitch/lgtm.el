@@ -146,16 +146,18 @@ comments are discarded."
   (unless (equal (lgtm-comment-created-timestamp comment) (lgtm-comment-updated-timestamp comment))
     (insert " and updated at " (lgtm--format-timestamp (lgtm-comment-updated-timestamp comment)))))
 
-(defun lgtm--format-top-level-comment (comment)
+(defun lgtm--insert-top-level-comment-body (comment)
   "Create a string representation of COMMENT."
-  (lgtm-comment-content comment))
+  (lgtm--render-string-with-comment-mode (lgtm-comment-content comment)))
 
 (defun lgtm--render-top-level-comment (comment)
   "Render a Magit section for a top-level COMMENT.
 The IDX (index) is provided as context and can be used in formatting."
   (magit-insert-section (item comment t)
     (magit-insert-heading (lgtm--insert-top-level-comment-summary comment))
-    (magit-insert-section-body (insert (format "%s\n\n" (lgtm--format-top-level-comment comment))))))
+    (magit-insert-section-body
+      (lgtm--insert-top-level-comment-body comment)
+      (insert "\n\n"))))
 
 (defun lgtm--repository-of-modified-file (modified-file)
   "Return the repository name of the MODIFIED-FILE."
