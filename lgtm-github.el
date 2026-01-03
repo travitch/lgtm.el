@@ -72,6 +72,12 @@
                              (reviewThreads [(:edges t)] diffSide id startLine line path
                                             (comments [(:edges t)] (author login) body createdAt id (replyTo id) updatedAt))))))
 
+(defconst lgtm-github--get-pr-top-level-comments-query
+  '(query
+    (repository [(owner $owner String!) (name $name String!)]
+                (pullRequest [(number $number Int!)]
+                             (comments [(:edges t)] (author login) body createdAt id updatedAt)))))
+
 (defconst lgtm-github--get-pending-reviews-query
   '(query
     (repository [(owner $owner String!) (name $name String!)]
@@ -290,6 +296,19 @@ of source files."
           (warn "Could not determine version or file for comment thread %s" thread-item)
           nil)))))
 
+(defun lgtm-github--parse-top-level-comment-thread (comment-item)
+  "Parse COMMENT-ITEM from the server into a list of comments for the thread."
+  (let-alist (lgtm-github--graphql-select comment-item '(node))
+    (let ((ref (make-lgtm-comment-ref :id .id)))
+      (make-lgtm-comment
+       :ref ref
+       :backend-data .id
+       :is-published t
+       :content .body
+       :author .author.login
+       :created-timestamp (lgtm-github--parse-timestamp .createdAt)
+       :updated-timestamp (lgtm-github--parse-timestamp .updatedAt)))))
+
 (defun lgtm-github--get-pr-comments (file-manager repository pr-descriptor)
   "Fetch comments for the PR-DESCRIPTOR from the REPOSITORY.
 
@@ -298,11 +317,14 @@ required to map file names to file objects."
   (let* ((owner (lgtm-github--repository-owner repository))
          (repo (lgtm-github--repository-repo repository))
          (pull-number (string-to-number (lgtm-github--pr-ref-pr-number pr-descriptor)))
-         (raw-result (ghub-graphql lgtm-github--get-pr-comments-query `((owner . ,owner) (name . ,repo) (number . ,pull-number)) :auth 'lgtm))
-         (narrow-result (lgtm-github--graphql-select (car raw-result) '((data . 0) (repository . 0) (pullRequest . 0) (reviewThreads . edges)))))
-
-    (let ((comments (seq-map (lambda (node) (lgtm-github--parse-comment-thread file-manager node)) narrow-result)))
-      (seq-mapcat (lambda (x) x) comments))))
+         (arguments `((owner . ,owner) (name . ,repo) (number . ,pull-number)))
+         (raw-result-file-comments (ghub-graphql lgtm-github--get-pr-comments-query arguments :auth 'lgtm))
+         (narrow-result-file-comments (lgtm-github--graphql-select (car raw-result-file-comments) '((data . 0) (repository . 0) (pullRequest . 0) (reviewThreads . edges))))
+         (file-comments (seq-map (lambda (node) (lgtm-github--parse-comment-thread file-manager node)) narrow-result-file-comments))
+         (raw-result-top-level-comments (ghub-graphql lgtm-github--get-pr-top-level-comments-query arguments :auth 'lgtm))
+         (narrow-result-top-level-comments (lgtm-github--graphql-select (car raw-result-top-level-comments) '((data . 0) (repository . 0) (pullRequest . 0) (comments . edges))))
+         (top-level-comments (seq-map (lambda (node) (lgtm-github--parse-top-level-comment-thread node)) narrow-result-top-level-comments)))
+    (seq-concatenate 'list top-level-comments (seq-mapcat (lambda (x) x) file-comments))))
 
 (defun lgtm-github--get-comment-revision (side)
   "Map the GitHub diff SIDE to an internal revision (base or current)."
