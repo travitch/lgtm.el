@@ -88,7 +88,7 @@
   '(query
     (repository [(owner $owner String!) (name $name String!)]
                 (pullRequest [(number $number Int!)]
-                             (reviews [(:edges t)] id fullDatabaseId (author login))))))
+                             (reviews [(:edges t)] id fullDatabaseId (author login) state)))))
 
 (defconst lgtm-github--create-review-line-comment-mutation
   '(mutation
@@ -107,6 +107,11 @@
     (addComment [(input $input AddCommentInput!)]
                 (commentEdge (node id))
                 clientMutationId)))
+
+(defconst lgtm-github--create-new-review-mutation
+  '(mutation
+    (addPullRequestReview [(input $input AddPullRequestReviewInput!)]
+                          (pullRequestReview id))))
 
 (defconst lgtm-github--submit-review-mutation
   '(mutation
@@ -379,17 +384,24 @@ reviews for the PR."
          (repo (lgtm-github--repository-repo repository))
          (pull-number (string-to-number (lgtm-github--pr-ref-pr-number pr-descriptor)))
          (variables `((owner . ,owner) (name . ,repo) (number . ,pull-number)))
-         (callback (lambda (raw-response)
-                     (let* ((narrowed-response (lgtm-github--graphql-select (car raw-response) '((data . 0) (repository . 0) (pullRequest . 0) (reviews . edges))))
-                            (target (seq-find (lambda (pr)
-                                               (let-alist (lgtm-github--graphql-select pr '(node)) (equal gh-username .author.login))) narrowed-response)))
-                       (when target
-                         (let-alist target .id)))))
          (raw-result (ghub-graphql lgtm-github--get-existing-review-query variables :auth 'lgtm))
-         (result (funcall callback raw-result)))
-    result))
+         (narrowed-response (lgtm-github--graphql-select (car raw-result) '((data . 0) (repository . 0) (pullRequest . 0) (reviews . edges))))
+         (target (seq-find (lambda (pr)
+                             (let-alist (lgtm-github--graphql-select pr '(node))
+                               (and (equal gh-username .author.login) (equal .state "PENDING"))))
+                           narrowed-response)))
+    (when target
+      (let-alist target .id))))
 
-(defun lgtm-github--get-or-create-draft-review (gh-username repository pr-descriptor)
+(defun lgtm-github--create-new-review (pr-info)
+  "Create a new draft review for the PR implied by PR-INFO."
+  (let* ((pull-request-id (lgtm-github--pr-info-id pr-info))
+         (variables `((clientMutationId . ,lgtm-github--client-id) (pullRequestId . ,pull-request-id)))
+         (input (list 'input variables))
+         (response (ghub-graphql lgtm-github--create-new-review-mutation input :auth 'lgtm)))
+    (lgtm-github--graphql-select (car response) '((data . 0) (addPullRequestReview . 0) (pullRequestReview . 0) id))))
+
+(defun lgtm-github--get-or-create-draft-review (gh-username repository pr-info pr-descriptor)
   "Get the id of the draft review for REPOSITORY and PR-DESCRIPTOR.
 
 This function creates a draft review if none exists.  Note that the github
@@ -398,16 +410,10 @@ existing review, we have to list existing reviews and find a pending one.
 
 This requires the GH-USERNAME to ensure that any discovered PENDING PR
 belongs to this user."
-  (let* ((owner (lgtm-github--repository-owner repository))
-         (repo (lgtm-github--repository-repo repository))
-         (pull-number (lgtm-github--pr-ref-pr-number pr-descriptor))
-         (current-review-id (lgtm-github--get-existing-pending-review gh-username repository pr-descriptor)))
+  (let* ((current-review-id (lgtm-github--get-existing-pending-review gh-username repository pr-descriptor)))
     (if current-review-id
-        (progn
-          current-review-id)
-      (let* ((create-review-resource (format "/repos/%s/%s/pulls/%s/reviews" owner repo pull-number))
-            (res (ghub-request "POST" create-review-resource nil :auth 'lgtm)))
-        (alist-get 'id res)))))
+        current-review-id
+      (lgtm-github--create-new-review pr-info))))
 
 (defun lgtm-github--submit-review (pr-info review-id)
   "Submit the given review against the given PR.
@@ -502,7 +508,7 @@ LGTM exits."
            :state (lgtm-github--pr-info-state pr-info)
            :review-state-backend review-state-backend
            :get-remote-conversations-function (lambda (file-manager) (lgtm-github--get-remote-conversations file-manager repository this-pr-id))
-           :get-or-create-draft-review-function (lambda () (lgtm-github--get-or-create-draft-review username repository this-pr-id))
+           :get-or-create-draft-review-function (lambda () (lgtm-github--get-or-create-draft-review username repository pr-info this-pr-id))
            :create-review-comment-function (lambda (review-id comment) (lgtm-github--create-review-comment pr-info review-id comment))
            :submit-review-function (lambda (review-id) (lgtm-github--submit-review pr-info review-id))
            :shutdown-hook shutdown-hook))
