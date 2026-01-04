@@ -48,6 +48,7 @@ lgtm.el attempts to keep its dependency list small:
 - magit-section
 - uuidgen
 - ghub (for the Github adapter)
+- (Optional) the native emacs sqlite bindings
 
 # Features
 

@@ -483,11 +483,13 @@ LGTM exits."
         (let* ((pr-info (lgtm-github--get-pr-info repository this-pr-id))
                (base-revision (lgtm-github--pr-info-base-ref pr-info))
                (commits (lgtm--compute-change-commits default-directory base-revision))
+               (review-state-backend (if (and (fboundp 'sqlite-available-p) (sqlite-available-p) lgtm-database-file)
+                                         (lgtm--make-sqlite-review-state-backend lgtm-database-file)
+                                       (lgtm--make-no-op-review-state-backend)))
                (git-repo (make-lgtm-repository :path default-directory
                                                :name (format "%s/%s" (lgtm-github--repository-owner repository) (lgtm-github--repository-repo repository))
                                                :commits commits
                                                :base-revision base-revision)))
-          (message "Commits %s" commits)
           (make-lgtm-configuration
            :user username
            :changeset-id (lgtm-github--pr-info-id pr-info)
@@ -498,6 +500,7 @@ LGTM exits."
            :changeset-title (lgtm-github--pr-info-title pr-info)
            :changeset-description (lgtm-github--pr-info-body pr-info)
            :state (lgtm-github--pr-info-state pr-info)
+           :review-state-backend review-state-backend
            :get-remote-conversations-function (lambda (file-manager) (lgtm-github--get-remote-conversations file-manager repository this-pr-id))
            :get-or-create-draft-review-function (lambda () (lgtm-github--get-or-create-draft-review username repository this-pr-id))
            :create-review-comment-function (lambda (review-id comment) (lgtm-github--create-review-comment pr-info review-id comment))

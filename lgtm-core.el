@@ -60,6 +60,13 @@ Rendering those comments does not run the hook."
   :type 'symbol
   :group 'lgtm)
 
+(defcustom lgtm-database-file (locate-user-emacs-file "lgtm.sqlite")
+  "The SQLite database for modified file review statuses.
+
+Set this to nil to disable storing file review statuses."
+  :type 'string
+  :group 'lgtm)
+
 (defcustom lgtm-timestamp-format "%F %T"
   "The format string to use to format timestamps in the UI."
   :type 'string
@@ -89,7 +96,6 @@ Rendering those comments does not run the hook."
   (ref nil :read-only t :documentation "The immutable reference that points to this state.")
   (base-file-location nil :documentation "The saved cursor position in the old/original file")
   (current-file-location nil :documentation "The saved cursor position in the current file")
-  (review-status 'unreviewed :documentation "Whether or not the changed file has been marked as reviewed.")
   (base-selected-conversation-index nil :documentation "The index into the comments list for the base file that is selected.
 This field is nil for no selection.")
   (current-selected-conversation-index nil :documentation "The index into the comments list for the current file that is selected.
@@ -157,6 +163,10 @@ It is opaque to this library.")
   (changeset-title nil :read-only t :documentation "The title of the changeset.")
   (changeset-description nil :read-only t :documentation "The description of the changeset.")
 
+  (review-state-backend nil :read-only t :documentation "The backend used to store the reviewed state of modified files.
+
+Each file in a changeset can be reviewed or unreviewed.  This storage
+backend persists that state across review sessions, if enabled.")
   (get-remote-conversations-function nil :read-only t :documentation "A function called with the configuration object
 and file manager that fetches any remote conversations attached to the review.
 
@@ -478,6 +488,65 @@ Consults the FILE-MANAGER."
   (let ((modified-file-state-table (lgtm--modified-file-manager-table file-manager)))
     (gethash modified-file modified-file-state-table)))
 
+
+(cl-defstruct lgtm--file-review-state-backend
+  "An adapter to track the review state of modified files.
+
+This adapter is called when the user marks a file in a changeset as
+reviewed or unreviewed.  This functionality is encapsulated in an
+adapter because some users will not want read-state persistence and some
+backends may support tracking this state on the server.
+
+The API only takes the `lgtm-modified-file' as an input.  If a backend
+that supports server-side storage needs more information (e.g., a
+changeset ID) it should be captured in closure state when the adapter is
+created."
+  (mark-reviewed (lambda (_modified-file) nil) :read-only t :documentation "Mark the given modified-file as reviewed.")
+  (mark-unreviewed (lambda (_modified-file) nil) :read-only t :documentation "Mark the given modified-file as unreviewed.")
+  (file-reviewed-p (lambda (_modified-file) nil) :read-only t :documentation "Test if the given file has been reviewed or not."))
+
+(defun lgtm--make-no-op-review-state-backend ()
+  "A no-op adapter for the review state backend.
+
+This backend discards all state changes."
+  (make-lgtm--file-review-state-backend))
+
+(defconst lgtm--sqlite-review-state-create-table-query
+  "CREATE TABLE IF NOT EXISTS review_state (base_revision TEXT, current_revision TEXT, timestamp INTEGER, PRIMARY KEY (base_revision, current_revision))")
+
+(defun lgtm--make-sqlite-review-state-backend (db-file)
+  "A local sqlite adapter for the review state backend.
+
+The database will be named DB-FILE.  This assumes that the caller has
+already validated that sqlite is available.
+
+A file is marked as reviewed if it has an entry in the `review_state'
+table.  Each entry is keyed by the git hash of the base revision and the
+current revision of the file.  This accommodates additions and deletions
+and also ensures that files reviewed in an earlier revision of a
+changeset are preserved as long as their hash does not change."
+  (require 'sqlite)
+  (cl-assert db-file t "The database file must be specified")
+  (let ((db (sqlite-open db-file)))
+    (sqlite-execute db lgtm--sqlite-review-state-create-table-query)
+    (let ((mark-reviewed (lambda (modified-file)
+                           (let ((base (lgtm--modified-file-base-file-hash modified-file))
+                                 (current (lgtm--modified-file-current-file-hash modified-file)))
+                             (sqlite-execute db "INSERT INTO review_state VALUES (?, ?, unixepoch(CURRENT_TIMESTAMP))" `(,base ,current)))))
+          (mark-unreviewed (lambda (modified-file)
+                             (let ((base (lgtm--modified-file-base-file-hash modified-file))
+                                   (current (lgtm--modified-file-current-file-hash modified-file)))
+                               (sqlite-execute db "DELETE FROM review_state WHERE base_revision = ? AND current_revision = ?" `(,base ,current)))))
+          (file-reviewed-p (lambda (modified-file)
+                             (let* ((base (lgtm--modified-file-base-file-hash modified-file))
+                                    (current (lgtm--modified-file-current-file-hash modified-file))
+                                    (results (sqlite-select db "SELECT timestamp FROM review_state WHERE base_revision = ? AND current_revision = ?" `(,base ,current))))
+                               (> (length results) 0)))))
+      (make-lgtm--file-review-state-backend
+       :mark-reviewed mark-reviewed
+       :mark-unreviewed mark-unreviewed
+       :file-reviewed-p file-reviewed-p))))
+
 ;;; * Top-level application state
 
 ;; The data associated with a review
@@ -672,10 +741,7 @@ Format TY as a string suitable for display in the UI."
 
 (defun lgtm--format-file-review-status (file-review-status)
   "Format the modification status FILE-REVIEW-STATUS for the UI."
-  (pcase file-review-status
-    ('reviewed "✓")
-    ('unreviewed " ")
-    (_ (error "Invalid file review status `%s'" file-review-status))))
+  (if file-review-status "✓" " "))
 
 (defun lgtm--format-modified-file-diff (modified-file)
   "Format the diff for a single MODIFIED-FILE.
@@ -695,14 +761,14 @@ This diff is meant to be used in the main UI as a preview of the change."
 The STATE is required here to access saved review comments."
   (let* ((comment-manager (lgtm--state-comment-manager state))
          (file-manager (lgtm--state-file-manager state))
+         (review-state-backend (lgtm-configuration-review-state-backend (lgtm--state-configuration state)))
          (current-filename (lgtm--modified-file-current-filename modified-file))
          (base-filename (lgtm--modified-file-base-filename modified-file))
          (comment-count (lgtm--modified-file-comment-count file-manager comment-manager modified-file))
          (comment-count-string (lgtm--format-comment-count comment-count))
          (modification-type (lgtm--modified-file-type modified-file))
          (modification-type-string (lgtm--format-file-modification-type modification-type))
-         (modified-file-state (lgtm--get-modified-file-state file-manager modified-file))
-         (modification-status-string (lgtm--format-file-review-status (lgtm--modified-file-state-review-status modified-file-state))))
+         (modification-status-string (lgtm--format-file-review-status (funcall (lgtm--file-review-state-backend-file-reviewed-p review-state-backend) modified-file))))
     (pcase modification-type
       ((or 'renamed 'copied) (format "  %s [%s] %s -> %s%s" modification-status-string modification-type-string base-filename current-filename comment-count-string))
       (_ (format "  %s [%s] %s%s" modification-status-string modification-type-string current-filename comment-count-string)))))

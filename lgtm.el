@@ -424,19 +424,17 @@ need to be explicitly marked as reviewed to submit a review."
   (interactive)
   (let* ((selected-section (magit-section-at))
          (modified-file (magit-section-ident-value selected-section))
-         (file-manager (lgtm--state-file-manager lgtm--current-state))
-         (modified-file-state (lgtm--get-modified-file-state file-manager modified-file)))
-    (setf (lgtm--modified-file-state-review-status modified-file-state) 'reviewed)
+         (conf (lgtm--state-configuration lgtm--current-state)))
+    (funcall (lgtm--file-review-state-backend-mark-reviewed (lgtm-configuration-review-state-backend conf)) modified-file)
     (lgtm--render-review-overview-ui)))
 
 (defun lgtm-mark-selected-modified-file-unreviewed ()
   "Mark the modified file selected in the UI as having not been reviewed."
   (interactive)
   (let* ((selected-section (magit-section-at))
-         (file-manager (lgtm--state-file-manager lgtm--current-state))
          (modified-file (magit-section-ident-value selected-section))
-         (modified-file-state (lgtm--get-modified-file-state file-manager modified-file)))
-    (setf (lgtm--modified-file-state-review-status modified-file-state) 'unreviewed)
+         (conf (lgtm--state-configuration lgtm--current-state)))
+    (funcall (lgtm--file-review-state-backend-mark-unreviewed (lgtm-configuration-review-state-backend conf)) modified-file)
     (lgtm--render-review-overview-ui)))
 
 (defun lgtm--ediff-control-window ()
