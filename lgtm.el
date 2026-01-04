@@ -73,6 +73,7 @@ for the username."
 
 ;;;; Private
 
+(defconst lgtm--comment-editor-buffer-name "*lgtm-comment*" "The name of the buffer that is used for editing comments.")
 (defconst lgtm--overview-buffer-name "*lgtm*" "The name of the buffer that the overview UI is rendered in.")
 (defvar lgtm--current-state nil "The mutable state of the current review.")
 
@@ -117,6 +118,7 @@ then updates the UI."
         (lgtm--add-comment-to-file comment-manager modified-file-state current-comment-ref (lgtm-comment-location current-comment))
         (lgtm--init-comment-overlays lgtm--current-state modified-file))))
 
+  (kill-buffer lgtm--comment-editor-buffer-name)
   (quit-restore-window)
   (when (get-buffer-window lgtm--overview-buffer-name)
     (lgtm-redraw)))
@@ -134,6 +136,8 @@ comments are discarded."
                (when (and (not (lgtm-comment-is-published comment)) (equal "" (lgtm-comment-content comment)))
                  (remhash comment-ref comment-table)))
              comment-table))
+
+  (kill-buffer lgtm--comment-editor-buffer-name)
   (quit-restore-window
    (get-buffer-window (current-buffer))
    'kill))
@@ -388,7 +392,7 @@ Doing so here ensures that no call can forget to update the current comment."
   (let* ((comment-manager (lgtm--state-comment-manager state))
          (current-comment-ref (lgtm--state-comment-being-edited state))
          (current-comment (lgtm--get-comment-content comment-manager current-comment-ref))
-         (buffer (get-buffer-create "*lgtm-comment*")))
+         (buffer (get-buffer-create lgtm--comment-editor-buffer-name)))
     (display-buffer buffer lgtm-comment-buffer-action)
     (with-current-buffer buffer
       (erase-buffer)
