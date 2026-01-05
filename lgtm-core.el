@@ -751,9 +751,15 @@ This diff is meant to be used in the main UI as a preview of the change."
          (current-filename (lgtm--modified-file-current-filename modified-file))
          (base-filename (lgtm--modified-file-base-filename modified-file))
          (real-base-filename (if base-filename base-filename current-filename))
-         (base-revision (lgtm-repository-base-revision (lgtm--modified-file-repository modified-file)))
-         (git-diff-command (format "git diff %s:'%s'..HEAD:'%s'" base-revision real-base-filename current-filename)))
-    (string-trim (shell-command-to-string git-diff-command))))
+         (base-revision (lgtm-repository-base-revision (lgtm--modified-file-repository modified-file))))
+
+    (pcase (lgtm--modified-file-type modified-file)
+      ('deleted (let ((git-diff-command (format "git diff %s -- %s" base-revision real-base-filename)))
+                  (string-trim (shell-command-to-string git-diff-command))))
+      ('added (let ((git-diff-command (format "git diff %s -- %s" base-revision real-base-filename)))
+                  (string-trim (shell-command-to-string git-diff-command))))
+      (_ (let ((git-diff-command (format "git diff %s:'%s'..HEAD:'%s'" base-revision real-base-filename current-filename)))
+           (string-trim (shell-command-to-string git-diff-command)))))))
 
 (defun lgtm--format-modified-file (state modified-file)
   "Create the top-level description for MODIFIED-FILE.
