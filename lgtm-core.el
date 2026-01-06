@@ -514,6 +514,22 @@ This backend discards all state changes."
 (defconst lgtm--sqlite-review-state-create-table-query
   "CREATE TABLE IF NOT EXISTS review_state (base_revision TEXT, current_revision TEXT, timestamp INTEGER, PRIMARY KEY (base_revision, current_revision))")
 
+(defun lgtm--sqlite-review-state-backend-file-hash (modified-file field-accessor)
+  "For the given MODIFIED-FILE and FIELD-ACCESSOR, return the hash.
+
+If the change is an addition or a deletion of MODIFIED-FILE, return
+either \='added or \='deleted for the missing hash.
+
+We need to have a non-nil value for both revisions in the SQLite table,
+as those fields are part of the composite primary key."
+  (let ((the-hash (funcall field-accessor modified-file)))
+    (if the-hash
+        the-hash
+      (pcase (lgtm--modified-file-type modified-file)
+        ('added "added")
+        ('deleted "deleted")
+        (_ (error "Invariant violation: the file hash should only be missing for an added or deleted file: %s" modified-file))))))
+
 (defun lgtm--make-sqlite-review-state-backend (db-file)
   "A local sqlite adapter for the review state backend.
 
@@ -530,16 +546,16 @@ changeset are preserved as long as their hash does not change."
   (let ((db (sqlite-open db-file)))
     (sqlite-execute db lgtm--sqlite-review-state-create-table-query)
     (let ((mark-reviewed (lambda (modified-file)
-                           (let ((base (lgtm--modified-file-base-file-hash modified-file))
-                                 (current (lgtm--modified-file-current-file-hash modified-file)))
+                           (let ((base (lgtm--sqlite-review-state-backend-file-hash modified-file #'lgtm--modified-file-base-file-hash))
+                                 (current (lgtm--sqlite-review-state-backend-file-hash modified-file #'lgtm--modified-file-current-file-hash)))
                              (sqlite-execute db "INSERT INTO review_state VALUES (?, ?, unixepoch(CURRENT_TIMESTAMP))" `(,base ,current)))))
           (mark-unreviewed (lambda (modified-file)
-                             (let ((base (lgtm--modified-file-base-file-hash modified-file))
-                                   (current (lgtm--modified-file-current-file-hash modified-file)))
+                             (let ((base (lgtm--sqlite-review-state-backend-file-hash modified-file #'lgtm--modified-file-base-file-hash))
+                                   (current (lgtm--sqlite-review-state-backend-file-hash modified-file #'lgtm--modified-file-current-file-hash)))
                                (sqlite-execute db "DELETE FROM review_state WHERE base_revision = ? AND current_revision = ?" `(,base ,current)))))
           (file-reviewed-p (lambda (modified-file)
-                             (let* ((base (lgtm--modified-file-base-file-hash modified-file))
-                                    (current (lgtm--modified-file-current-file-hash modified-file))
+                             (let* ((base (lgtm--sqlite-review-state-backend-file-hash modified-file #'lgtm--modified-file-base-file-hash))
+                                    (current (lgtm--sqlite-review-state-backend-file-hash modified-file #'lgtm--modified-file-current-file-hash))
                                     (results (sqlite-select db "SELECT timestamp FROM review_state WHERE base_revision = ? AND current_revision = ?" `(,base ,current))))
                                (> (length results) 0)))))
       (make-lgtm--file-review-state-backend
