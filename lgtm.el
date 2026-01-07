@@ -430,7 +430,11 @@ need to be explicitly marked as reviewed to submit a review."
          (modified-file (magit-section-ident-value selected-section))
          (conf (lgtm--state-configuration lgtm--current-state)))
     (funcall (lgtm--file-review-state-backend-mark-reviewed (lgtm-configuration-review-state-backend conf)) modified-file)
-    (lgtm--render-review-overview-ui)))
+    (let* ((selected-section (magit-section-at))
+           (section-start-pos (marker-position (slot-value selected-section 'start))))
+      (magit-section-hide selected-section)
+      (lgtm--render-review-overview-ui)
+      (goto-char section-start-pos))))
 
 (defun lgtm-mark-selected-modified-file-unreviewed ()
   "Mark the modified file selected in the UI as having not been reviewed."
