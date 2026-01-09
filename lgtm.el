@@ -118,8 +118,7 @@ then updates the UI."
         (lgtm--add-comment-to-file comment-manager modified-file-state current-comment-ref (lgtm-comment-location current-comment))
         (lgtm--init-comment-overlays lgtm--current-state modified-file))))
 
-  (kill-buffer lgtm--comment-editor-buffer-name)
-  (quit-restore-window)
+  (quit-restore-window (get-buffer-window lgtm--comment-editor-buffer-name) 'kill)
   (when (get-buffer-window lgtm--overview-buffer-name)
     (lgtm-redraw)))
 
