@@ -262,7 +262,7 @@ where the entire buffer is being redrawn."
 
           (magit-insert-section (comment-group nil t)
             (magit-insert-heading "Unpublished Comments")
-            (seq-map-indexed #'lgtm--render-top-level-comment unpublished-comments))))
+            (seq-map #'lgtm--render-top-level-comment unpublished-comments))))
 
       (magit-insert-section (list-section)
         (magit-insert-heading (insert (propertize "Commits" 'font-lock-face '(:background "light gray"))))
