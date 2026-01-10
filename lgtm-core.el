@@ -727,7 +727,7 @@ The commits are computed for the repository at REPOSITORY-DIR between
 the current revision on disk and the BASE-REVISION.  This helper is
 intended to be used when constructing a `lgtm-repository' object."
   (let* ((default-directory repository-dir)
-         (cmd (format "git log --oneline --no-decorate %s..HEAD" base-revision))
+         (cmd (format "git log --oneline --no-decorate --no-abbrev-commit %s..HEAD" base-revision))
          (git-output (shell-command-to-string cmd))
          (entry-list (split-string (string-trim git-output) "\n")))
     (seq-map #'lgtm--parse-git-short-commit entry-list)))
