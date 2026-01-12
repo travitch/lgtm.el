@@ -89,12 +89,6 @@
                              (reviews [(:edges t) (author $author String!) (states $states [PullRequestReviewState!]!)]
                                       (comments [(:edges t)] id fullDatabaseId body path createdAt updatedAt line startLine (replyTo id fullDatabaseId) state))))))
 
-(defconst lgtm-github--create-comment-thread-reply-mutation
-  '(mutation
-    (addPullRequestReviewThreadReply [(input $input AddPullRequestReviewThreadReplyInput!)]
-                                     (comment id)
-                                     clientMutationId)))
-
 ;;; Implementation
 
 (defun lgtm-github--graphql-select (data lineage)
