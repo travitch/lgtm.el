@@ -89,34 +89,11 @@
                              (reviews [(:edges t) (author $author String!) (states $states [PullRequestReviewState!]!)]
                                       (comments [(:edges t)] id fullDatabaseId body path createdAt updatedAt line startLine (replyTo id fullDatabaseId) state))))))
 
-(defconst lgtm-github--create-review-line-comment-mutation
-  '(mutation
-    (addPullRequestReviewThread [(input $input AddPullRequestReviewThreadInput!)]
-                                (thread id path)
-                                clientMutationId)))
-
 (defconst lgtm-github--create-comment-thread-reply-mutation
   '(mutation
     (addPullRequestReviewThreadReply [(input $input AddPullRequestReviewThreadReplyInput!)]
                                      (comment id)
                                      clientMutationId)))
-
-(defconst lgtm-github--create-review-comment-mutation
-  '(mutation
-    (addComment [(input $input AddCommentInput!)]
-                (commentEdge (node id))
-                clientMutationId)))
-
-(defconst lgtm-github--create-new-review-mutation
-  '(mutation
-    (addPullRequestReview [(input $input AddPullRequestReviewInput!)]
-                          (pullRequestReview id))))
-
-(defconst lgtm-github--submit-review-mutation
-  '(mutation
-    (submitPullRequestReview [(input $input SubmitPullRequestReviewInput!)] clientMutationId)))
-
-(defconst lgtm-github--client-id "travitch/lgtm" "This is the client user agent passed to github APIs.")
 
 ;;; Implementation
 
