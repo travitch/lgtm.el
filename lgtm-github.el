@@ -553,17 +553,32 @@ session."
             (setf (lgtm-github--pr-info-review-id pr-info) new-review-id)
             new-review-id))))))
 
-(defun lgtm-github--submit-review (pr-info)
+(defun lgtm-github--submit-review (gh-username pr-info)
   "Submit the given review against the given PR.
 
 The PR-INFO encodes the details that uniquely identify the PR."
-  (let ((review-id (lgtm-github--pr-info-review-id pr-info)))
+  (let ((review-id (lgtm-github--get-or-create-draft-review gh-username pr-info)))
     (if review-id
         (let* ((owner (lgtm-github--pr-info-owner pr-info))
                (repo-name (lgtm-github--pr-info-repository-name pr-info))
                (pull-number (lgtm-github--pr-info-number pr-info))
                (resource (format "/repos/%s/%s/pulls/%d/reviews/%s/events" owner repo-name pull-number review-id))
-               (arguments '((event . "COMMENT") . (body . ""))))
+               (arguments '((event . "COMMENT") (body . ""))))
+          (ghub-post resource arguments :auth 'lgtm)
+          nil)
+      (warn "No review initiated"))))
+
+(defun lgtm-github--approve-pr (gh-username pr-info)
+  "Approve the PR and publish draft comments.
+
+The PR-INFO encodes the details that uniquely identify the PR."
+  (let ((review-id (lgtm-github--get-or-create-draft-review gh-username pr-info)))
+    (if review-id
+        (let* ((owner (lgtm-github--pr-info-owner pr-info))
+               (repo-name (lgtm-github--pr-info-repository-name pr-info))
+               (pull-number (lgtm-github--pr-info-number pr-info))
+               (resource (format "/repos/%s/%s/pulls/%d/reviews/%s/events" owner repo-name pull-number review-id))
+               (arguments '((event . "APPROVE") (body . ""))))
           (ghub-post resource arguments :auth 'lgtm)
           nil)
       (warn "No review initiated"))))
@@ -619,7 +634,8 @@ LGTM exits."
            :review-state-backend review-state-backend
            :get-remote-conversations-function (lambda (file-manager) (lgtm-github--get-remote-conversations file-manager repository this-pr-id))
            :create-review-comment-function (lambda (file-manager comment) (lgtm-github--create-review-comment username file-manager pr-info comment))
-           :submit-review-function (lambda () (lgtm-github--submit-review pr-info))
+           :submit-review-function (lambda () (lgtm-github--submit-review username pr-info))
+           :approve-review-function (lambda () (lgtm-github--approve-pr username pr-info))
            :shutdown-hook shutdown-hook))
       (error "Could not find a PR corresponding to `%s'" current-git-commit))))
 

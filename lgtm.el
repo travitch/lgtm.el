@@ -746,7 +746,7 @@ to submit the approval to the server."
          (approve-function (lgtm-configuration-approve-review-function conf)))
     (message "Approving review")
     (if (and approve-function (y-or-n-p "Approve change?"))
-        (funcall approve-function lgtm--current-state)
+        (funcall approve-function)
       (warn "No review approval function is defined"))))
 
 (defun lgtm-shutdown ()
