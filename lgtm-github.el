@@ -352,7 +352,7 @@ required to map file names to file objects."
          (pull-number (string-to-number (lgtm-github--pr-ref-pr-number pr-descriptor)))
          (arguments `((owner . ,owner) (name . ,repo) (number . ,pull-number)))
          (raw-result-file-comments (ghub-graphql lgtm-github--get-pr-comments-query arguments :auth 'lgtm))
-         (narrow-result-file-comments (lgtm-github--graphql-select (car raw-result-file-comments) '((data . 0) (repository . 0) (pullRequest . 0) (reviewThreads . edges))))
+         (narrow-result-file-comments (seq-map #'car (alist-get 'edges (lgtm-github--graphql-select (car raw-result-file-comments) '((data . 0) (repository . 0) (pullRequest . 0) reviewThreads)))))
          (file-comments (seq-map (lambda (node) (lgtm-github--parse-comment-thread file-manager node)) narrow-result-file-comments))
          (raw-result-top-level-comments (ghub-graphql lgtm-github--get-pr-top-level-comments-query arguments :auth 'lgtm))
          (narrow-result-top-level-comments (lgtm-github--graphql-select (car raw-result-top-level-comments) '((data . 0) (repository . 0) (pullRequest . 0) (comments . edges))))
