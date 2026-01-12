@@ -564,7 +564,8 @@ The PR-INFO encodes the details that uniquely identify the PR."
                (pull-number (lgtm-github--pr-info-number pr-info))
                (resource (format "/repos/%s/%s/pulls/%d/reviews/%s/events" owner repo-name pull-number review-id))
                (arguments '((event . "COMMENT") . (body . ""))))
-          (ghub-post resource arguments :auth 'lgtm))
+          (ghub-post resource arguments :auth 'lgtm)
+          nil)
       (warn "No review initiated"))))
 
 (defun lgtm-github--get-comment-file (loc)
