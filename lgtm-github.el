@@ -70,7 +70,7 @@
     (repository [(owner $owner String!) (name $name String!)]
                 (pullRequest [(number $number Int!)]
                              (reviewThreads [(:edges t)] diffSide id startLine line path
-                                            (comments [(:edges t)] (author login) body createdAt id (replyTo id) updatedAt))))))
+                                            (comments [(:edges t)] (author login) body createdAt id (replyTo id) updatedAt fullDatabaseId))))))
 
 (defconst lgtm-github--get-pr-top-level-comments-query
   '(query
@@ -267,7 +267,7 @@ This requires the FILE-MANAGER to map the location back to a `lgtm-modified-file
        :created-timestamp (lgtm-github--parse-timestamp .createdAt)
        :updated-timestamp (lgtm-github--parse-timestamp .updatedAt)))))
 
-(defun lgtm-github--parse-server-comment (thread-id loc comment-item)
+(defun lgtm-github--parse-server-comment (loc comment-item)
   "Construct an internal comment from a Github GraphQL COMMENT-ITEM.
 
 The LOC is passed in because it is already parsed.  The THREAD-ID is the
@@ -284,7 +284,7 @@ id."
        :content (string-replace "\r\n" "\n" .body)
        :author .author.login
        :parent .replyTo.id
-       :reply-to-id thread-id
+       :reply-to-id (string-to-number .fullDatabaseId)
        :created-timestamp (lgtm-github--parse-timestamp .createdAt)
        :updated-timestamp (lgtm-github--parse-timestamp .updatedAt)))))
 
@@ -297,11 +297,10 @@ of source files."
     (let* ((version (lgtm-github--get-comment-revision .diffSide))
            (file (lgtm-github--get-file-of-change file-manager version .path))
            (loc (make-lgtm-comment-location :version version :file file :start-line .startLine :end-line .line))
-           (thread-id .id)
            (nested-comments-list (lgtm-github--graphql-select (seq-elt .comments 1) '(edges)))
            (flattened-comments-list (seq-mapcat (lambda (s) s) nested-comments-list)))
       (if (and version file)
-          (seq-map (lambda (comment-item) (lgtm-github--parse-server-comment thread-id loc comment-item)) flattened-comments-list)
+          (seq-map (lambda (comment-item) (lgtm-github--parse-server-comment loc comment-item)) flattened-comments-list)
         (progn
           (warn "Could not determine version or file for comment thread %s" thread-item)
           nil)))))
@@ -446,16 +445,12 @@ Returns the id of the comment."
                        (response (ghub-post resource arguments :auth 'lgtm)))
                   (alist-get 'id response)))
      (reply-to-id (let* ((arguments `((body . ,body) (in_reply_to . ,reply-to-id)))
-                         ;; (arguments (append pr-vars loc-vars))
                          (owner (lgtm-github--pr-info-owner pr-info))
                          (repo-name (lgtm-github--pr-info-repository-name pr-info))
-                         ; (input (list 'input variables))
-                         (resource (format "/repos/%s/%s/pulls/%d/comments" owner repo-name pull-number))
-                         ;; (raw-response (ghub-graphql lgtm-github--create-comment-thread-reply-mutation input :auth 'lgtm))
-                         )
+                         (pull-number (lgtm-github--pr-info-number pr-info))
+                         (resource (format "/repos/%s/%s/pulls/%d/comments" owner repo-name pull-number)))
                     (let ((response (ghub-post resource arguments :auth 'lgtm)))
                       (alist-get 'id response))))
-;;                    (message "Github GraphQL response to creating a thread comment = %s" raw-response)))
      (t (let* ((review-id (lgtm-github--get-or-create-draft-review gh-username pr-info))
                (current-pending-comments (lgtm-github--get-pending-review-comments gh-username file-manager pr-info)))
           (lgtm-github--delete-pending-review pr-info review-id)
