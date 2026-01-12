@@ -78,17 +78,16 @@
                 (pullRequest [(number $number Int!)]
                              (comments [(:edges t)] (author login) body createdAt id updatedAt)))))
 
-(defconst lgtm-github--get-pending-reviews-query
+;; A query to get the review comments left by the user (review author) on the currently pending
+;; review.
+;;
+;; [tag:get-review-comments-query]
+(defconst lgtm-github--get-current-review-comments-query
   '(query
     (repository [(owner $owner String!) (name $name String!)]
                 (pullRequest [(number $number Int!)]
-                             (reviews [(:edges t) (states PENDING)] id fullDatabaseId (author login))))))
-
-(defconst lgtm-github--get-existing-review-query
-  '(query
-    (repository [(owner $owner String!) (name $name String!)]
-                (pullRequest [(number $number Int!)]
-                             (reviews [(:edges t)] id fullDatabaseId (author login) state)))))
+                             (reviews [(:edges t) (author $author String!) (states $states [PullRequestReviewState!]!)]
+                                      (comments [(:edges t)] id fullDatabaseId body path createdAt updatedAt line startLine (replyTo id fullDatabaseId) state))))))
 
 (defconst lgtm-github--create-review-line-comment-mutation
   '(mutation
@@ -126,6 +125,8 @@
   (catch 'strip-path-no-match
     (while-let ((key (pop lineage)))
       (pcase key
+        ((guard (numberp key))
+         (setq data (elt data key)))
         ((guard (and (consp key) (symbolp (cdr key))))
          (if (eq (car key) (car data))
                 (let ((matched (seq-find (lambda (obj) (equal (car obj) (cdr key))) (cdr data))))
@@ -229,6 +230,8 @@ This assumes that the URL is in the format git@github.com:USER/REPO.git."
 
 (cl-defstruct lgtm-github--pr-info
   (id nil :read-only t :documentation "The GitHub node_id of the PR")
+  (owner nil :read-only t :documentation "The owner of the repository")
+  (repository-name nil :read-only t :documentation "The name of the repository")
   (number nil :read-only t :documentation "The PR number")
   (body nil :read-only t :documentation "The raw body of the PR description")
   (state nil :read-only t :documentation "The state of the PR (open, closed, etc)")
@@ -237,7 +240,10 @@ This assumes that the URL is in the format git@github.com:USER/REPO.git."
   (author-login nil :read-only t :documentation "The login of the author of the PR")
   (base-ref nil :read-only t :documentation "The git ref the PR applies to")
   (base-ref-name nil :read-only t :documentation "The name of the base ref")
-  (url nil :read-only t :documentation "The URL to the PR"))
+  (url nil :read-only t :documentation "The URL to the PR")
+  (review-id nil :documentation "The identifier of the pending review, if any.
+
+This is nil when there is no pending review.  It gets updated as the review evolves."))
 
 (defun lgtm-github--get-pr-info (repository pr-descriptor)
   "Query the Github API to get information for the given PR-DESCRIPTOR.
@@ -253,6 +259,8 @@ Also takes a Github REPOSITORY."
       (make-lgtm-github--pr-info
        :id .id
        :body .body
+       :owner owner
+       :repository-name repo
        :number .number
        :state .state
        :created-at (lgtm-github--parse-timestamp .createdAt)
@@ -261,6 +269,26 @@ Also takes a Github REPOSITORY."
        :base-ref .baseRefOid
        :base-ref-name .baseRefName
        :url .url))))
+
+(defun lgtm-github--parse-review-comment (file-manager comment-item)
+  "Parse COMMENT-ITEM into a `lgtm-comment'.
+
+This requires the FILE-MANAGER to map the location back to a `lgtm-modified-file'."
+  (let-alist (lgtm-github--graphql-select comment-item '(node))
+    (let* ((version (lgtm-github--get-comment-revision .diffSide))
+           (file (lgtm-github--get-file-of-change file-manager version .path))
+           (loc (make-lgtm-comment-location :version version :file file :start-line .startLine :end-line .line)))
+      (make-lgtm-comment
+       :ref (make-lgtm-comment-ref :id .id)
+       :backend-data .id
+       :location loc
+       :is-published (equal .state "SUBMITTED")
+       :content .body
+       :author .author.login
+       :parent .replyTo.id
+       :reply-to-id .id
+       :created-timestamp (lgtm-github--parse-timestamp .createdAt)
+       :updated-timestamp (lgtm-github--parse-timestamp .updatedAt)))))
 
 (defun lgtm-github--parse-server-comment (thread-id loc comment-item)
   "Construct an internal comment from a Github GraphQL COMMENT-ITEM.
@@ -332,10 +360,15 @@ required to map file names to file objects."
     (seq-concatenate 'list top-level-comments (seq-mapcat (lambda (x) x) file-comments))))
 
 (defun lgtm-github--get-comment-revision (side)
-  "Map the GitHub diff SIDE to an internal revision (base or current)."
+  "Map the GitHub diff SIDE to an internal revision (base or current).
+
+Note that some of the GraphQL APIs do not return the side.  When that is
+the case (side is nil), we assume it is the current revision.  See
+[ref:get-review-comments-query]."
   (pcase side
     ("LEFT" 'base)
     ("RIGHT" 'current)
+    ((pred null) 'current)
     (_ (progn
          (warn "Unexpected comment side `%s'" side)
          nil))))
@@ -374,59 +407,188 @@ The FILE-MANAGER enables this to map the file name reported by
 the server to the internal immutable changed file reference type."
   (lgtm-github--get-pr-comments file-manager repository pr-descriptor))
 
-(defun lgtm-github--get-existing-pending-review (gh-username repository pr-descriptor)
+(defun lgtm-github--get-pending-review-comments (gh-username file-manager pr-info)
+  "Get the comments attached to the pending review in PR-INFO.
+
+The FILE-MANAGER is required to reconstruct valid `lgtm-comment`
+objects.  The GH-USERNAME is used to filter and find the current pending
+review.
+
+We use the GraphQL API for this (instead of the REST API) because the
+REST API only returns position information using the old (deprecated)
+format of positions relative to diff hunks.  Instead of writing a parser
+and interpreter for that format, we just use the GraphQL API, which lets
+us select the sane position information directly.
+
+However, this API doesn't return diff side information.  When the side
+is nil, we just assume it is attached to the current review
+state (instead of the base).  See [ref:get-review-comments-query]."
+  (let* ((owner (lgtm-github--pr-info-owner pr-info))
+         (repo (lgtm-github--pr-info-repository-name pr-info))
+         (pull-number (lgtm-github--pr-info-number pr-info))
+         (author gh-username)
+         (states '["PENDING"])
+         (variables `((owner . ,owner) (name . ,repo) (number . ,pull-number) (author . ,author) (states . ,states)))
+         (raw-response (ghub-graphql lgtm-github--get-current-review-comments-query variables :auth 'lgtm))
+         ;; We select the first (0th) review because there is exactly one pending review right now
+         ;; (we know since we created it and limited the search to only pending reviews, and there
+         ;; can only be one pending review per user).
+         (narrowed-response (lgtm-github--graphql-select (car raw-response) '((data . 0) (repository . 0) (pullRequest . 0) (reviews . edges) 0 (node . 0) (comments . edges))))
+         (parsed-comments (seq-map (lambda (node) (lgtm-github--parse-review-comment file-manager node)) narrowed-response)))
+    parsed-comments))
+
+(defun lgtm-github--delete-pending-review (pr-info review-id)
+  "Delete the pending REVIEW-ID for PR-INFO.
+
+This is part of the protocol for adding a new review comment."
+  (let* ((owner (lgtm-github--pr-info-owner pr-info))
+         (repo (lgtm-github--pr-info-repository-name pr-info))
+         (pull-number (lgtm-github--pr-info-number pr-info))
+         (resource (format "/repos/%s/%s/pulls/%d/reviews/%s" owner repo pull-number review-id))
+         (arguments '()))
+    (ghub-request "DELETE" resource arguments :auth 'lgtm)))
+
+(defun lgtm-github--create-review-comment (gh-username file-manager pr-info comment)
+  "Create an unpublished COMMENT under the current review.
+
+This uses the REPOSITORY and PR-ID to create the request.  The FILE
+is required because the COMMENT only contains a ref.
+
+The REVIEW-ID is the draft review to attach the comment to.
+
+Returns the id of the comment."
+  (let* ((body (lgtm-comment-content comment))
+         (loc (lgtm-comment-location comment))
+         (reply-to-id (lgtm-comment-reply-to-id comment)))
+    (cond
+     ((not loc) (let* ((owner (lgtm-github--pr-info-owner pr-info))
+                       (repo-name (lgtm-github--pr-info-repository-name pr-info))
+                       (pull-number (lgtm-github--pr-info-number pr-info))
+                       (resource (format "/repos/%s/%s/issues/%s/comments" owner repo-name pull-number))
+                       (arguments `((body . ,body)))
+                       (response (ghub-post resource arguments :auth 'lgtm)))
+                  (alist-get 'id response)))
+     (reply-to-id (let* ((arguments `((body . ,body) (in_reply_to . ,reply-to-id)))
+                         ;; (arguments (append pr-vars loc-vars))
+                         (owner (lgtm-github--pr-info-owner pr-info))
+                         (repo-name (lgtm-github--pr-info-repository-name pr-info))
+                         ; (input (list 'input variables))
+                         (resource (format "/repos/%s/%s/pulls/%d/comments" owner repo-name pull-number))
+                         ;; (raw-response (ghub-graphql lgtm-github--create-comment-thread-reply-mutation input :auth 'lgtm))
+                         )
+                    (let ((response (ghub-post resource arguments :auth 'lgtm)))
+                      (alist-get 'id response))))
+;;                    (message "Github GraphQL response to creating a thread comment = %s" raw-response)))
+     (t (let* ((review-id (lgtm-github--get-or-create-draft-review gh-username pr-info))
+               (current-pending-comments (lgtm-github--get-pending-review-comments gh-username file-manager pr-info)))
+          (lgtm-github--delete-pending-review pr-info review-id)
+
+          (condition-case github-error
+              (let ((new-review-id (lgtm-github--create-new-review pr-info (cons comment current-pending-comments))))
+                (setf (lgtm-github--pr-info-review-id pr-info) new-review-id)
+                ;; Ideally we would look up the comment id here.  However, for unpublished comments
+                ;; (all of these are unpublished), the ids are not stable.  It should not matter
+                ;; very much since the user cannot publish a reply to any of these comments anyway,
+                ;; so it shouldn't matter much.
+                t)
+
+            ;; If comment creation fails, try to recreate the review in a reasonable form without
+            ;; the offending comment.  We can't tell if the operation will fail or not without
+            ;; trying, so this is the best we can do.
+            (ghub-http-error (let ((new-review-id (lgtm-github--create-new-review pr-info current-pending-comments)))
+                               (setf (lgtm-github--pr-info-review-id pr-info) new-review-id)
+                               (warn "Could not create comment %s: %s" comment github-error)
+                               nil))))))))
+
+(defun lgtm-github--get-existing-pending-review (gh-username pr-info)
   "Get the id of an existing pending review.
 
 Requires the GH-USERNAME to filter reviews to only the current user.
-Requires the REPOSITORY and PR-DESCRIPTOR to get the relevant
-reviews for the PR."
-  (let* ((owner (lgtm-github--repository-owner repository))
-         (repo (lgtm-github--repository-repo repository))
-         (pull-number (string-to-number (lgtm-github--pr-ref-pr-number pr-descriptor)))
-         (variables `((owner . ,owner) (name . ,repo) (number . ,pull-number)))
-         (raw-result (ghub-graphql lgtm-github--get-existing-review-query variables :auth 'lgtm))
-         (narrowed-response (lgtm-github--graphql-select (car raw-result) '((data . 0) (repository . 0) (pullRequest . 0) (reviews . edges))))
-         (target (seq-find (lambda (pr)
-                             (let-alist (lgtm-github--graphql-select pr '(node))
-                               (and (equal gh-username .author.login) (equal .state "PENDING"))))
-                           narrowed-response)))
-    (when target
-      (let-alist target .id))))
+Requires the PR-INFO to get the relevant reviews for the PR.
 
-(defun lgtm-github--create-new-review (pr-info)
+Returns nil if there is no pending PR."
+  (let* ((owner (lgtm-github--pr-info-owner pr-info))
+         (repo (lgtm-github--pr-info-repository-name pr-info))
+         (pull-number (lgtm-github--pr-info-number pr-info))
+         (resource (format "/repos/%s/%s/pulls/%d/reviews" owner repo pull-number))
+         (arguments '())
+         (response (ghub-get resource arguments :auth 'lgtm)))
+
+    (let* ((is-pending-review-p (lambda (pr)
+                                  (let-alist pr
+                                    (and (equal gh-username .user.login) (equal "PENDING" .state)))))
+           (existing-pending-pr (seq-find is-pending-review-p response)))
+
+      (if existing-pending-pr
+          (alist-get 'id existing-pending-pr)
+        nil))))
+
+(defun lgtm-github--comment-to-github-rest (comment)
+  "Convert an internal COMMENT into the form required by the Github REST API."
+  (let* ((body (lgtm-comment-content comment))
+         (loc (lgtm-comment-location comment))
+         (loc-vars (lgtm-github--get-comment-file loc)))
+    (cons `(body . ,body) loc-vars)))
+
+(defun lgtm-github--create-new-review (pr-info review-comments)
   "Create a new draft review for the PR implied by PR-INFO."
-  (let* ((pull-request-id (lgtm-github--pr-info-id pr-info))
-         (variables `((clientMutationId . ,lgtm-github--client-id) (pullRequestId . ,pull-request-id)))
-         (input (list 'input variables))
-         (response (ghub-graphql lgtm-github--create-new-review-mutation input :auth 'lgtm)))
-    (lgtm-github--graphql-select (car response) '((data . 0) (addPullRequestReview . 0) (pullRequestReview . 0) id))))
+  (let* ((owner (lgtm-github--pr-info-owner pr-info))
+         (repo-name (lgtm-github--pr-info-repository-name pr-info))
+         (pull-number (lgtm-github--pr-info-number pr-info))
+         (resource (format "/repos/%s/%s/pulls/%d/reviews" owner repo-name pull-number))
+         ;; We make the comments array a vector so that when we create the structure:
+         ;;
+         ;; > `((comments . [...]))
+         ;;
+         ;; instead of:
+         ;;
+         ;; > `((comments (...)))
+         ;;
+         ;; as the latter will fail to encode into JSON.
+         (translated-comments (seq-into (seq-map #'lgtm-github--comment-to-github-rest review-comments) 'vector))
+         (arguments (if review-comments (list (cons 'comments translated-comments)) nil))
+         (response (ghub-post resource arguments :auth 'lgtm)))
+    (alist-get 'id response)))
 
-(defun lgtm-github--get-or-create-draft-review (gh-username repository pr-info pr-descriptor)
-  "Get the id of the draft review for REPOSITORY and PR-DESCRIPTOR.
+(defun lgtm-github--get-or-create-draft-review (gh-username pr-info)
+  "Get the id of the draft review for PR-INFO.
 
 This function creates a draft review if none exists.  Note that the github
 create review call will fail if there is an existing request.  To find an
 existing review, we have to list existing reviews and find a pending one.
 
 This requires the GH-USERNAME to ensure that any discovered PENDING PR
-belongs to this user."
-  (let* ((current-review-id (lgtm-github--get-existing-pending-review gh-username repository pr-descriptor)))
-    (if current-review-id
-        current-review-id
-      (lgtm-github--create-new-review pr-info))))
+belongs to this user.
 
-(defun lgtm-github--submit-review (pr-info review-id)
+This uses a cached local copy of the review id if possible.  This could
+break if the user deletes the review on the server side during the lgtm
+session."
+  (let ((cached-review-id (lgtm-github--pr-info-review-id pr-info)))
+    (if cached-review-id
+        cached-review-id
+      (let* ((current-review-id (lgtm-github--get-existing-pending-review gh-username pr-info)))
+        (if current-review-id
+            (progn
+              (setf (lgtm-github--pr-info-review-id pr-info) current-review-id)
+              current-review-id)
+          ;; If we have to create a new review, it has no comments
+          (let ((new-review-id (lgtm-github--create-new-review pr-info '())))
+            (setf (lgtm-github--pr-info-review-id pr-info) new-review-id)
+            new-review-id))))))
+
+(defun lgtm-github--submit-review (pr-info)
   "Submit the given review against the given PR.
 
-The PR-INFO encodes the details that uniquely identify the PR.  The
-REVIEW-ID is the name of the review to submit."
-  (let* ((pull-request-id (lgtm-github--pr-info-id pr-info))
-         (variables `((clientMutationId . ,lgtm-github--client-id) (event . "COMMENT") (pullRequestId . ,pull-request-id) (pullRequestReviewId . ,review-id)))
-         (input (list 'input variables))
-         (raw-response (ghub-graphql lgtm-github--submit-review-mutation input :auth 'lgtm)))
-    (message "Github GraphQL response to submitting a review = %s" raw-response)
-    ;; nil for no error
-    nil))
+The PR-INFO encodes the details that uniquely identify the PR."
+  (let ((review-id (lgtm-github--pr-info-review-id pr-info)))
+    (if review-id
+        (let* ((owner (lgtm-github--pr-info-owner pr-info))
+               (repo-name (lgtm-github--pr-info-repository-name pr-info))
+               (pull-number (lgtm-github--pr-info-number pr-info))
+               (resource (format "/repos/%s/%s/pulls/%d/reviews/%s/events" owner repo-name pull-number review-id))
+               (arguments '((event . "COMMENT") . (body . ""))))
+          (ghub-post resource arguments :auth 'lgtm))
+      (warn "No review initiated"))))
 
 (defun lgtm-github--get-comment-file (loc)
   "Get the position and file path of the a comment given the comment LOC.
@@ -437,42 +599,9 @@ Returns a alist that matches the query constructors."
          (line (lgtm-comment-location-end-line loc))
          (path (lgtm--path-of-file-at-version (lgtm-comment-location-version loc) modified-file)))
     (pcase (lgtm-comment-location-version loc)
-      ('base `((path . ,path) (startLine . ,start-line) (line . ,line) (side . "LEFT") (startSide . "LEFT")))
-      ('current `((path . ,path) (startLine . ,start-line) (line . ,line) (side . "RIGHT") (startSide . "RIGHT")))
+      ('base `((path . ,path) (start_line . ,start-line) (line . ,line) (side . "LEFT") (start_side . "LEFT")))
+      ('current `((path . ,path) (start_line . ,start-line) (line . ,line) (side . "RIGHT") (start_side . "RIGHT")))
       (_ (error "Invalid version for file location %s" loc)))))
-
-(defun lgtm-github--create-review-comment (pr-info pull-request-review-id comment)
-  "Create an unpublished COMMENT under the current review.
-
-This uses the REPOSITORY and PR-ID to create the request.  The FILE
-is required because the COMMENT only contains a ref.
-
-The REVIEW-ID is the draft review to attach the comment to.
-
-Returns the id of the comment."
-  (let* ((pull-request-id (lgtm-github--pr-info-id pr-info))
-         (body (lgtm-comment-content comment))
-         (loc (lgtm-comment-location comment))
-         (reply-to-id (lgtm-comment-reply-to-id comment))
-         ;; (parent (lgtm-comment-parent comment))
-         )
-    (cond
-     ((not loc) (let* ((variables `((body . ,body) (clientMutationId . ,lgtm-github--client-id) (subjectId . ,pull-request-id)))
-                       (input (list 'input variables))
-                       (raw-response (ghub-graphql lgtm-github--create-review-comment-mutation input :auth 'lgtm)))
-                  (message "Github GraphQL response to creating a top-level comment = %s" raw-response)
-                  t))
-     ;; FIXME: The reply is to the thread id and not the comment id
-     (reply-to-id (let* ((variables `((body . ,body) (clientMutationId . ,lgtm-github--client-id) (pullRequestReviewThreadId . ,reply-to-id) (pullRequestReviewId . ,pull-request-review-id)))
-                    (input (list 'input variables))
-                    (raw-response (ghub-graphql lgtm-github--create-comment-thread-reply-mutation input :auth 'lgtm)))
-               (message "Github GraphQL response to creating a thread comment = %s" raw-response)))
-     (t (let* ((pr-vars `((body . ,body) (pullRequestId . ,pull-request-id) (pullRequestReviewId . ,pull-request-review-id) (clientMutationId . ,lgtm-github--client-id)))
-               (loc-vars (lgtm-github--get-comment-file loc))
-               (input (list 'input (append pr-vars loc-vars)))
-               (raw-response (ghub-graphql lgtm-github--create-review-line-comment-mutation input :auth 'lgtm)))
-          (message "Github GraphQL response to creating a line comment = %s" raw-response)
-          t)))))
 
 (defun lgtm-github--make-config (shutdown-hook)
   "Create a lgtm config for Github repositories/PRs.
@@ -484,6 +613,9 @@ LGTM exits."
          (repository (lgtm-github--get-repository))
          (prs (lgtm-github--get-prs))
          (this-pr-id (seq-find (lambda (pr) (equal current-git-commit (lgtm-github--pr-ref-hash pr))) prs)))
+    ;; Note that repository and this-pr-id are just bootstrapping data.
+    ;;
+    ;; Ideally all of the functions doing real work should just take pr-info (of type lgtm-github--pr-info)
     (message "Creating a review configuration for repository %s/%s and PR ID = %s" username repository this-pr-id)
     (if this-pr-id
         (let* ((pr-info (lgtm-github--get-pr-info repository this-pr-id))
@@ -508,9 +640,8 @@ LGTM exits."
            :state (lgtm-github--pr-info-state pr-info)
            :review-state-backend review-state-backend
            :get-remote-conversations-function (lambda (file-manager) (lgtm-github--get-remote-conversations file-manager repository this-pr-id))
-           :get-or-create-draft-review-function (lambda () (lgtm-github--get-or-create-draft-review username repository pr-info this-pr-id))
-           :create-review-comment-function (lambda (review-id comment) (lgtm-github--create-review-comment pr-info review-id comment))
-           :submit-review-function (lambda (review-id) (lgtm-github--submit-review pr-info review-id))
+           :create-review-comment-function (lambda (file-manager comment) (lgtm-github--create-review-comment username file-manager pr-info comment))
+           :submit-review-function (lambda () (lgtm-github--submit-review pr-info))
            :shutdown-hook shutdown-hook))
       (error "Could not find a PR corresponding to `%s'" current-git-commit))))
 

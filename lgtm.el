@@ -64,13 +64,6 @@ reference.  Takes the username from the CONFIG."
     (puthash ref comment tbl)
     comment))
 
-(defun lgtm--create-reply-comment (_config _comment-manager _comment)
-  "Create a comment replying to COMMENT.
-
-Adds necessary metadata in the COMMENT-MANAGER.  This requires a CONFIG
-for the username."
-  (error "Unimplemented: lgtm--create-reply-comment"))
-
 ;;;; Private
 
 (defconst lgtm--comment-editor-buffer-name "*lgtm-comment*" "The name of the buffer that is used for editing comments.")
@@ -93,21 +86,13 @@ then updates the UI."
     (setf (lgtm-comment-content current-comment) new-content)
     (setf (lgtm--state-comment-being-edited lgtm--current-state) nil)
 
-    ;; FIXME:
-    ;;
-    ;; 1. Determine if this is a create or update of the comment (support update)
-    ;;
-    ;; 2. Handle top-level comments (non-file comments)
-
     ;; Send the comment to the server so that we can get its permanent server-side ID.  We need that
     ;; before we update the internal comment state.
     (let* ((config (lgtm--state-configuration lgtm--current-state))
            (create-comment-func (lgtm-configuration-create-review-comment-function config)))
       (if create-comment-func
-          (lgtm--with-draft-review-id lgtm--current-state
-                                            (lambda (review-id)
-                                              (let ((comment-id (funcall create-comment-func review-id current-comment)))
-                                                (setf (lgtm-comment-backend-data current-comment) comment-id))))
+          (let ((comment-id (funcall create-comment-func file-manager current-comment)))
+            (setf (lgtm-comment-backend-data current-comment) comment-id))
         (warn "No create comment function defined, not sending comment to server")))
 
     ;; Note: we only update overlays *if* this is a comment attached to a file. If this is a
@@ -375,11 +360,9 @@ from the local cache."
   (let* ((conf (lgtm--state-configuration lgtm--current-state))
          (submit-review-function (lgtm-configuration-submit-review-function conf)))
     (if (and submit-review-function (y-or-n-p "Publish review comments?"))
-        (lgtm--with-draft-review-id lgtm--current-state
-                                    (lambda (review-id)
-                                      (let ((error-result (funcall submit-review-function review-id)))
-                                        (when error-result
-                                          (error "Failed to submit review: `%s'" error-result)))))
+        (let ((error-result (funcall submit-review-function)))
+          (when error-result
+            (error "Failed to submit review: `%s'" error-result)))
       (warn "No function is defined to submit the review"))))
 
 (defun lgtm--edit-comment (state comment-ref)
@@ -742,16 +725,11 @@ The FUNC is called as (funcall func current-index total-comments)."
 
 If the comment is new/draft, edit it.  Otherwise, create a reply and edit it."
   (interactive)
-  (let ((config (lgtm--state-configuration lgtm--current-state))
-        (comment-manager (lgtm--state-comment-manager lgtm--current-state))
-        (comment (lgtm--create-comment-at-point lgtm--current-state)))
+  (let ((comment (lgtm--create-comment-at-point lgtm--current-state)))
     ;; After we get the location, clear the mark in case the user had highlighted a region to
     ;; comment on
     (deactivate-mark)
-    (if (lgtm-comment-is-published comment)
-        (let ((reply-comment (lgtm--create-reply-comment config comment-manager comment)))
-          (lgtm--edit-comment lgtm--current-state (lgtm-comment-ref reply-comment)))
-      (lgtm--edit-comment lgtm--current-state (lgtm-comment-ref comment)))))
+    (lgtm--edit-comment lgtm--current-state (lgtm-comment-ref comment))))
 
 (defun lgtm-jump-to-ediff-control-pane ()
   "From the ediff review panes, jump back to the control pane."

@@ -172,19 +172,6 @@ and file manager that fetches any remote conversations attached to the review.
 
 Called with a single argument, the file manager, which is used to associate
 conversations with files.")
-  (get-or-create-draft-review-function nil :read-only t :documentation "A function to create a draft review on the server.
-
-This will return the existing active review, if any.
-
-This function must return a unique id that can be used to refer to the draft
-review.  That id will be used to create new draft comments and to submit the
-comments.  If this function returns nil, none of the remote operations will
-be performed.
-
-The draft review ID is stored in the current review state.  The review ID is
-opaque to this package.
-
-Called with no arguments.")
   (create-review-comment-function nil :read-only t :documentation "A function to create a draft comment in
 the current active review.
 
@@ -193,8 +180,7 @@ This function is called with the review id and the comment object.
 If the location is nil, the comment is
 a top-level comment on the review as a whole.
 
-Called with two arguments: the review id (from
-get-or-create-draft-review) and the comment to create.
+Called with the comment to create.
 
 This function should return the identifier of the comment.")
   (update-review-comment-function nil :read-only t :documentation "Update the content of a review comment.")
@@ -203,7 +189,7 @@ This function should return the identifier of the comment.")
 This is called with the review id and the comment id.  This will fail if the
 comment is already published.")
   (submit-review-function nil :read-only t :documentation "A function to submit the draft review to
-the server.  It is called with the unique id assigned to the draft review.
+the server.  It is called with no arguments.
 
 Returns `nil' on success.  Otherwise, returns an error message.")
   (approve-review-function nil :read-only t :documentation "A function called with this configuration and the
@@ -581,9 +567,7 @@ file currently being reviewed.")
 
 This is used as a handle to the state for the current review state on the
 server. This field is lazily populated when the first operation that
-requires it is executed.
-
-See `lgtm--with-draft-view-id' as the intended interface.")
+requires it is executed.")
   (comment-manager (make-lgtm--comment-manager) :read-only t :documentation "The manager/index of all comments in the review.")
   (file-manager (make-lgtm--modified-file-manager) :read-only t :documentation "The manager/index of all modified files in the review.")
   (review-file-buffers '() :documentation "The buffers created to review individual files in the changeset.
@@ -594,27 +578,6 @@ buffers incrementally when ediff views are closed, but we also do a pass at
 the end in case any buffers are missed.
 
 [tag:buffer-cleanup]"))
-
-(defun lgtm--get-or-create-draft-review (state)
-  "Get the id of the draft review.
-
-Creates a new draft review, if required.  This uses the functions
-defined in the CONFIG and updates the STATE, if possible.  Uses the
-id cached in the STATE, if any.
-
-If the creation function is not defined or fails, this returns nil and
-no server-side updates will be done."
-  (if (lgtm--state-draft-review-id state)
-      (lgtm--state-draft-review-id state)
-    (progn
-      (let* ((config (lgtm--state-configuration state))
-             (draft-id-func (lgtm-configuration-get-or-create-draft-review-function config)))
-        (if draft-id-func
-            (let ((draft-id (funcall draft-id-func)))
-              (when draft-id
-                (setf (lgtm--state-draft-review-id state) draft-id))
-              draft-id)
-          nil)))))
 
 (defun lgtm--get-selected-buffer-tag (state)
   "Get the tag of the active buffer.
@@ -794,18 +757,6 @@ The STATE is required here to access saved review comments."
     (pcase modification-type
       ((or 'renamed 'copied) (format "  %s [%s] %s -> %s%s" modification-status-string modification-type-string base-filename current-filename comment-count-string))
       (_ (format "  %s [%s] %s%s" modification-status-string modification-type-string current-filename comment-count-string)))))
-
-(defun lgtm--with-draft-review-id (state k)
-  "Run a continuation K with the active draft review id.
-
-Uses STATE to get the id.  Issues a warning and does not call the callback if
-there is no draft review id (and one cannot be created).  This could fail due to
-a transient network error; it is more likely that it will fail if a backend
-has not implemented the function to create a draft review."
-  (let ((review-id (lgtm--get-or-create-draft-review state)))
-    (if review-id
-        (funcall k review-id)
-      (warn "Unable to create a draft review"))))
 
 ;;; Generic Trees
 
