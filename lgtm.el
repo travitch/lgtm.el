@@ -121,10 +121,7 @@ comments are discarded."
                  (remhash comment-ref comment-table)))
              comment-table))
 
-  (kill-buffer lgtm--comment-editor-buffer-name)
-  (quit-restore-window
-   (get-buffer-window (current-buffer))
-   'kill))
+  (quit-restore-window (get-buffer-window lgtm--comment-editor-buffer-name) 'kill))
 
 (defun lgtm--insert-top-level-comment-summary (comment)
   "Insert a string summary of the COMMENT."
