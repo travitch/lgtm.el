@@ -7,7 +7,7 @@
 ;; Maintainer: Tristan Ravitch <tristan@ravit.ch>
 ;; URL: https://github.com/travitch/lgtm.el
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "29.1") (magit-section "4.3.5") (uuidgen "1.3"))
+;; Package-Requires: ((emacs "29.1") (magit-section "4.3.5") (uuidgen "1.3") (ghub "5.0.0"))
 ;; Keywords: convenience tools, code review, git
 
 ;; This file is not part of GNU Emacs.
