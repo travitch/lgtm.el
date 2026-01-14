@@ -860,7 +860,9 @@ resolved comments.  The returned alist is sorted by location."
 
     ;; Now sort all of the child lists by timestamp so that they render sensibly
     (let ((sort-key (lambda (tree-node) (lgtm-comment-created-timestamp (lgtm--tree-value tree-node)))))
-      (maphash (lambda (_comment-id tree-node) (sort (lgtm--tree-children tree-node) :key sort-key :in-place t))
+      (maphash (lambda (_comment-id tree-node)
+                 (let ((sorted-children (seq-sort-by sort-key #'value< (lgtm--tree-children tree-node))))
+                   (setf (lgtm--tree-children tree-node) sorted-children)))
                comment-ref-to-tree))
 
     (let ((index-source 0)
@@ -945,7 +947,9 @@ a repository)."
         (warn "Unable to find the repository containing commit `%s'" commit)))
 
     ;; Sort the lists of referenced commit indices so that the last one is the oldest commit.
-    (maphash (lambda (_repository-path referenced-commit-indices) (sort referenced-commit-indices :in-place t))
+    (maphash (lambda (repository-path referenced-commit-indices)
+               (let ((sorted (seq-sort #'value< referenced-commit-indices)))
+                 (puthash repository-path sorted referenced-commits-table)))
              referenced-commits-table)
 
     (let ((repositories (seq-map (lambda (hist-entry)
