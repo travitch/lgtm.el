@@ -275,7 +275,7 @@ id."
        :backend-data .id
        :is-published t
        :location loc
-       :content (string-replace "\r\n" "\n" .body)
+       :content .body
        :author .author.login
        :parent .replyTo.id
        :reply-to-id (string-to-number .fullDatabaseId)

@@ -159,6 +159,7 @@ text to a reasonable width.  If provided, indent by INDENT spaces."
         (funcall lgtm-comment-major-mode))
 
       (insert str)
+      (recode-region (point-min) (point-max) 'utf-8-dos 'utf-8-unix)
       (fill-region (point-min) (point-max))
       (font-lock-ensure)
       (when indent
