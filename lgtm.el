@@ -159,8 +159,14 @@ text to a reasonable width.  If provided, indent by INDENT spaces."
         (funcall lgtm-comment-major-mode))
 
       (insert str)
+      ;; Attempt to clean up any Windows line endings to avoid rendering them as ^M in the buffer.
+      ;; This should be fine because emacs can render either and this output isn't saved
+      ;; persistently.  It is only used to render visually.
       (recode-region (point-min) (point-max) 'utf-8-dos 'utf-8-unix)
       (fill-region (point-min) (point-max))
+
+      ;; Since this buffer is not shown anywhere, we have to call this function to force font
+      ;; locking to pick up any syntax highlighting from the comment mode.
       (font-lock-ensure)
       (when indent
         (let ((indentation (string-pad "" indent (string-to-char " "))))
@@ -174,6 +180,9 @@ text to a reasonable width.  If provided, indent by INDENT spaces."
     (with-current-buffer temp-buffer
       (diff-mode)
       (insert str)
+
+      ;; Since this buffer is not shown anywhere, we have to call this function to force font
+      ;; locking to pick up any syntax highlighting from the diff mode.
       (font-lock-ensure))
     (insert-buffer-substring temp-buffer)
     (kill-buffer temp-buffer)))
@@ -286,7 +295,13 @@ REVISION from git REPOSITORY."
        (with-current-buffer current-buffer major-mode)))))
 
 (defun lgtm--setup-review-buffers (state modified-file)
-  "Create the old/new file buffers for MODIFIED-FILE, storing in STATE."
+  "Create the old/new file buffers for MODIFIED-FILE, storing in STATE.
+
+This function requires the current revision to be present on disk.  It
+uses the on-disk files to back the buffers for the current revision.  It
+creates in-memory buffers for the base revision, which it extracts from
+the git history.  By using files on disk for the current revision, it
+enables development tools (e.g., LSPs) to be used during reviews."
   (let* ((repository (lgtm--modified-file-repository modified-file))
          (repository-path (lgtm-repository-path repository))
          (current-revision-file-name (lgtm--modified-file-current-filename modified-file))

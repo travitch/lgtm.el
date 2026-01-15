@@ -247,23 +247,24 @@ This is useful for things like the server-side comment id.")
   (ref nil :read-only t :documentation "The immutable reference for this comment.")
   (location nil :read-only t :documentation "The location the comment is attached to.
 
-If this conversation is attached to a file, the location must be a line number
-or a range of lines.
-Otherwise, the conversation is top-level and must have a `nil' location.")
+If this conversation is attached to a file, the location must be a line
+number or a range of lines.  Otherwise, the conversation is top-level
+and must have a `nil' location.")
   (is-published nil :documentation "Boolean indicating whether or not the comment is published")
   (author nil :read-only t :documentation "The author of the comment.")
   (created-timestamp nil :read-only t :documentation "The time at which the comment was posted.")
   (updated-timestamp nil :read-only t :documentation "The time at which the comment was updated.")
   (parent nil :read-only t :documentation "The parent of the comment, if any.
 
-The parent ID is the backend ID of the parent comment (i.e., the ID used on
-the server side).
+The parent ID is the backend ID of the parent comment (i.e., the ID used
+on the server side).
 
-Note that the hierarchical relationship between comments is parsed when comments
-are fetched from the server.")
+Note that the hierarchical relationship between comments is parsed when
+comments are fetched from the server.")
   (reply-to-id nil :read-only t :documentation "The identifier of the object to reply to when
-communicating with the server.  This may or may not be the direct parent, but this
-value is passed to the server as the object being replied to.")
+communicating with the server.  This may or may not be the direct
+parent, but this value is passed to the server as the object being
+replied to.")
   (content nil :documentation "The content of the comment."))
 
 (cl-defstruct lgtm--comment-manager
