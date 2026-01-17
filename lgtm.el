@@ -57,7 +57,7 @@ reference.  Takes the username from the CONFIG."
          (comment (make-lgtm-comment :ref ref
                                      :location location
                                      :author user
-                                     :reply-to-id reply-to-id
+                                     :parent reply-to-id
                                      :is-published nil
                                      :content ""))
          (tbl (lgtm--comment-manager-table comment-manager)))

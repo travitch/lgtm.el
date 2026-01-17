@@ -70,7 +70,7 @@
     (repository [(owner $owner String!) (name $name String!)]
                 (pullRequest [(number $number Int!)]
                              (reviewThreads [(:edges t)] diffSide id startLine line path
-                                            (comments [(:edges t)] (author login) body createdAt id (replyTo id) updatedAt fullDatabaseId))))))
+                                            (comments [(:edges t)] (author login) body createdAt id (replyTo id fullDatabaseId) updatedAt fullDatabaseId))))))
 
 (defconst lgtm-github--get-pr-top-level-comments-query
   '(query
@@ -269,15 +269,15 @@ identifier for the thread containing the comment.  This is important as
 replies to any comment in this thread should be attached to this thread
 id."
   (let-alist (lgtm-github--graphql-select comment-item '(node))
-    (let ((ref (make-lgtm-comment-ref :id .id)))
+    (let ((ref (make-lgtm-comment-ref :id (string-to-number .fullDatabaseId))))
       (make-lgtm-comment
        :ref ref
-       :backend-data .id
+       :backend-data (string-to-number .fullDatabaseId)
        :is-published t
        :location loc
        :content .body
        :author .author.login
-       :parent .replyTo.id
+       :parent (if .replyTo.fullDatabaseId (string-to-number .replyTo.fullDatabaseId) nil)
        :reply-to-id (string-to-number .fullDatabaseId)
        :created-timestamp (lgtm-github--parse-timestamp .createdAt)
        :updated-timestamp (lgtm-github--parse-timestamp .updatedAt)))))
