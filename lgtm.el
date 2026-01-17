@@ -146,7 +146,7 @@ The IDX (index) is provided as context and can be used in formatting."
 
 (defun lgtm--repository-of-modified-file (modified-file)
   "Return the repository name of the MODIFIED-FILE."
-  (lgtm-repository-name (lgtm--modified-file-repository modified-file)))
+  (lgtm--repository-ref-name (lgtm--modified-file-repository-ref modified-file)))
 
 (defun lgtm--render-string-with-comment-mode (str &optional indent)
   "Render the STR into the current buffer.
@@ -259,9 +259,11 @@ where the entire buffer is being redrawn."
       (magit-insert-section (list-section)
         (magit-insert-heading (insert (propertize "Commits" 'font-lock-face '(:background "light gray"))))
 
-        (let ((grouped-files (seq-group-by #'lgtm--modified-file-repository (lgtm--modified-file-manager-modified-files file-manager))))
+        (let ((grouped-files (seq-group-by #'lgtm--modified-file-repository-ref (lgtm--modified-file-manager-modified-files file-manager))))
           (seq-doseq (group grouped-files)
-            (let ((repo (car group)))
+            (let* ((repo-ref (car group))
+                   (repo (seq-find (lambda (r) (lgtm--repository-ref-matches r repo-ref)) (lgtm-configuration-repositories config))))
+              (cl-assert repo t "Invariant: repository references must refer to a repository in the configuration")
               (magit-insert-section (list-section)
                 (magit-insert-heading (insert "  " (propertize (lgtm-repository-name repo) 'font-lock-face 'bold)))
                 (seq-doseq (commit (lgtm-repository-commits repo))
@@ -277,12 +279,12 @@ where the entire buffer is being redrawn."
   (interactive)
   (lgtm--render-review-overview-ui))
 
-(defun lgtm--populate-file-contents-at-revision (repository revision file)
+(defun lgtm--populate-file-contents-at-revision (repository-ref revision file)
   "Populate the current buffer with file contents from git.
 
 The BUFFER is populated with the contents of the given FILE at the given
-REVISION from git REPOSITORY."
-  (let* ((default-directory (lgtm-repository-path repository))
+REVISION from git REPOSITORY-REF."
+  (let* ((default-directory (lgtm--repository-ref-path repository-ref))
          (git-command (format "git show '%s:%s'" revision file)))
       ;; Pipes the output from git into the current buffer
       (call-process-shell-command git-command nil t)))
@@ -302,8 +304,8 @@ uses the on-disk files to back the buffers for the current revision.  It
 creates in-memory buffers for the base revision, which it extracts from
 the git history.  By using files on disk for the current revision, it
 enables development tools (e.g., LSPs) to be used during reviews."
-  (let* ((repository (lgtm--modified-file-repository modified-file))
-         (repository-path (lgtm-repository-path repository))
+  (let* ((repository-ref (lgtm--modified-file-repository-ref modified-file))
+         (repository-path (lgtm--repository-ref-path repository-ref))
          (current-revision-file-name (lgtm--modified-file-current-filename modified-file))
          (current-revision-file-path (format "%s/%s" repository-path current-revision-file-name))
          (current-revision-buffer (find-file-noselect current-revision-file-path))
@@ -324,8 +326,8 @@ enables development tools (e.g., LSPs) to be used during reviews."
       (let ((inhibit-read-only t))
         (erase-buffer)
         (unless (eq 'added (lgtm--modified-file-type modified-file))
-          (let ((base-revision (lgtm-repository-base-revision (lgtm--modified-file-repository modified-file))))
-            (lgtm--populate-file-contents-at-revision repository base-revision base-revision-file-name))))
+          (let ((base-revision (lgtm--repository-ref-base-revision (lgtm--modified-file-repository-ref modified-file))))
+            (lgtm--populate-file-contents-at-revision repository-ref base-revision base-revision-file-name))))
       (read-only-mode))
 
     (setf (lgtm--state-base-revision-buffer state) base-revision-buffer)

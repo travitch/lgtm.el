@@ -132,6 +132,18 @@ it is the same as the current file."
 
 ;;; * Repositories
 
+(cl-defstruct lgtm--repository-ref
+  "A reference to a repository in the repository list.
+
+The repository list is stored in th `lgtm-configuration'.
+
+Repositories should be referenced with these as the full repository can have
+a lot of data in it (e.g., the commits) that we do not want to be involved in
+sorting or equality tests."
+  (name nil :read-only t :documentation "The human-readable name of the repository")
+  (path nil :read-only t :documentation "The path to the repository on disk")
+  (base-revision nil :read-only t :documentation "The base revision commit hash of the change in the repository"))
+
 ;; The type of repositories comprising a changeset.
 ;;
 ;; A repository is required to already exist on disk. Each repository is simply a path to a git
@@ -147,6 +159,12 @@ the change in this repository.
 This is an alist where keys are commit hashes and the values are commit
 messages.")
   (path nil :read-only t :documentation "The path to the repository on disk"))
+
+(defun lgtm--repository-ref-matches (repository repository-ref)
+  "Return non-nil if REPOSITORY-REF refers to REPOSITORY."
+  (and (equal (lgtm-repository-name repository) (lgtm--repository-ref-name repository-ref))
+       (equal (lgtm-repository-path repository) (lgtm--repository-ref-path repository-ref))
+       (equal (lgtm-repository-base-revision repository) (lgtm--repository-ref-base-revision repository-ref))))
 
 ;;; * Configurations
 
@@ -443,7 +461,7 @@ This requires a FILE-MANAGER to get the mutable file state."
 ;; The filenames do not include the repository path, as we have a reference to the repository.
 ;; Mutable state associated with modified files is stored in the modified file manager.
 (cl-defstruct lgtm--modified-file
-  (repository nil :read-only t :documentation "The repository containing the file")
+  (repository-ref nil :read-only t :documentation "A reference to the repository containing the file")
   (type nil :read-only t :documentation "The type of modification applied to the file.
 These are symbols based on the modification types from git and are one of:
 - modified
@@ -667,16 +685,19 @@ the containing REPOSITORY.
 
 This assumes that the working directory is set to the repository
 containing the file."
-  (let ((elements (split-string git-modified-entry)))
+  (let ((elements (split-string git-modified-entry))
+        (repository-ref (make-lgtm--repository-ref :name (lgtm-repository-name repository)
+                                                   :path (lgtm-repository-path repository)
+                                                   :base-revision (lgtm-repository-base-revision repository))))
     (pcase elements
       (`(,type ,filename) (make-lgtm--modified-file
-                           :repository repository
+                           :repository-ref repository-ref
                            :type (lgtm--parse-modified-type type)
                            :current-filename filename
                            :current-file-hash (lgtm--hash-of-file-at-revision filename "HEAD")
                            :base-file-hash (lgtm--hash-of-file-at-revision filename (lgtm-repository-base-revision repository))))
       (`(,type ,base-filename ,filename) (make-lgtm--modified-file
-                                          :repository repository
+                                          :repository-ref repository-ref
                                           :type (lgtm--parse-modified-type type)
                                           :current-filename filename
                                           :current-file-hash (lgtm--hash-of-file-at-revision filename "HEAD")
@@ -735,11 +756,11 @@ Format TY as a string suitable for display in the UI."
   "Format the diff for a single MODIFIED-FILE.
 
 This diff is meant to be used in the main UI as a preview of the change."
-  (let* ((default-directory (lgtm-repository-path (lgtm--modified-file-repository modified-file)))
+  (let* ((default-directory (lgtm--repository-ref-path (lgtm--modified-file-repository-ref modified-file)))
          (current-filename (lgtm--modified-file-current-filename modified-file))
          (base-filename (lgtm--modified-file-base-filename modified-file))
          (real-base-filename (if base-filename base-filename current-filename))
-         (base-revision (lgtm-repository-base-revision (lgtm--modified-file-repository modified-file))))
+         (base-revision (lgtm--repository-ref-base-revision (lgtm--modified-file-repository-ref modified-file))))
 
     (pcase (lgtm--modified-file-type modified-file)
       ('deleted (let ((git-diff-command (format "git diff %s -- %s" base-revision real-base-filename)))
