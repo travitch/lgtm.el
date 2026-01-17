@@ -378,11 +378,14 @@ from the local cache."
             (error "Failed to submit review: `%s'" error-result)))
       (warn "No function is defined to submit the review"))))
 
-(defun lgtm--edit-comment (state comment-ref)
+(defun lgtm--edit-comment (state edit-banner-text comment-ref)
   "Open the comment editor for the current comment in STATE.
 
 This updates the state to mark the given COMMENT-REF as the current comment.
-Doing so here ensures that no call can forget to update the current comment."
+Doing so here ensures that no call can forget to update the current comment.
+
+The EDIT-BANNER-TEXT is displayed as an overlay to show the user what editing
+context they are in."
   (setf (lgtm--state-comment-being-edited state) comment-ref)
   (let* ((comment-manager (lgtm--state-comment-manager state))
          (current-comment-ref (lgtm--state-comment-being-edited state))
@@ -391,6 +394,11 @@ Doing so here ensures that no call can forget to update the current comment."
     (display-buffer buffer lgtm-comment-buffer-action)
     (with-current-buffer buffer
       (erase-buffer)
+
+      (when (eq 'simple lgtm-comment-editor-banner)
+        (let ((ov (make-overlay (point-min) (point-min))))
+          (overlay-put ov 'before-string (propertize (format "%s\n" edit-banner-text) 'face 'lgtm-default-comment-face))))
+
       (insert (lgtm-comment-content current-comment))
       (when lgtm-comment-major-mode
         (funcall lgtm-comment-major-mode))
@@ -412,7 +420,7 @@ Top-level comments are associated with the review and not a range of code."
          (comment (lgtm--make-new-comment-object config comment-manager nil))
          (ref (lgtm-comment-ref comment)))
     (lgtm--comment-manager-add-top-level comment-manager ref)
-    (lgtm--edit-comment lgtm--current-state ref)))
+    (lgtm--edit-comment lgtm--current-state "Editing a top level comment" ref)))
 
 (defun lgtm-mark-selected-modified-file-reviewed ()
   "Mark the modified file selected in the UI as having been reviewed.
@@ -717,7 +725,7 @@ The FUNC is called as (funcall func current-index total-comments)."
                                                                     :location loc))
            (reply-comment (lgtm--make-new-comment-object config comment-manager reply-to-id file-comment-location)))
 
-      (lgtm--edit-comment lgtm--current-state (lgtm-comment-ref reply-comment)))))
+      (lgtm--edit-comment lgtm--current-state "Editing reply comment" (lgtm-comment-ref reply-comment)))))
 
 (defun lgtm--create-comment-at-point (state)
   "Create a new comment at the point based on STATE."
@@ -742,7 +750,7 @@ If the comment is new/draft, edit it.  Otherwise, create a reply and edit it."
     ;; After we get the location, clear the mark in case the user had highlighted a region to
     ;; comment on
     (deactivate-mark)
-    (lgtm--edit-comment lgtm--current-state (lgtm-comment-ref comment))))
+    (lgtm--edit-comment lgtm--current-state "Editing a new file comment" (lgtm-comment-ref comment))))
 
 (defun lgtm-jump-to-ediff-control-pane ()
   "From the ediff review panes, jump back to the control pane."

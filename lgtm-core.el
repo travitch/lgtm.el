@@ -80,6 +80,14 @@ Set this to nil to disable storing file review statuses."
   :group 'lgtm
   :type 'sexp)
 
+(defcustom lgtm-comment-editor-banner 'simple
+  "Defines the type of banner to show at the top of the comment editor.
+
+The value can be \='simple for a simple banner.  Any other value will cause the
+banner to not be rendered."
+  :type 'symbol
+  :group 'lgtm)
+
 ;;; Faces
 
 (defface lgtm-default-comment-face

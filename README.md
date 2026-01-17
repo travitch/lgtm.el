@@ -74,6 +74,7 @@ The following configuration options can customized:
 - `lgtm-comment-major-mode` specifies the mode used to render comments in the UI as well as the major mode used to edit comments
 - `lgtm-comment-mode-hook` is a hook called after `lgtm-comment-major-mode` is enabled in the comment editor
 - `lgtm-timestamp-format` is the format string passed to `format-time-string` to format timestamps
+- `lgtm-comment-editor-banner` is the format that should be used to render a banner in the comment editor; it can be set to `nil` to suppress the banner
 
 The default comment major mode is the built-in `text-mode`.  You are likely to want to change it to
 `markdown-mode`.  The only reason that Markdown is not the default is to minimize dependencies.
