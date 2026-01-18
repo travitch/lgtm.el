@@ -92,6 +92,37 @@
     (let ((loc-2-comments (alist-get location2 locs nil nil 'equal)))
       (should (equal loc-2-comments '())))))
 
+;; Testing what happens when the server returns the comments with the newer timestamp first
+(ert-deftest test-index-two-comments-at-same-loc-reversed ()
+  (let* ((c1 (make-lgtm-comment :backend-data "backend-id-1"
+                                :ref "ref-1"
+                                :location (make-test-location 1)
+                                :created-timestamp 6
+                                :parent nil
+                                :content "content1"))
+         (c2 (make-lgtm-comment :backend-data "backend-id-2"
+                                :ref "ref-2"
+                                :location (make-test-location 1)
+                                :created-timestamp 5
+                                :parent nil
+                                :content "content2"))
+         (locs (lgtm--index-comments (list c1 c2))))
+
+    (should (equal (length locs) 1))
+
+    (let ((loc-1-comments (alist-get location1 locs nil nil 'equal)))
+      (should (equal (length loc-1-comments) 2))
+      ;; These are two independent threads, each with a single top-level element
+      (let ((pcomment1 (elt (elt loc-1-comments 0) 0))
+            (pcomment2 (elt (elt loc-1-comments 1) 0)))
+        (should (equal (lgtm--positioned-comment-indent pcomment1) 0))
+        (should (equal (lgtm--positioned-comment-indent pcomment2) 0))
+        ;; c1 should be first because it has a lower timestamp
+        (should (equal (lgtm--positioned-comment-comment pcomment1) c1))))
+
+    (let ((loc-2-comments (alist-get location2 locs nil nil 'equal)))
+      (should (equal loc-2-comments '())))))
+
 (ert-deftest test-index-two-comment-thread ()
   (let* ((c1 (make-lgtm-comment :backend-data "backend-id-1"
                                 :ref "ref-1"
