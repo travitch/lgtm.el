@@ -60,10 +60,24 @@ lgtm.el attempts to keep its dependency list small:
 - Persist review state locally until it is submitted to the server
 - Changesets are files on disk, so your normal development tools (e.g., LSPs) just work
 
-Note that the Github adapter is still a work in progress.  Some features work but there are some
-bugs in comment handling.
+## Github Adapter Notes
+
+There are currently some limitations in the Github adapter:
+
+- Due to limitations in the Github REST API, it can only leave line-level comments on lines that appear in a PR diff
 
 # Installation
+
+To install using straight.el:
+
+```
+(use-package lgtm
+  :straight (:host github :repo "travitch/lgtm.el")
+  :commands (lgtm-github-review-pr)
+  :init
+  ;; Optional configuration
+  (setopt lgtm-comment-major-mode #'markdown-mode))
+```
 
 # Configuration
 
