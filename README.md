@@ -191,7 +191,7 @@ would have been difficult.
 
 ## emacs-review-pr
 
-The `emacs-review-r` package (https://github.com/blahgeek/emacs-pr-review) is a similar system
+The `emacs-review-pr` package (https://github.com/blahgeek/emacs-pr-review) is a similar system
 specialized to Github pull requests.  It supports more Github features than `lgtm` (e.g., showing
 the status of automated checks).  It provides a diff-oriented view of changes in the same style as
 the Github web UI, while `lgtm` is attempting to provide a more interactive review experience and
