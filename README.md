@@ -62,6 +62,14 @@ lgtm.el attempts to keep its dependency list small:
 
 ## Github Adapter Notes
 
+The Github adapter uses the [ghub](https://github.com/magit/ghub) package to interact with Github.
+The easiest way to set up auth is to create a personal access token.  With that, you can add an
+entry like the following to `~/.authinfo.gpg`:
+
+```
+machine api.github.com login $USERNAME^lgtm password $TOKEN
+```
+
 There are currently some limitations in the Github adapter:
 
 - Due to limitations in the Github REST API, it can only leave line-level comments on lines that appear in a PR diff
@@ -165,6 +173,8 @@ the relevant keybindings.  Beyond that, lgtm.el introduces two key bindings:
 
 # Similar Packages
 
+There are a few other code review UIs for emacs.
+
 ## git-review
 
 This package builds on ideas and some code from `git-review`
@@ -179,4 +189,10 @@ Bitbucket. It provides deeper integrations with forges than `lgtm`; however, tha
 difficult to customize. Adding support for code reviews that span multiple coordinated repositories
 would have been difficult.
 
-If code-review suits your needs, it will probably always have a more comprehensive UX than `lgtm`.
+## emacs-review-pr
+
+The `emacs-review-r` package (https://github.com/blahgeek/emacs-pr-review) is a similar system
+specialized to Github pull requests.  It supports more Github features than `lgtm` (e.g., showing
+the status of automated checks).  It provides a diff-oriented view of changes in the same style as
+the Github web UI, while `lgtm` is attempting to provide a more interactive review experience and
+make development tools available during the review process.
