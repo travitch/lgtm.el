@@ -147,8 +147,10 @@ The overview UI also inherits all of the default keybindings from `magit-section
 
 - `n` highlights the next changed hunk in the diff (`lgtm-next-hunk`)
 - `p` highlights the previous changed hunk in the diff (`lgtm-previous-hunk`)
-- `M-n` selects the next comment (`lgtm-select-next-comment`)
-- `M-p` selects the previous comment (`lgtm-select-previous-comment`)
+- `M-n` selects the next thread (`lgtm-select-next-thread`)
+- `M-p` selects the previous thread (`lgtm-select-previous-thread`)
+- `C-M-n` selects the next comment in the currently-selected thread
+- `C-M-p` selects the previous comment in the currently-selected thread
 - `R` opens the comment editor to draft a reply to the selected comment (`lgtm-reply-to-selected-comment`)
 - `C` opens the comment editor to draft a comment that covers the lines in the file selected by the region (`lgtm-conversation-dwim`)
 - `0` resets the selected comment (`lgtm-clear-selected-comment`)

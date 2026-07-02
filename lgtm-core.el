@@ -98,21 +98,271 @@ banner to not be rendered."
   '((t :extend t :background "light goldenrod"))
   "Face used to highlight comments that are selected.")
 
+;;; Generic Trees
+
+(cl-defstruct lgtm--tree
+  "A simple n-ary tree data structure.
+
+While it is easy to represent trees in elisp using nested lists, this
+explicit structure makes the intent clearer.  The empty tree is represented
+by nil."
+  (value nil :read-only t :documentation "The value at this tree node")
+  (children '() :documentation "The children of this tree node"))
+
+(defun lgtm--tree-add-child (tree c)
+  "Add child element C to tree TREE."
+  (push c (lgtm--tree-children tree)))
+
 ;;; Type Definitions
+
+(cl-defstruct lgtm--comment-threads
+  "The representation of comment threading structure.
+
+The fields are read-only, but the structures in them are mutated as
+threads are modified."
+  (comment-tree-nodes (make-hash-table :test 'equal) :read-only t :documentation "A map from comment refs to their respective
+tree nodes.  Each comment has a tree node.  Tree nodes contain children
+as a list (if any).")
+  (server-comment-ids (make-hash-table :test 'equal) :read-only t :documentation "A map from server side comment ids
+to internal comment ref structures.  This is used to calculate
+parent relationships.")
+  (location-roots (make-hash-table :test 'equal) :read-only t :documentation "A map from locations to the list of
+root nodes (thread roots) at that location."))
+
+(defun lgtm--comment-threads-comment-count (comment-threads)
+  "Return the number of comments in COMMENT-THREADS."
+  (hash-table-count (lgtm--comment-threads-comment-tree-nodes comment-threads)))
+
+(defun lgtm--comment-threads-alist (comment-threads)
+  "Convert COMMENT-THREADS into an alist.
+
+The keys of the alist are source lines.  The entries in the alist are
+lists of threads, which are tree nodes corresponding to root comments.
+When there are multiple threads rooted at the same location, they are
+sorted by timestamp."
+  (let ((location-threads-alist '()))
+
+    (maphash (lambda (loc root-comment-refs-at-loc)
+               (let ((comment-trees-at-loc (seq-map (lambda (comment-root-ref)
+                                                      (gethash comment-root-ref (lgtm--comment-threads-comment-tree-nodes comment-threads)))
+                                                    root-comment-refs-at-loc)))
+                 (push `(,loc . ,comment-trees-at-loc) location-threads-alist)))
+             (lgtm--comment-threads-location-roots comment-threads))
+
+    (seq-sort-by (lambda (pair) (car pair)) #'< location-threads-alist)))
+
+(defun lgtm--comment-threads-ordered (comment-threads)
+  "Return the threads in COMMENT-THREADS.
+
+The threads are each tree nodes corresponding to root comments.  The
+threads are in order sorted by location and match
+`lgtm--comment-threads-alist' for consistency with comment rendering."
+  (let ((threads-alist (lgtm--comment-threads-alist comment-threads)))
+    (seq-mapcat (lambda (located-threads) (cdr located-threads)) threads-alist)))
+
+(defun lgtm--comment-thread-root-comments (comment-threads)
+  "Return the root comments of each thread in COMMENT-THREADS.
+
+The comments are in the same order as used in the renderer, as dictated
+by `lgtm--comment-threads-alist'."
+  (seq-map #'lgtm--tree-value (lgtm--comment-threads-ordered comment-threads)))
+
+(defun lgtm--comment-location-key (comment)
+  "Compute a location for sorting/locating COMMENT in threads.
+
+This unifies the logic for file comments and top-level comments."
+  (let ((loc (lgtm-comment-location comment)))
+    (if loc
+        (lgtm-comment-location-start-line loc)
+      'top-level)))
+
+(cl-defstruct lgtm--selected-comment
+  "An index into a selected comment in a file."
+  (version nil :read-only t :documentation "The version of the file; \='base or \='current.")
+  (thread nil :read-only t :documentation "The selected thread; must not be nil.")
+  (comment-ref nil :read-only t :documentation "The selected comment ref in the thread; must not be nil."))
+
+(defun lgtm--selected-comment-next-thread (comment-threads version selection)
+  "Select the next thread starting from SELECTION.
+
+The VERSION is included because the user can always switch active files
+with a selection pointing to the previous file.  If the requested
+version doesn't match the current selection, that indicates a version
+switch and causes a reset.
+
+Consults the COMMENT-THREADS index to select the next thread in the context.
+This function is agnostic to whether the threads are in a file or at the
+top level.
+
+If there are no threads to select, returns nil."
+  (let ((ordered-threads (lgtm--comment-threads-ordered comment-threads)))
+    (if (and selection (eq version (lgtm--selected-comment-version selection)))
+        (let* ((cur-idx (seq-position ordered-threads (lgtm--selected-comment-thread selection)))
+               (next-idx (min (+ 1 cur-idx) (- (length ordered-threads) 1)))
+               (thread (seq-elt ordered-threads next-idx)))
+          (make-lgtm--selected-comment
+           :version version
+           :thread thread
+           :comment-ref (lgtm-comment-ref (lgtm--tree-value thread))))
+      (if (> (length ordered-threads) 0)
+          (let ((thread (seq-elt ordered-threads 0)))
+            (make-lgtm--selected-comment
+             :version version
+             :thread thread
+             :comment-ref (lgtm-comment-ref (lgtm--tree-value thread))))
+        nil))))
+
+(defun lgtm--selected-comment-previous-thread (comment-threads version selection)
+  "Select the previous thread starting from SELECTION.
+
+The VERSION is included because the user can always switch active files
+with a selection pointing to the previous file.  If the requested
+version doesn't match the current selection, that indicates a version
+switch and causes a reset.
+
+Consults the COMMENT-THREADS index to select the next thread in the context.
+This function is agnostic to whether the threads are in a file or at the
+top level.
+
+If there are no threads to select, returns nil."
+  (let ((ordered-threads (lgtm--comment-threads-ordered comment-threads)))
+    (if (and selection (eq version (lgtm--selected-comment-version selection)))
+        (let* ((cur-idx (seq-position ordered-threads (lgtm--selected-comment-thread selection)))
+               (next-idx (max (- cur-idx 1) 0))
+               (thread (seq-elt ordered-threads next-idx)))
+          (make-lgtm--selected-comment
+           :version version
+           :thread thread
+           :comment-ref (lgtm-comment-ref (lgtm--tree-value thread))))
+      (if (> 0 (length ordered-threads))
+          (let ((thread (seq-elt ordered-threads (- (length ordered-threads) 1))))
+            (make-lgtm--selected-comment
+             :version version
+             :thread thread
+             :comment-ref (lgtm-comment-ref (lgtm--tree-value thread))))
+        nil))))
+
+(defun lgtm--selected-comment-next-comment-in-thread (selection)
+  "From SELECTION, return a new selection with the next comment selected.
+
+Selects the next comment in the currently-selected thread.  To calculate
+the next comment, this function linearizes the thread structure in the
+same way the renderer does, then uses that linearization to calculate
+the next comment."
+
+  (let* ((linearized-comments (lgtm--linearize-comment-thread (lgtm--selected-comment-thread selection)))
+         (linearized-comment-refs (seq-map (lambda (positioned-comment) (lgtm-comment-ref (lgtm--positioned-comment-comment positioned-comment))) linearized-comments))
+         (current-comment-ref (lgtm--selected-comment-comment-ref selection))
+         (current-comment-idx (seq-position linearized-comment-refs current-comment-ref)))
+    (cl-assert current-comment-idx t "Invariant violation: the selected comment ref must exist in the thread")
+    (let ((next-comment-idx (min (+ 1 current-comment-idx) (- (length linearized-comments) 1))))
+      (make-lgtm--selected-comment
+       :version (lgtm--selected-comment-version selection)
+       :thread (lgtm--selected-comment-thread selection)
+       :comment-ref (elt linearized-comment-refs next-comment-idx)))))
+
+(defun lgtm--selected-comment-previous-comment-in-thread (selection)
+  "From SELECTION, return a new selection with the previous comment selected.
+
+Selects the previous comment in the currently-selected thread.  To
+calculate the next comment, this function linearizes the thread
+structure in the same way the renderer does, then uses that
+linearization to calculate the next comment."
+
+  (let* ((linearized-comments (lgtm--linearize-comment-thread (lgtm--selected-comment-thread selection)))
+         (linearized-comment-refs (seq-map (lambda (positioned-comment) (lgtm-comment-ref (lgtm--positioned-comment-comment positioned-comment))) linearized-comments))
+         (current-comment-ref (lgtm--selected-comment-comment-ref selection))
+         (current-comment-idx (seq-position linearized-comment-refs current-comment-ref)))
+    (cl-assert current-comment-idx t "Invariant violation: the selected comment ref must exist in the thread")
+    (let ((next-comment-idx (max (- current-comment-idx 1) 0)))
+      (make-lgtm--selected-comment
+       :version (lgtm--selected-comment-version selection)
+       :thread (lgtm--selected-comment-thread selection)
+       :comment-ref (elt linearized-comment-refs next-comment-idx)))))
+
+(defun lgtm--first-visible-selected-comment-thread (comment-threads version start-line end-line)
+  "Compute the first thread between START-LINE and END-LINE in COMMENT-THREADS.
+
+If there is no visible comment thread, return nil.
+Otherwise, returns a `lgtm--selected-comment' pointing to the thread.
+
+The caller must pass in the file VERSION being searched.
+
+Requires that COMMENT-THREADS corresponds to a file and not top-level comments."
+  (let* ((ordered-threads (lgtm--comment-threads-ordered comment-threads))
+         (first-thread (seq-find (lambda (thread-root)
+                                    (let ((comment-start-line (lgtm-comment-location-start-line (lgtm-comment-location (lgtm--tree-value thread-root)))))
+                                      (and (> start-line comment-start-line)
+                                           (< comment-start-line end-line))))
+                                  ordered-threads)))
+    (if first-thread
+        (make-lgtm--selected-comment
+         :version version
+         :thread first-thread
+         :comment-ref (lgtm-comment-ref (lgtm--tree-value first-thread)))
+      nil)))
+
+(defun lgtm--add-comment-to-file (modified-file-state comment)
+  "Add COMMENT to its thread in MODIFIED-FILE-STATE.
+
+The caller must ensure that the comment has a file location."
+  (cl-assert (lgtm-comment-location comment) t "Requires a comment location")
+  (let ((loc (lgtm-comment-location-version (lgtm-comment-location comment))))
+    (pcase loc
+      ('base (lgtm--add-comment-to-thread (lgtm--modified-file-state-base-threads modified-file-state) comment))
+      ('current (lgtm--add-comment-to-thread (lgtm--modified-file-state-current-threads modified-file-state) comment))
+      (_ (error "Invalid comment location `%s'" loc)))))
+
+(defun lgtm--add-comment-to-thread (comment-threads comment)
+  "Add COMMENT to the COMMENT-MANAGER, updating COMMENT-THREADS.
+
+This is an incremental update to the comment thread structure.  This differs
+from the bulk-update in that it expects that any parent tree nodes already
+exist.  The bulk addition in `lgtm--assemble-comment-trees' is still useful
+at initialization because it is not sensitive to the order of comments being
+added.
+
+Invariant: The comment already exists in the comment manager."
+  (cl-assert (lgtm-comment-backend-data comment))
+
+  (let ((tree-node (make-lgtm--tree :value comment))
+        (backend-id (lgtm-comment-backend-data comment))
+        (parent-backend-id (lgtm-comment-parent comment))
+        (comment-ref (lgtm-comment-ref comment))
+        (loc-key (lgtm--comment-location-key comment)))
+
+    (puthash comment-ref tree-node (lgtm--comment-threads-comment-tree-nodes comment-threads))
+    (puthash backend-id comment-ref (lgtm--comment-threads-server-comment-ids comment-threads))
+
+    (if parent-backend-id
+        (let* ((parent-ref (gethash parent-backend-id (lgtm--comment-threads-server-comment-ids comment-threads)))
+               (parent-node (gethash parent-ref (lgtm--comment-threads-comment-tree-nodes comment-threads)))
+               (sort-key (lambda (tree-node) (lgtm-comment-created-timestamp (lgtm--tree-value tree-node)))))
+          ;; add as a child
+          (cl-assert parent-node t "Invariant: all comments must have an entry in their `lgtm--comment-threads' structure")
+          (lgtm--tree-add-child parent-node tree-node)
+          (let ((sorted-children (seq-sort-by sort-key #'value< (lgtm--tree-children parent-node))))
+            (setf (lgtm--tree-children parent-node) sorted-children)))
+
+      ;; There is no parent, so this is a new top-level thread
+      (let ((threads-at-location (gethash loc-key (lgtm--comment-threads-location-roots comment-threads))))
+        (if threads-at-location
+            (let* ((next-threads (cons comment-ref threads-at-location))
+                   (sort-key (lambda (comment-ref) (lgtm-comment-created-timestamp (lgtm--tree-value (gethash comment-ref (lgtm--comment-threads-comment-tree-nodes comment-threads))))))
+                   (sorted-next-threads (seq-sort-by sort-key #'value< next-threads)))
+              (puthash loc-key sorted-next-threads (lgtm--comment-threads-location-roots comment-threads)))
+          (puthash loc-key (list comment-ref) (lgtm--comment-threads-location-roots comment-threads)))))))
 
 (cl-defstruct lgtm--modified-file-state
   (ref nil :read-only t :documentation "The immutable reference that points to this state.")
   (base-file-location nil :documentation "The saved cursor position in the old/original file")
   (current-file-location nil :documentation "The saved cursor position in the current file")
-  (base-selected-conversation-index nil :documentation "The index into the comments list for the base file that is selected.
-This field is nil for no selection.")
-  (current-selected-conversation-index nil :documentation "The index into the comments list for the current file that is selected.
-This field is nil for no selection.")
-  (base-conversations '() :documentation "The conversations in the base version of the file.
+  (selected-comment nil :documentation "A `lgtm--selected-comment' or nil if there is no selected comment.")
+  (base-threads (make-lgtm--comment-threads) :documentation "The conversations in the base version of the file.
 
 This is a list of `lgtm-comment-ref' stored in structural order.  The structural
 order is such that a linear traversal respects thread order and nesting.")
-  (current-conversations '() :documentation "The conversations in the current version of the file.
+  (current-threads (make-lgtm--comment-threads) :documentation "The conversations in the current version of the file.
 
 This is a list of `lgtm-comment-ref' stored in structural order.  The structural
 order is such that a linear traversal respects thread order and nesting."))
@@ -128,7 +378,7 @@ it is the same as the current file."
              (if base-filename
                  base-filename
                (lgtm--modified-file-current-filename modified-file))))
-    (_ (error "Invalid version for file %s" modified-file))))
+    (_ (error "Invalid version for file `%s'" modified-file))))
 
 ;;; * Repositories
 
@@ -221,7 +471,8 @@ Returns `nil' on success.  Otherwise, returns an error message.")
   (approve-review-function nil :read-only t :documentation "A function called with this configuration and the
 review object that sends an approval to the review service.")
   (shutdown-hook nil :read-only t :documentation "A function to call with no arguments when this
-instance of the LGTM UI is shut down.  This can be used to e.g., clean up temporary files."))
+instance of the LGTM UI is shut down.  This can be used to e.g., clean up
+temporary files."))
 
 ;;; * Comments
 
@@ -297,57 +548,33 @@ replied to.")
   (table (make-hash-table :test 'equal) :read-only t :documentation "The storage for all comments, both
 published and unpublished.  The keys are `lgtm-comment-ref' objects.
 The values are `lgtm-comment' objects.")
-  (top-level-comment-refs '() :documentation "A list of references to all top-level comments.
-Note that this includes both published and unpublished comments.  Each comment
-has a flag determining whether or not it is published."))
+  (top-level-threads (make-lgtm--comment-threads) :read-only t :documentation "The thread structure for the top-level
+comments.  This includes both published and unpublished comments."))
 
-(defun lgtm---add-comment-to-file-unsafe (modified-file-state comment-ref loc)
-  "Add COMMENT-REF to the given MODIFIED-FILE-STATE at location LOC.
+(cl-defstruct lgtm--comment-bootstrap-state
+  "State used to bootstrap comments and generate thread structure.
 
-This version does not do any updates to the selected conversation
-indexes, making it generally unsafe as it can violate UI invariants.  It
-is intended to be called from `lgtm--add-remote-comments' to add
-comments during setup or to be explicitly followed by a step to fix the
-related metadata."
+This tracks (for each file) the list of comment (refs).  We need this
+because comments can come from the server in any order.  The thread
+structure calculation either needs comment parents to exist before
+inserting children *or* to have all of the comments for a file at once.
+
+This is used for the latter case in `lgtm--add-remote-comments'."
+  (base-comments (make-hash-table :test 'equal))
+  (current-comments (make-hash-table :test 'equal)))
+
+(defun lgtm--comment-bootstrap-state-add-comment-to-file (bootstrap-state modified-file-ref comment-ref loc)
+  "Add COMMENT-REF at LOC to the BOOTSTRAP-STATE for MODIFIED-FILE-REF."
   (cl-assert loc t "The comment must have a location")
+  (when (not (gethash modified-file-ref (lgtm--comment-bootstrap-state-base-comments bootstrap-state)))
+    (puthash modified-file-ref '() (lgtm--comment-bootstrap-state-base-comments bootstrap-state)))
+  (when (not (gethash modified-file-ref (lgtm--comment-bootstrap-state-current-comments bootstrap-state)))
+    (puthash modified-file-ref '() (lgtm--comment-bootstrap-state-current-comments bootstrap-state)))
+
   (pcase (lgtm-comment-location-version loc)
-    ('base (push comment-ref (lgtm--modified-file-state-base-conversations modified-file-state)))
-    ('current (push comment-ref (lgtm--modified-file-state-current-conversations modified-file-state)))
+    ('base (push comment-ref (gethash modified-file-ref (lgtm--comment-bootstrap-state-base-comments bootstrap-state))))
+    ('current (push comment-ref (gethash modified-file-ref (lgtm--comment-bootstrap-state-current-comments bootstrap-state))))
     (_ (error "Invalid comment version `%s'" (lgtm-comment-location-version loc)))))
-
-(defun lgtm--sorted-comment-refs (comment-manager modified-file version comment-refs)
-  "Sort COMMENT-REFS by thread order.
-
-Returns a list of comment refs in thread order, sorted by using the comment
-thread indexer, which requires the COMMENT-MANAGER, MODIFIED-FILE, and VERSION
-of the file."
-  (let* ((index (lgtm--index-comments-by-ref comment-manager modified-file version comment-refs))
-         (linearized-comments (lgtm--get-positioned-comments index)))
-    (seq-map (lambda (positioned-comment) (lgtm-comment-ref (lgtm--positioned-comment-comment positioned-comment))) linearized-comments)))
-
-(defun lgtm--add-comment-to-file (comment-manager modified-file-state comment-ref loc)
-  "Add COMMENT-REF to the given MODIFIED-FILE-STATE with location LOC.
-
-This assumes that the caller has provided the correct MODIFIED-FILE-STATE.
-
-The COMMENT-MANAGER is required to get the locations (for sorting) of the
-other comments.
-
-This function is called when the user completes their comment (see
-`lgtm-complete-comment') and to populate the initial set of comments.
-It rebuilds the comment order in the file so that indexing continues to
-work."
-  ;; (cl-assert (equal (lgtm--modified-file-state-ref modified-file-state) (lgtm-comment-location-file comment-ref)) t
-  ;;            "Callers must pass a modified-file-state that matches the comment location to lgtm--add-comment-to-file")
-  (setf (lgtm--modified-file-state-base-selected-conversation-index modified-file-state) nil)
-  (setf (lgtm--modified-file-state-current-selected-conversation-index modified-file-state) nil)
-
-  (lgtm---add-comment-to-file-unsafe modified-file-state comment-ref loc)
-  (let ((modified-file (lgtm--modified-file-state-ref modified-file-state))
-        (base-conversations (lgtm--modified-file-state-base-conversations modified-file-state))
-        (current-conversations (lgtm--modified-file-state-current-conversations modified-file-state)))
-    (setf (lgtm--modified-file-state-base-conversations modified-file-state) (lgtm--sorted-comment-refs comment-manager modified-file 'base base-conversations))
-    (setf (lgtm--modified-file-state-current-conversations modified-file-state) (lgtm--sorted-comment-refs comment-manager modified-file 'current current-conversations))))
 
 (defun lgtm--add-remote-comments (file-manager comment-manager comments)
   "Add COMMENTS to the internal state.
@@ -356,7 +583,12 @@ Save the comments into the COMMENT-MANAGER and use the
 FILE-MANAGER to attach each comment to its corresponding
 modified file."
   (let ((comment-table (lgtm--comment-manager-table comment-manager))
-        (file-table (lgtm--modified-file-manager-table file-manager)))
+        (file-table (lgtm--modified-file-manager-table file-manager))
+        ;; This is a temporary structure to hold top level comments until we can build the
+        ;; thread structure.
+        (top-level-comments '())
+        (per-file-comments (make-lgtm--comment-bootstrap-state)))
+
     (seq-doseq (comment comments)
       (let ((cref (lgtm-comment-ref comment))
             (loc (lgtm-comment-location comment)))
@@ -368,21 +600,28 @@ modified file."
               (let* ((modified-file-ref (lgtm-comment-location-file loc))
                      (file-state (gethash modified-file-ref file-table)))
                 (cl-assert file-state t "Comments with a location must have an associated file")
-                (lgtm---add-comment-to-file-unsafe file-state cref loc))
-            (push cref (lgtm--comment-manager-top-level-comment-refs comment-manager))))))
+                (lgtm--comment-bootstrap-state-add-comment-to-file per-file-comments modified-file-ref cref loc))
+            (push comment top-level-comments)))))
 
-    ;; Restore the sorted invariant to all file-level comments
+    (lgtm--assemble-comment-trees (lgtm--comment-manager-top-level-threads comment-manager) top-level-comments)
+
     (seq-doseq (modified-file (lgtm--modified-file-manager-modified-files file-manager))
       (let* ((modified-file-state (lgtm--get-modified-file-state file-manager modified-file))
-             (base-conversations (lgtm--modified-file-state-base-conversations modified-file-state))
-            (current-conversations (lgtm--modified-file-state-current-conversations modified-file-state)))
-        (setf (lgtm--modified-file-state-base-conversations modified-file-state) (lgtm--sorted-comment-refs comment-manager modified-file 'base base-conversations))
-        (setf (lgtm--modified-file-state-current-conversations modified-file-state) (lgtm--sorted-comment-refs comment-manager modified-file 'current current-conversations))))))
+             (base-comments (lgtm--get-comments-from-refs comment-manager (gethash modified-file (lgtm--comment-bootstrap-state-base-comments per-file-comments))))
+             (current-comments (lgtm--get-comments-from-refs comment-manager (gethash modified-file (lgtm--comment-bootstrap-state-current-comments per-file-comments)))))
+        (lgtm--assemble-comment-trees (lgtm--modified-file-state-base-threads modified-file-state) base-comments)
+        (lgtm--assemble-comment-trees (lgtm--modified-file-state-current-threads modified-file-state) current-comments)))))
 
+;; FIXME: Update the caller to handle thread structures
 (defun lgtm--top-level-comments (comment-manager)
   "Get the top-level comments from the COMMENT-MANAGER."
   (let ((tbl (lgtm--comment-manager-table comment-manager))
-        (top-level-refs (lgtm--comment-manager-top-level-comment-refs comment-manager)))
+        (top-level-threads (lgtm--comment-manager-top-level-threads comment-manager))
+        (top-level-refs '()))
+    (maphash (lambda (_loc root-comment-refs-at-loc)
+               (seq-doseq (ref root-comment-refs-at-loc)
+                 (push ref top-level-refs)))
+             (lgtm--comment-threads-location-roots top-level-threads))
     (seq-map (lambda (comment-ref) (gethash comment-ref tbl)) top-level-refs)))
 
 (defun lgtm--top-level-unpublished-comments (comment-manager)
@@ -390,35 +629,18 @@ modified file."
   (let ((comments (lgtm--top-level-comments comment-manager)))
     (seq-filter (lambda (comment) (not (lgtm-comment-is-published comment))) comments)))
 
-(defun lgtm--modified-file-base-comments (file-manager comment-manager modified-file)
-  "Get the base version comments attached to MODIFIED-FILE.
+(defun lgtm--get-comments-from-refs (comment-manager refs)
+  "Return a list of the comments corresponding to REFS from COMMENT-MANAGER."
+  (let ((comment-table (lgtm--comment-manager-table comment-manager)))
+    (seq-map (lambda (comment-ref) (gethash comment-ref comment-table)) refs)))
 
-This requires a FILE-MANAGER to get the mutable file state.
-It requires a COMMENT-MANAGER to access the comment states."
-  (let* ((mutable-file-state (lgtm--get-modified-file-state file-manager modified-file))
-         (base-comment-refs (lgtm--modified-file-state-base-conversations mutable-file-state))
-         (tbl (lgtm--comment-manager-table comment-manager)))
-    (seq-map (lambda (comment-ref) (gethash comment-ref tbl)) base-comment-refs)))
-
-(defun lgtm--modified-file-current-comments (file-manager comment-manager modified-file)
-  "Get the current version comments attached to MODIFIED-FILE.
-
-This requires a FILE-MANAGER to get the mutable file state.
-It requires a COMMENT-MANAGER to access the comment states."
-  (let* ((mutable-file-state (lgtm--get-modified-file-state file-manager modified-file))
-         (current-comment-refs (lgtm--modified-file-state-current-conversations mutable-file-state))
-         (tbl (lgtm--comment-manager-table comment-manager)))
-    (seq-map (lambda (comment-ref) (gethash comment-ref tbl)) current-comment-refs)))
-
-(defun lgtm--modified-file-comment-count (file-manager comment-manager modified-file)
+(defun lgtm--modified-file-comment-count (file-manager modified-file)
   "Count the number of comments attached to the given MODIFIED-FILE.
-This requires a COMMENT-MANAGER to look up the actual mutable comment state.
 
 This requires a FILE-MANAGER to get the mutable file state."
-  (let* ((base-file-comments (lgtm--modified-file-base-comments file-manager comment-manager modified-file))
-         (current-file-comments (lgtm--modified-file-current-comments file-manager comment-manager modified-file))
-         (all-file-comments (seq-concatenate 'list base-file-comments current-file-comments)))
-    (seq-length all-file-comments)))
+  (let ((modified-file-state (lgtm--get-modified-file-state file-manager modified-file)))
+    (+ (lgtm--comment-threads-comment-count (lgtm--modified-file-state-base-threads modified-file-state))
+       (lgtm--comment-threads-comment-count (lgtm--modified-file-state-current-threads modified-file-state)))))
 
 (defun lgtm--get-comment-content (comment-manager comment-ref)
   "Get the mutable comment state for COMMENT-REF from COMMENT-MANAGER."
@@ -427,7 +649,9 @@ This requires a FILE-MANAGER to get the mutable file state."
 
 (defun lgtm--comment-manager-add-top-level (comment-manager ref)
   "Add REF as a top-level comment to the COMMENT-MANAGER."
-  (setf (lgtm--comment-manager-top-level-comment-refs comment-manager) (cons ref (lgtm--comment-manager-top-level-comment-refs comment-manager))))
+  (let ((top-level-threads (lgtm--comment-manager-top-level-threads comment-manager))
+        (comment (lgtm--get-comment-content comment-manager ref)))
+    (lgtm--add-comment-to-thread top-level-threads comment)))
 
 (defun lgtm--comment-start-point (buffer comment)
   "Return the start point of COMMENT in the BUFFER."
@@ -774,12 +998,11 @@ This diff is meant to be used in the main UI as a preview of the change."
   "Create the top-level description for MODIFIED-FILE.
 
 The STATE is required here to access saved review comments."
-  (let* ((comment-manager (lgtm--state-comment-manager state))
-         (file-manager (lgtm--state-file-manager state))
+  (let* ((file-manager (lgtm--state-file-manager state))
          (review-state-backend (lgtm-configuration-review-state-backend (lgtm--state-configuration state)))
          (current-filename (lgtm--modified-file-current-filename modified-file))
          (base-filename (lgtm--modified-file-base-filename modified-file))
-         (comment-count (lgtm--modified-file-comment-count file-manager comment-manager modified-file))
+         (comment-count (lgtm--modified-file-comment-count file-manager modified-file))
          (comment-count-string (lgtm--format-comment-count comment-count))
          (modification-type (lgtm--modified-file-type modified-file))
          (modification-type-string (lgtm--format-file-modification-type modification-type))
@@ -787,21 +1010,6 @@ The STATE is required here to access saved review comments."
     (pcase modification-type
       ((or 'renamed 'copied) (format "  %s [%s] %s -> %s%s" modification-status-string modification-type-string base-filename current-filename comment-count-string))
       (_ (format "  %s [%s] %s%s" modification-status-string modification-type-string current-filename comment-count-string)))))
-
-;;; Generic Trees
-
-(cl-defstruct lgtm--tree
-  "A simple n-ary tree data structure.
-
-While it is easy to represent trees in elisp using nested lists, this
-explicit structure makes the intent clearer.  The empty tree is represented
-by nil."
-  (value nil :read-only t :documentation "The value at this tree node")
-  (children '() :documentation "The children of this tree node"))
-
-(defun lgtm--tree-add-child (tree c)
-  "Add child element C to tree TREE."
-  (push c (lgtm--tree-children tree)))
 
 ;;; Comment Indexing
 
@@ -818,19 +1026,6 @@ transient structure."
   (indent nil :read-only t :documentation "The indentation level to render the comment at")
   (comment nil :read-only t :documentation "The comment for which this metadata applies"))
 
-;; This structure contains a per-file index of comments
-;;
-;; The index assigned to each comment reflects relative sort order (determined by a combination of
-;; thread structure and time)
-;;
-;; Note that this structure is computed as a local temporary index and thus contains a pointer to
-;; the underlying comment, rather than a comment-ref.
-(cl-defstruct lgtm--comment-index
-  "A transient data structure to compute the nesting relation between comments."
-  (modified-file nil :read-only t :documentation "The reference to the file containing the indexed comments")
-  (version nil :read-only t :documentation "The version (base or current) of the file containing the indexed comments")
-  (comment-threads-by-location nil :read-only t :documentation "Computed metadata for each comment to aid rendering"))
-
 (defun lgtm--comment-index-traverse-from-root (idx depth tree-node)
   "Traverse the TREE-NODE depth-first to create a comment list.
 
@@ -845,22 +1040,36 @@ wraps a comment with metadata (including an assigned DEPTH)."
                                                  (list (+ 1 idx) '()))
       (list next-idx (cons this-pos-comment dfs-children)))))
 
-(defun lgtm--index-comments (comments)
-  "Create an index of COMMENTS and the metadata required to render them.
+(defun lgtm--linearize-comment-thread (thread)
+  "Linearize a comment THREAD with a depth-first traversal."
+  (car (cdr (lgtm--comment-index-traverse-from-root 0 0 thread))))
 
-This is a helper for `lgtm--index-comments-by-ref' that works on fully
-resolved comments.  The returned alist is sorted by location."
+(defun lgtm--assemble-comment-trees (threads comments)
+  "Arrange COMMENTS threads into their natural tree structure in THREADS.
+
+This creates trees of comments with each tree rooted at a top-level
+comment in a file.  The trees are returned as an alist by location, with
+the alist sorted by location within the file.  The comments at each
+level in the trees are sorted by timestamp.
+
+This is intended to be used to generate the thread structure when
+loading comments from the server.
+
+This modifies THREADS in-place."
   (let* (;; Map comment-refs to the tree node representing them
-         (comment-ref-to-tree (make-hash-table :test 'equal))
+         ;;
+         ;; Each comment (including child comments) has an entry in this table.
+         (comment-ref-to-tree (lgtm--comment-threads-comment-tree-nodes threads))
          ;; Map (server-side) comment ids to internal comment-ref structures
-         (comment-id-to-comment-ref (make-hash-table :test 'equal))
+         (comment-id-to-comment-ref (lgtm--comment-threads-server-comment-ids threads))
          ;; The (list of) root comments for each location. This is used to collect comment roots
          ;; during the indexing phase so that each comment thread/tree can be traversed in-order
          ;; later.
          ;;
          ;; Invariant: if there is an entry for a location, the list is non-empty
-         (location-roots (make-hash-table :test 'equal)))
+         (location-roots (lgtm--comment-threads-location-roots threads)))
 
+    ;; Create all of the tree nodes before we connect up their structure
     (seq-doseq (comment comments)
       (let* ((backend-id (lgtm-comment-backend-data comment))
              (tree-node (make-lgtm--tree :value comment))
@@ -870,13 +1079,13 @@ resolved comments.  The returned alist is sorted by location."
         (when backend-id
           (puthash backend-id comment-ref comment-id-to-comment-ref))))
 
-    ;; After we index everything, we can then traverse the comments to compute reply structure. We
-    ;; want to have the index first so that we can pre-allocate all of the tree nodes.
+    ;; Traverse the comments to compute reply structure. We want to have the index first so that we
+    ;; can pre-allocate all of the tree nodes.
     (seq-doseq (comment comments)
       (let* ((parent-id (lgtm-comment-parent comment))
              (comment-ref (lgtm-comment-ref comment))
              (comment-tree-node (gethash comment-ref comment-ref-to-tree))
-             (loc (lgtm-comment-location comment)))
+             (loc-key (lgtm--comment-location-key comment)))
 
         (if parent-id
             ;; Set up the parent structure if there is a parent
@@ -884,9 +1093,9 @@ resolved comments.  The returned alist is sorted by location."
                    (parent-tree-node (gethash parent-node-ref comment-ref-to-tree)))
               (lgtm--tree-add-child parent-tree-node comment-tree-node))
           ;; Otherwise this is a root we need to record
-          (if (gethash loc location-roots)
-              (push comment-ref (gethash loc location-roots))
-            (puthash loc (list comment-ref) location-roots)))))
+          (if (gethash loc-key location-roots)
+              (push comment-ref (gethash loc-key location-roots))
+            (puthash loc-key (list comment-ref) location-roots)))))
 
     ;; Now sort all of the child lists by timestamp so that they render sensibly
     (let ((sort-key (lambda (tree-node) (lgtm-comment-created-timestamp (lgtm--tree-value tree-node)))))
@@ -895,33 +1104,14 @@ resolved comments.  The returned alist is sorted by location."
                    (setf (lgtm--tree-children tree-node) sorted-children)))
                comment-ref-to-tree))
 
-    (let ((index-source 0)
-          (location-comments-alist '()))
-      (maphash (lambda (loc comment-refs-at-loc)
-                 (seq-doseq (comment-root-ref comment-refs-at-loc)
-                   (let ((comment-root (gethash comment-root-ref comment-ref-to-tree)))
-                     (seq-let [next-idx linearized-comments] (lgtm--comment-index-traverse-from-root index-source 0 comment-root)
-                       (setf index-source next-idx)
-                       (push linearized-comments (alist-get loc location-comments-alist '() nil 'equal))))))
-               location-roots)
-      (seq-sort-by (lambda (pair) (lgtm-comment-location-start-line (car pair))) #'< location-comments-alist))))
-
-
-(defun lgtm--index-comments-by-ref (comment-manager modified-file version comment-refs)
-  "Create an index of COMMENT-REFS and metadata required to render them.
-
-The COMMENT-MANAGER is required to get the comment bodies given a comment-ref.
-The MODIFIED-FILE and VERSION are kept for tracking and debugging but are not
-critical."
-  (let* ((comments (seq-map (lambda (comment-ref) (lgtm--get-comment-content comment-manager comment-ref)) comment-refs))
-         (comments-by-loc (lgtm--index-comments comments)))
-    (make-lgtm--comment-index :modified-file modified-file :version version :comment-threads-by-location comments-by-loc)))
-
-(defun lgtm--get-positioned-comments (comment-index)
-  "Extract a linearized list of (location, comment-list) pairs from COMMENT-INDEX.
-
-Each list contains `lgtm--positioned-comment' values in display order."
-  (seq-mapcat (lambda (alist) (seq-mapcat (lambda (l) l) (cdr alist))) (lgtm--comment-index-comment-threads-by-location comment-index)))
+    ;; And finally sort all of the threads at each location by their timestamp
+    ;;
+    ;; Note that this does not need to come after the sorting of child lists; it just happens to
+    (let ((sort-key (lambda (comment-ref) (lgtm-comment-created-timestamp (lgtm--tree-value (gethash comment-ref comment-ref-to-tree))))))
+      (maphash (lambda (loc comment-root-refs)
+                 (let ((sorted-comment-root-refs (seq-sort-by sort-key #'value< comment-root-refs)))
+                   (puthash loc sorted-comment-root-refs location-roots)))
+               location-roots))))
 
 (cl-defstruct lgtm--git-repository-commit-history
   (inferred-base-commit nil :read-only t :documentation "The base commit in the history against
