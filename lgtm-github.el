@@ -36,6 +36,7 @@
 (require 'cl-lib)
 (require 'ghub)
 (require 'ghub-graphql)
+(require 'ghub-legacy)
 
 (require 'lgtm)
 (require 'lgtm-core)

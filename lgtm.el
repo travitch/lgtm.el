@@ -7,7 +7,7 @@
 ;; Maintainer: Tristan Ravitch <tristan@ravit.ch>
 ;; URL: https://github.com/travitch/lgtm.el
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "29.1") (magit-section "4.3.5") (uuidgen "1.3") (ghub "5.0.0"))
+;; Package-Requires: ((emacs "29.1") (magit-section "4.3.5") (uuidgen "1.3") (ghub "5.0.0") (posframe "1.5"))
 ;; Keywords: convenience tools, code review, git
 
 ;; This file is not part of GNU Emacs.
@@ -37,6 +37,7 @@
 (require 'ediff)
 (require 'files)
 (require 'magit-section)
+(require 'posframe)
 (require 'seq)
 (require 'subr-x)
 (require 'uuidgen)
@@ -69,6 +70,8 @@ reference.  Takes the username from the CONFIG."
 (defconst lgtm--comment-editor-buffer-name "*lgtm-comment*" "The name of the buffer that is used for editing comments.")
 (defconst lgtm--overview-buffer-name "*lgtm*" "The name of the buffer that the overview UI is rendered in.")
 (defvar lgtm--current-state nil "The mutable state of the current review.")
+(defvar lgtm--posframe-comment-buffer " *lgtm-posframe-comment-buffer"
+  "The frame used to render the content for comment popups.")
 
 ;;;; Functions
 
@@ -100,7 +103,7 @@ then updates the UI."
     (when (lgtm-comment-location current-comment)
       (let* ((modified-file (lgtm--state-active-reviewed-file lgtm--current-state))
              (modified-file-state (lgtm--get-modified-file-state file-manager modified-file)))
-        (lgtm--add-comment-to-file comment-manager modified-file-state current-comment-ref (lgtm-comment-location current-comment))
+        (lgtm--add-comment-to-file modified-file-state current-comment)
         (lgtm--init-comment-overlays lgtm--current-state modified-file))))
 
   (quit-restore-window (get-buffer-window lgtm--comment-editor-buffer-name) 'kill)
@@ -133,7 +136,7 @@ comments are discarded."
 
 (defun lgtm--insert-top-level-comment-body (comment)
   "Create a string representation of COMMENT."
-  (lgtm--render-string-with-comment-mode (lgtm-comment-content comment)))
+  (lgtm--render-string-with-comment-mode (lgtm-comment-content comment) 0))
 
 (defun lgtm--render-top-level-comment (comment)
   "Render a Magit section for a top-level COMMENT.
@@ -148,11 +151,13 @@ The IDX (index) is provided as context and can be used in formatting."
   "Return the repository name of the MODIFIED-FILE."
   (lgtm--repository-ref-name (lgtm--modified-file-repository-ref modified-file)))
 
-(defun lgtm--render-string-with-comment-mode (str &optional indent)
+(defun lgtm--render-string-with-comment-mode (str indent &optional face-property)
   "Render the STR into the current buffer.
 
 This handles highlighting the text before inserting it and filling the
-text to a reasonable width.  If provided, indent by INDENT spaces."
+text to a reasonable width.  The text is indented by INDENT spaces.
+
+If provided, FACE-PROPERTY is attached to the face property of the text."
   (let* ((temp-buffer (generate-new-buffer "**lgtm-render-scratch**")))
     (with-current-buffer temp-buffer
       (when lgtm-comment-major-mode
@@ -170,7 +175,9 @@ text to a reasonable width.  If provided, indent by INDENT spaces."
       (font-lock-ensure)
       (when indent
         (let ((indentation (string-pad "" indent (string-to-char " "))))
-          (string-insert-rectangle (point-min) (point-max) indentation))))
+          (string-insert-rectangle (point-min) (point-max) indentation)))
+      (when face-property
+        (add-text-properties (point-min) (point-max) `(face ,face-property))))
     (insert-buffer-substring temp-buffer)
     (kill-buffer temp-buffer)))
 
@@ -216,7 +223,7 @@ where the entire buffer is being redrawn."
           (let ((changeset-description (lgtm-configuration-changeset-description config)))
             (magit-insert-section-body
               (insert "\n")
-              (lgtm--render-string-with-comment-mode changeset-description)
+              (lgtm--render-string-with-comment-mode changeset-description 0)
               (insert "\n\n")))))
 
       (magit-insert-section (list-section)
@@ -350,6 +357,7 @@ of the control pane fails."
     (call-interactively #'ediff-quit))
 
   (setf (lgtm--state-active-reviewed-file lgtm--current-state) nil)
+  (posframe-delete-frame lgtm--posframe-comment-buffer)
 
   ;; Try our best to incrementally clean up buffers
   ;;
@@ -536,36 +544,75 @@ none exists.  It is computed with respect to BUFFER."
   "Format TIMESTAMP as a string according to the configured format."
   (format-time-string lgtm-timestamp-format timestamp))
 
-(defun lgtm--add-comment-overlays (buffer selected-index idx depth comment)
-  "Add overlays for the given COMMENT in the currently-viewed file BUFFER.
+(defun lgtm--render-comment-thread (selected-index thread target-buffer)
+  "Render THREAD into TARGET-BUFFER using magit-sections for each comment.
 
-The IDX is the index of the comment.  The SELECTED-INDEX is the highlighted
-comment, if any.  Indent the comment according to DEPTH, which encodes the
-reply structure.
+The SELECTED-INDEX is passed in so that the highlighted comment in the
+thread (if any) can be rendered differently."
+  (let ((linear-comments (lgtm--linearize-comment-thread thread)))
+    (with-current-buffer target-buffer
+      (let ((inhibit-read-only t))
+        (erase-buffer)
 
-Accepts a COMMENT-MANAGER to retrieve the rest of the thread.
-The STATE is required to get the buffer to host the overlays.
-Note that comments are always against the current revision."
+        (magit-insert-section (list-section)
+          (magit-insert-heading (insert (propertize "Thread" 'font-lock-face '(:background "light gray"))))
+
+          (seq-doseq (positioned-comment linear-comments)
+            (magit-insert-section (item positioned-comment)
+              (let* ((comment (lgtm--positioned-comment-comment positioned-comment))
+                     (indent (* tab-width (lgtm--positioned-comment-indent positioned-comment)))
+                     (timestamp (lgtm-comment-created-timestamp comment))
+                     (time-str (if timestamp (lgtm--format-timestamp timestamp) ""))
+                     (user (lgtm-comment-author comment))
+                     (is-published (lgtm-comment-is-published comment))
+                     (is-selected (eq (lgtm-comment-ref comment) (lgtm--selected-comment-comment-ref selected-index)))
+                     (header-pad (string-pad "" indent (string-to-char " ")))
+                     (header-content (concat header-pad (propertize (concat "| " user " at " time-str (if (not is-published) " [DRAFT]") " |") 'face 'underline))))
+                (magit-insert-heading (insert header-content))
+                (magit-insert-section-body
+                  (let ((content (lgtm-comment-content comment))
+                        (comment-face (if is-selected 'lgtm-selected-comment-face nil)))
+                    (lgtm--render-string-with-comment-mode content indent comment-face))
+                  (insert "\n\n"))))))))))
+
+(defun lgtm--add-comment-overlays (buffer selected-index depth thread)
+  "Add overlays for the given THREAD in the currently-viewed file BUFFER.
+
+The SELECTED-INDEX is the highlighted comment, if any.  Indent the
+comment according to DEPTH, which encodes the reply structure.
+
+The THREAD rooted at this comment is rendered in a posframe if this
+comment is selected."
 
     ;; Install the region overlay
-    (let ((ov (lgtm--get-comment-region-overlay buffer comment)))
-      (overlay-put ov 'lgtm-comment-id (lgtm-comment-ref comment))
+    (let* ((root-comment (lgtm--tree-value thread))
+           (ov (lgtm--get-comment-region-overlay buffer root-comment)))
+      (overlay-put ov 'lgtm-comment-id (lgtm-comment-ref root-comment))
       (overlay-put ov 'lgtm-overlay-type 'region)
       (overlay-put ov 'face 'ansi-color-fast-blink))
 
     ;; Install the header overlay
-    (let* ((ov (lgtm--get-comment-header-overlay buffer comment))
-           (timestamp (lgtm-comment-created-timestamp comment))
+    (let* ((root-comment (lgtm--tree-value thread))
+           (ov (lgtm--get-comment-header-overlay buffer root-comment))
+           (timestamp (lgtm-comment-created-timestamp root-comment))
            (time-str (if timestamp (lgtm--format-timestamp timestamp) ""))
-           (user (lgtm-comment-author comment))
-           (is-published (lgtm-comment-is-published comment))
-           (content (lgtm-comment-content comment))
+           (user (lgtm-comment-author root-comment))
+           (is-published (lgtm-comment-is-published root-comment))
+           (is-selected (and selected-index (eq (lgtm--selected-comment-thread selected-index) thread)))
+           (content (lgtm-comment-content root-comment))
            (header-content (concat "| " user " at " time-str (if (not is-published) " [DRAFT]") " |" "\n\n" content "\n"))
-           (comment-face (if (eq selected-index idx) 'lgtm-selected-comment-face 'lgtm-default-comment-face)))
-      (overlay-put ov 'lgtm-comment-id (lgtm-comment-ref comment))
+           (comment-face (if is-selected 'lgtm-selected-comment-face 'lgtm-default-comment-face)))
+      (overlay-put ov 'lgtm-comment-id (lgtm-comment-ref root-comment))
       (overlay-put ov 'lgtm-overlay-type 'header)
+      (when (and is-selected (posframe-workable-p))
+        (lgtm--render-comment-thread selected-index thread (get-buffer-create lgtm--posframe-comment-buffer))
+        (posframe-show lgtm--posframe-comment-buffer
+                       :hidehandler #'posframe-hidehandler-when-buffer-switch
+                       :border-width 1
+                       :border-color "black"
+                       :position (point)))
       (with-temp-buffer
-        (lgtm--render-string-with-comment-mode header-content (* 4 depth))
+        (lgtm--render-string-with-comment-mode header-content (* tab-width depth))
         (insert "\n")
         (overlay-put ov 'before-string (propertize (buffer-substring (point-min) (point-max)) 'face comment-face)))))
 
@@ -574,30 +621,22 @@ Note that comments are always against the current revision."
 
 This requires STATE to get the buffer to add overlays to."
   (let* ((file-manager (lgtm--state-file-manager state))
-         (comment-manager (lgtm--state-comment-manager state))
          (modified-file-state (lgtm--get-modified-file-state file-manager modified-file))
+         (selected-comment (lgtm--modified-file-state-selected-comment modified-file-state))
+         (base-threads (lgtm--comment-threads-alist (lgtm--modified-file-state-base-threads modified-file-state)))
+         (current-threads (lgtm--comment-threads-alist (lgtm--modified-file-state-current-threads modified-file-state)))
          (base-buffer (lgtm--state-base-revision-buffer state))
-         (base-selected-comment (lgtm--modified-file-state-base-selected-conversation-index modified-file-state))
-         (base-comments (lgtm--modified-file-state-base-conversations modified-file-state))
-         (positioned-base-comments (lgtm--index-comments-by-ref comment-manager modified-file 'base base-comments))
-         (current-buffer (lgtm--state-current-revision-buffer state))
-         (current-selected-comment (lgtm--modified-file-state-current-selected-conversation-index modified-file-state))
-         (current-comments (lgtm--modified-file-state-current-conversations modified-file-state))
-         (positioned-current-comments (lgtm--index-comments-by-ref comment-manager modified-file 'current current-comments)))
+         (current-buffer (lgtm--state-current-revision-buffer state)))
 
-    (seq-map (lambda (positioned-comment)
-               (let ((idx (lgtm--positioned-comment-index positioned-comment))
-                     (depth (lgtm--positioned-comment-indent positioned-comment))
-                     (comment (lgtm--positioned-comment-comment positioned-comment)))
-                 (lgtm--add-comment-overlays base-buffer base-selected-comment idx depth comment)))
-             (lgtm--get-positioned-comments positioned-base-comments))
+    (seq-doseq (threads-at-loc base-threads)
+      (let ((threads (cdr threads-at-loc)))
+        (seq-doseq (thread threads)
+          (lgtm--add-comment-overlays base-buffer selected-comment 0 thread))))
 
-    (seq-map (lambda (positioned-comment)
-               (let ((idx (lgtm--positioned-comment-index positioned-comment))
-                     (depth (lgtm--positioned-comment-indent positioned-comment))
-                     (comment (lgtm--positioned-comment-comment positioned-comment)))
-                 (lgtm--add-comment-overlays current-buffer current-selected-comment idx depth comment)))
-             (lgtm--get-positioned-comments positioned-current-comments))))
+    (seq-doseq (threads-at-loc current-threads)
+      (let ((threads (cdr threads-at-loc)))
+        (seq-doseq (thread threads)
+          (lgtm--add-comment-overlays current-buffer selected-comment 0 thread))))))
 
 (defun lgtm--initialize-ediff-view (state modified-file)
   "Initialize the ediff view.
@@ -622,55 +661,60 @@ This reads the STATE and MODIFIED-FILE to set up ediff windows."
     (lgtm--init-comment-overlays state modified-file)
     (lgtm--restore-saved-buffer-locations state modified-file)))
 
-(defun lgtm--modify-base-selected-comment (modified-file-state func)
-  "Apply FUNC to the selected base conversation index in the MODIFIED-FILE-STATE.
-
-The FUNC is called as (funcall func current-index total-comments)."
-  (let* ((selected-base-index (lgtm--modified-file-state-base-selected-conversation-index modified-file-state))
-         (base-conversations (lgtm--modified-file-state-base-conversations modified-file-state))
-         (comment-count (length base-conversations))
-         (next-index (funcall func selected-base-index comment-count)))
-    (setf (lgtm--modified-file-state-base-selected-conversation-index modified-file-state) next-index)))
-
-(defun lgtm--modify-current-selected-comment (modified-file-state func)
-  "Apply FUNC to the selected current conversation index.
-
-This updates the MODIFIED-FILE-STATE.
-
-The FUNC is called as (funcall func current-index total-comments)."
-  (let* ((selected-current-index (lgtm--modified-file-state-current-selected-conversation-index modified-file-state))
-         (current-conversations (lgtm--modified-file-state-current-conversations modified-file-state))
-         (comment-count (length current-conversations))
-         (next-index (funcall func selected-current-index comment-count)))
-    (setf (lgtm--modified-file-state-current-selected-conversation-index modified-file-state) next-index)))
-
-
-(defun lgtm-select-next-comment ()
+(defun lgtm-select-next-thread ()
   "Select the next comment in the current file version being reviewed."
   (interactive)
   (let ((active-reviewed-file (lgtm--state-active-reviewed-file lgtm--current-state)))
     (when active-reviewed-file
       (let* ((file-manager (lgtm--state-file-manager lgtm--current-state))
              (active-file-state (lgtm--get-modified-file-state file-manager active-reviewed-file))
-             (index-transformer (lambda (current-index comment-count) (if current-index (min (- comment-count 1) (+ 1 current-index)) 0))))
+             (current-index (lgtm--modified-file-state-selected-comment active-file-state)))
         (pcase (lgtm--get-selected-buffer-tag lgtm--current-state)
-          ('base (lgtm--modify-base-selected-comment active-file-state index-transformer))
-          ('current (lgtm--modify-current-selected-comment active-file-state index-transformer))
+          ('base (let ((next-index (lgtm--selected-comment-next-thread (lgtm--modified-file-state-base-threads active-file-state) 'base current-index)))
+                   (setf (lgtm--modified-file-state-selected-comment active-file-state) next-index)))
+          ('current (let ((next-index (lgtm--selected-comment-next-thread (lgtm--modified-file-state-current-threads active-file-state) 'current current-index)))
+                      (setf (lgtm--modified-file-state-selected-comment active-file-state) next-index)))
           (_ (error "Either the base or current buffer must be selected")))
         (lgtm--init-comment-overlays lgtm--current-state active-reviewed-file)))))
 
-(defun lgtm-select-previous-comment ()
+(defun lgtm-select-previous-thread ()
   "Select the previous comment in the current file version being reviewed."
   (interactive)
   (let ((active-reviewed-file (lgtm--state-active-reviewed-file lgtm--current-state)))
     (when active-reviewed-file
       (let* ((file-manager (lgtm--state-file-manager lgtm--current-state))
              (active-file-state (lgtm--get-modified-file-state file-manager active-reviewed-file))
-             (index-transformer (lambda (current-index _comment-count) (if current-index (max 0 (- current-index 1)) nil))))
+             (current-index (lgtm--modified-file-state-selected-comment active-file-state)))
         (pcase (lgtm--get-selected-buffer-tag lgtm--current-state)
-          ('base (lgtm--modify-base-selected-comment active-file-state index-transformer))
-          ('current (lgtm--modify-current-selected-comment active-file-state index-transformer))
+          ('base (let ((next-index (lgtm--selected-comment-previous-thread (lgtm--modified-file-state-base-threads active-file-state) 'base current-index)))
+                   (setf (lgtm--modified-file-state-selected-comment active-file-state) next-index)))
+          ('current (let ((next-index (lgtm--selected-comment-previous-thread (lgtm--modified-file-state-current-threads active-file-state) 'current current-index)))
+                      (setf (lgtm--modified-file-state-selected-comment active-file-state) next-index)))
           (_ (error "Either the base or current buffer must be selected")))
+        (lgtm--init-comment-overlays lgtm--current-state active-reviewed-file)))))
+
+(defun lgtm-select-next-comment ()
+  "Select the next comment in the current thread."
+  (interactive)
+  (let ((active-reviewed-file (lgtm--state-active-reviewed-file lgtm--current-state)))
+    (when active-reviewed-file
+      (let* ((file-manager (lgtm--state-file-manager lgtm--current-state))
+             (active-file-state (lgtm--get-modified-file-state file-manager active-reviewed-file))
+             (current-index (lgtm--modified-file-state-selected-comment active-file-state)))
+        (let ((next-selection (lgtm--selected-comment-next-comment-in-thread current-index)))
+          (setf (lgtm--modified-file-state-selected-comment active-file-state) next-selection))
+        (lgtm--init-comment-overlays lgtm--current-state active-reviewed-file)))))
+
+(defun lgtm-select-previous-comment ()
+  "Select the next comment in the current thread."
+  (interactive)
+  (let ((active-reviewed-file (lgtm--state-active-reviewed-file lgtm--current-state)))
+    (when active-reviewed-file
+      (let* ((file-manager (lgtm--state-file-manager lgtm--current-state))
+             (active-file-state (lgtm--get-modified-file-state file-manager active-reviewed-file))
+             (current-index (lgtm--modified-file-state-selected-comment active-file-state)))
+        (let ((next-selection (lgtm--selected-comment-previous-comment-in-thread current-index)))
+          (setf (lgtm--modified-file-state-selected-comment active-file-state) next-selection))
         (lgtm--init-comment-overlays lgtm--current-state active-reviewed-file)))))
 
 (defun lgtm-clear-selected-comment ()
@@ -679,23 +723,9 @@ The FUNC is called as (funcall func current-index total-comments)."
   (let ((active-reviewed-file (lgtm--state-active-reviewed-file lgtm--current-state)))
     (when active-reviewed-file
       (let* ((file-manager (lgtm--state-file-manager lgtm--current-state))
-             (active-file-state (lgtm--get-modified-file-state file-manager active-reviewed-file))
-             (index-transformer (lambda (_current-index _comment-count) nil)))
-        (pcase (lgtm--get-selected-buffer-tag lgtm--current-state)
-          ('base (lgtm--modify-base-selected-comment active-file-state index-transformer))
-          ('current (lgtm--modify-current-selected-comment active-file-state index-transformer))
-          (_ (error "Either the base or current buffer must be selected"))))
-      (lgtm--init-comment-overlays lgtm--current-state active-reviewed-file))))
-
-(defun lgtm-clear-selected-comments ()
-  "Deselect all selected comments (in both review buffers)."
-  (interactive)
-  (let ((active-reviewed-file (lgtm--state-active-reviewed-file lgtm--current-state)))
-    (when active-reviewed-file
-      (let* ((file-manager (lgtm--state-file-manager lgtm--current-state))
              (active-file-state (lgtm--get-modified-file-state file-manager active-reviewed-file)))
-        (setf (lgtm--modified-file-state-base-selected-conversation-index active-file-state) nil)
-        (setf (lgtm--modified-file-state-current-selected-conversation-index active-file-state) nil))
+        (setf (lgtm--modified-file-state-selected-comment active-file-state) nil))
+      (posframe-delete-frame lgtm--posframe-comment-buffer)
       (lgtm--init-comment-overlays lgtm--current-state active-reviewed-file))))
 
 (defun lgtm-review-selected-modified-file ()
@@ -709,25 +739,22 @@ The FUNC is called as (funcall func current-index total-comments)."
 (defun lgtm-reply-to-selected-comment ()
   "Create a reply to the selected comment, if any."
   (interactive)
-  (when-let ((active-reviewed-file (lgtm--state-active-reviewed-file lgtm--current-state)))
+  (when-let* ((active-reviewed-file (lgtm--state-active-reviewed-file lgtm--current-state)))
     (let* ((file-manager (lgtm--state-file-manager lgtm--current-state))
            (active-file-state (lgtm--get-modified-file-state file-manager active-reviewed-file))
            (comment-manager (lgtm--state-comment-manager lgtm--current-state))
-           (parent-comment-ref (pcase (lgtm--get-selected-buffer-tag lgtm--current-state)
-                                 ('base (let ((selected-idx (lgtm--modified-file-state-base-selected-conversation-index active-file-state)))
-                                          (elt (lgtm--modified-file-state-base-conversations active-file-state) selected-idx)))
-                                 ('current (let ((selected-idx (lgtm--modified-file-state-current-selected-conversation-index active-file-state)))
-                                             (elt (lgtm--modified-file-state-current-conversations active-file-state) selected-idx)))
-                                 (_ (error "Either the base or current buffer must be selected"))))
-           (parent-comment (lgtm--get-comment-content comment-manager parent-comment-ref))
-           (reply-to-id (lgtm-comment-reply-to-id parent-comment))
-           (config (lgtm--state-configuration lgtm--current-state))
-           (loc (lgtm-comment-location parent-comment))
-           (file-comment-location (make-lgtm--file-comment-location :modified-file-state active-file-state
-                                                                    :location loc))
-           (reply-comment (lgtm--make-new-comment-object config comment-manager reply-to-id file-comment-location)))
+           (selected-comment (lgtm--modified-file-state-selected-comment active-file-state)))
+      (when selected-comment
+        (let* ((parent-comment-ref (lgtm--selected-comment-comment-ref selected-comment))
+               (parent-comment (lgtm--get-comment-content comment-manager parent-comment-ref))
+               (reply-to-id (lgtm-comment-reply-to-id parent-comment))
+               (config (lgtm--state-configuration lgtm--current-state))
+               (loc (lgtm-comment-location parent-comment))
+               (file-comment-location (make-lgtm--file-comment-location :modified-file-state active-file-state
+                                                                        :location loc))
+               (reply-comment (lgtm--make-new-comment-object config comment-manager reply-to-id file-comment-location)))
 
-      (lgtm--edit-comment lgtm--current-state "Editing reply comment" (lgtm-comment-ref reply-comment)))))
+          (lgtm--edit-comment lgtm--current-state "Editing reply comment" (lgtm-comment-ref reply-comment)))))))
 
 (defun lgtm--create-comment-at-point (state)
   "Create a new comment at the point based on STATE."
@@ -881,8 +908,10 @@ The backend-specific entrypoint is expected to pass in the necessary CONF."
     (define-key map (kbd "q") #'lgtm-close-review-file)
     (define-key map (kbd "n") #'lgtm-next-hunk)
     (define-key map (kbd "p") #'lgtm-previous-hunk)
-    (define-key map (kbd "M-n") #'lgtm-select-next-comment)
-    (define-key map (kbd "M-p") #'lgtm-select-previous-comment)
+    (define-key map (kbd "M-n") #'lgtm-select-next-thread)
+    (define-key map (kbd "M-p") #'lgtm-select-previous-thread)
+    (define-key map (kbd "C-M-n") #'lgtm-select-next-comment)
+    (define-key map (kbd "C-M-p") #'lgtm-select-previous-comment)
     (define-key map (kbd "R") #'lgtm-reply-to-selected-comment)
     (define-key map (kbd "0") #'lgtm-clear-selected-comment)
     (define-key map (kbd "v") #'ediff-scroll-vertically)
@@ -911,8 +940,10 @@ This is active in the ediff UI to trigger review actions."
             (define-key map (kbd "C-c C-c") #'lgtm-jump-to-ediff-control-pane)
             (define-key map (kbd "q") #'lgtm-close-review-file)
             (define-key map (kbd "C") #'lgtm-conversation-dwim)
-            (define-key map (kbd "M-n") #'lgtm-select-next-comment)
-            (define-key map (kbd "M-p") #'lgtm-select-previous-comment)
+            (define-key map (kbd "M-n") #'lgtm-select-next-thread)
+            (define-key map (kbd "M-p") #'lgtm-select-previous-thread)
+            (define-key map (kbd "C-M-n") #'lgtm-select-next-comment)
+            (define-key map (kbd "C-M-p") #'lgtm-select-previous-comment)
             (define-key map (kbd "R") #'lgtm-reply-to-selected-comment)
             (define-key map (kbd "0") #'lgtm-clear-selected-comment)
             (define-key map (kbd "n") #'lgtm-next-hunk)
