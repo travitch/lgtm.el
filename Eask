@@ -19,5 +19,5 @@
 (depends-on "emacs" "29.1")
 (depends-on "ghub")
 (depends-on "magit-section")
-(depends-on "uuidgen")
 (depends-on "posframe")
+

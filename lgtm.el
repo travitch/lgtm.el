@@ -7,7 +7,7 @@
 ;; Maintainer: Tristan Ravitch <tristan@ravit.ch>
 ;; URL: https://github.com/travitch/lgtm.el
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "29.1") (magit-section "4.3.5") (uuidgen "1.3") (ghub "5.0.0") (posframe "1.5"))
+;; Package-Requires: ((emacs "29.1") (magit-section "4.3.5") (ghub "5.0.0") (posframe "1.5"))
 ;; Keywords: convenience tools, code review, git
 
 ;; This file is not part of GNU Emacs.
@@ -40,7 +40,6 @@
 (require 'posframe)
 (require 'seq)
 (require 'subr-x)
-(require 'uuidgen)
 
 (require 'lgtm-core)
 
@@ -54,7 +53,7 @@ Returns the full mutable comment object, which also contains the
 reference.  Takes the username from the CONFIG."
   (let* ((location (if file-comment-location (lgtm--file-comment-location-location file-comment-location) nil))
          (user (lgtm-configuration-user config))
-         (ref (make-lgtm-comment-ref :id (uuidgen-4)))
+         (ref (make-lgtm-comment-ref :id (gensym "LGTM-COMMENT-")))
          (comment (make-lgtm-comment :ref ref
                                      :location location
                                      :author user
@@ -424,7 +423,7 @@ context they are in."
 
 Top-level comments are associated with the review and not a range of code."
   (interactive)
-  ;; Create a comment object with a new UUID
+  ;; Create a comment object with a new unique identifier
   (let* ((config (lgtm--state-configuration lgtm--current-state))
          (comment-manager (lgtm--state-comment-manager lgtm--current-state))
          (comment (lgtm--make-new-comment-object config comment-manager nil))

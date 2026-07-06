@@ -46,8 +46,8 @@ for the review. Reviews can be approved without examining every file.
 lgtm.el attempts to keep its dependency list small:
 
 - magit-section
-- uuidgen
 - ghub (for the Github adapter)
+- posframe (to render comment threads)
 - (Optional) the native emacs sqlite bindings
 
 # Features

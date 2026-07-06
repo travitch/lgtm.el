@@ -7,7 +7,7 @@
 ;; Maintainer: Tristan Ravitch <tristan@ravit.ch>
 ;; URL: https://github.com/travitch/lgtm.el
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "29.1") (magit-section "4.3.5") (uuidgen "1.3"))
+;; Package-Requires: ((emacs "29.1") (magit-section "4.3.5"))
 ;; Keywords: convenience tools, git, code review
 
 ;; This file is not part of GNU Emacs.
@@ -515,7 +515,7 @@ which the comment is attached."
 ;; We want this so that they can be used as immutable keys, while the contents can be stored
 ;; separately and mutable.
 (cl-defstruct lgtm-comment-ref
-  (id nil :read-only t :documentation "A UUID referencing a (mutable) conversation object"))
+  (id nil :read-only t :documentation "A unique id referencing a (mutable) conversation object"))
 
 ;; Comments attached to locations in a changeset.
 (cl-defstruct lgtm-comment
