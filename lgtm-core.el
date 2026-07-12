@@ -619,22 +619,19 @@ modified file."
         (lgtm--assemble-comment-trees (lgtm--modified-file-state-base-threads modified-file-state) base-comments)
         (lgtm--assemble-comment-trees (lgtm--modified-file-state-current-threads modified-file-state) current-comments)))))
 
-;; FIXME: Update the caller to handle thread structures
-(defun lgtm--top-level-comments (comment-manager)
-  "Get the top-level comments from the COMMENT-MANAGER."
-  (let ((tbl (lgtm--comment-manager-table comment-manager))
-        (top-level-threads (lgtm--comment-manager-top-level-threads comment-manager))
-        (top-level-refs '()))
-    (maphash (lambda (_loc root-comment-refs-at-loc)
-               (seq-doseq (ref root-comment-refs-at-loc)
-                 (push ref top-level-refs)))
-             (lgtm--comment-threads-location-roots top-level-threads))
-    (seq-map (lambda (comment-ref) (gethash comment-ref tbl)) top-level-refs)))
+(defun lgtm--top-level-threads (comment-manager)
+  "Get the top-level comment threads from the COMMENT-MANAGER."
+  (let ((top-level-threads (lgtm--comment-manager-top-level-threads comment-manager)))
+    (lgtm--comment-threads-ordered top-level-threads)))
 
 (defun lgtm--top-level-unpublished-comments (comment-manager)
-  "Get the unpublished top-level comments from the COMMENT-MANAGER."
-  (let ((comments (lgtm--top-level-comments comment-manager)))
-    (seq-filter (lambda (comment) (not (lgtm-comment-is-published comment))) comments)))
+  "Calculate the list of unpublished comments in COMMENT-MANAGER."
+  (let ((top-level-threads (lgtm--top-level-threads comment-manager)))
+    (seq-filter (lambda (comment) (not (lgtm-comment-is-published comment)))
+                (seq-mapcat (lambda (thread)
+                              (seq-map (lambda (pos-com) (lgtm--positioned-comment-comment pos-com))
+                                       (lgtm--linearize-comment-thread thread)))
+                            top-level-threads))))
 
 (defun lgtm--get-comments-from-refs (comment-manager refs)
   "Return a list of the comments corresponding to REFS from COMMENT-MANAGER."

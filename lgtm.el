@@ -137,14 +137,14 @@ comments are discarded."
   "Create a string representation of COMMENT."
   (lgtm--render-string-with-comment-mode (lgtm-comment-content comment) 0))
 
-(defun lgtm--render-top-level-comment (comment)
-  "Render a Magit section for a top-level COMMENT.
-The IDX (index) is provided as context and can be used in formatting."
-  (magit-insert-section (item comment t)
-    (magit-insert-heading (lgtm--insert-top-level-comment-summary comment))
-    (magit-insert-section-body
-      (lgtm--insert-top-level-comment-body comment)
-      (insert "\n\n"))))
+(defun lgtm--render-top-level-thread (thread)
+  "Render the contents of a top-level THREAD.
+
+Each thread is rendered as a tree of Magit sections."
+  (let ((linear-comments (lgtm--linearize-comment-thread thread)))
+    (magit-insert-section (list-section)
+      (seq-doseq (positioned-comment linear-comments)
+        (lgtm--render-positioned-comment nil positioned-comment)))))
 
 (defun lgtm--repository-of-modified-file (modified-file)
   "Return the repository name of the MODIFIED-FILE."
@@ -255,12 +255,8 @@ where the entire buffer is being redrawn."
               (magit-insert-heading (insert "Top-level Comments"))
             (magit-insert-heading (insert (format "Top-level Comments (%d unpublished)" unpublished-comment-count))))
 
-          (seq-doseq (comment (lgtm--top-level-comments comment-manager))
-            (lgtm--render-top-level-comment comment))
-
-          (magit-insert-section (comment-group nil t)
-            (magit-insert-heading "Unpublished Comments")
-            (seq-map #'lgtm--render-top-level-comment unpublished-comments))))
+          (seq-doseq (top-level-thread (lgtm--top-level-threads comment-manager))
+            (lgtm--render-top-level-thread top-level-thread))))
 
       (magit-insert-section (list-section)
         (magit-insert-heading (insert (propertize "Commits" 'font-lock-face '(:background "light gray"))))
@@ -543,6 +539,30 @@ none exists.  It is computed with respect to BUFFER."
   "Format TIMESTAMP as a string according to the configured format."
   (format-time-string lgtm-timestamp-format timestamp))
 
+(defun lgtm--render-positioned-comment (selected-index positioned-comment)
+  "Render POSITIONED-COMMENT as a Magit section.
+
+This uses the SELECTED-INDEX to determine if the comment should be rendered
+with highlighting or not.  Top-level comments do not have a selected index.
+
+Returns the inserted section."
+  (let* ((comment (lgtm--positioned-comment-comment positioned-comment))
+         (is-selected (and selected-index (eq (lgtm-comment-ref comment) (lgtm--selected-comment-comment-ref selected-index)))))
+    (magit-insert-section (item positioned-comment)
+      (let* ((indent (* tab-width (lgtm--positioned-comment-indent positioned-comment)))
+             (timestamp (lgtm-comment-created-timestamp comment))
+             (time-str (if timestamp (lgtm--format-timestamp timestamp) ""))
+             (user (lgtm-comment-author comment))
+             (is-published (lgtm-comment-is-published comment))
+             (header-pad (string-pad "" indent (string-to-char " ")))
+             (header-content (concat header-pad (propertize (concat "| " user " at " time-str (if (not is-published) " [DRAFT]") " |") 'face 'underline))))
+        (magit-insert-heading (insert header-content))
+        (magit-insert-section-body
+          (let ((content (lgtm-comment-content comment))
+                (comment-face (if is-selected 'lgtm-selected-comment-face nil)))
+            (lgtm--render-string-with-comment-mode content indent comment-face))
+          (insert "\n\n"))))))
+
 (defun lgtm--render-comment-thread (selected-index thread target-buffer)
   "Render THREAD into TARGET-BUFFER using magit-sections for each comment.
 
@@ -564,21 +584,7 @@ in each active thread, so this always returns non-nil."
             (seq-doseq (positioned-comment linear-comments)
               (let* ((comment (lgtm--positioned-comment-comment positioned-comment))
                      (is-selected (eq (lgtm-comment-ref comment) (lgtm--selected-comment-comment-ref selected-index)))
-                     (inserted-section (magit-insert-section (item positioned-comment)
-                (let* ((indent (* tab-width (lgtm--positioned-comment-indent positioned-comment)))
-                       (timestamp (lgtm-comment-created-timestamp comment))
-                       (time-str (if timestamp (lgtm--format-timestamp timestamp) ""))
-                       (user (lgtm-comment-author comment))
-                       (is-published (lgtm-comment-is-published comment))
-                       (header-pad (string-pad "" indent (string-to-char " ")))
-                       (header-content (concat header-pad (propertize (concat "| " user " at " time-str (if (not is-published) " [DRAFT]") " |") 'face 'underline))))
-                  (magit-insert-heading (insert header-content))
-                  (magit-insert-section-body
-                    (let ((content (lgtm-comment-content comment))
-                          (comment-face (if is-selected 'lgtm-selected-comment-face nil)))
-                      (lgtm--render-string-with-comment-mode content indent comment-face))
-                    (insert "\n\n"))))))
-
+                     (inserted-section (lgtm--render-positioned-comment selected-index positioned-comment)))
                 (when is-selected
                   (setf selected-section inserted-section)))))))
     (cl-assert selected-section t "Invariant: If a thread is selected, it has a selected (focused) comment in it")
