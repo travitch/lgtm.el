@@ -547,8 +547,13 @@ none exists.  It is computed with respect to BUFFER."
   "Render THREAD into TARGET-BUFFER using magit-sections for each comment.
 
 The SELECTED-INDEX is passed in so that the highlighted comment in the
-thread (if any) can be rendered differently."
-  (let ((linear-comments (lgtm--linearize-comment-thread thread)))
+thread (if any) can be rendered distinctively.
+
+Returns the position (as a `marker') of the selected comment in the
+thread.  There is an invariant that there is always a selected comment
+in each active thread, so this always returns non-nil."
+  (let ((linear-comments (lgtm--linearize-comment-thread thread))
+        (selected-section nil))
     (with-current-buffer target-buffer
       (let ((inhibit-read-only t))
         (erase-buffer)
@@ -556,29 +561,35 @@ thread (if any) can be rendered differently."
         (magit-insert-section (list-section)
           (magit-insert-heading (insert (propertize "Thread" 'font-lock-face '(:background "light gray"))))
 
-          (seq-doseq (positioned-comment linear-comments)
-            (magit-insert-section (item positioned-comment)
+            (seq-doseq (positioned-comment linear-comments)
               (let* ((comment (lgtm--positioned-comment-comment positioned-comment))
-                     (indent (* tab-width (lgtm--positioned-comment-indent positioned-comment)))
-                     (timestamp (lgtm-comment-created-timestamp comment))
-                     (time-str (if timestamp (lgtm--format-timestamp timestamp) ""))
-                     (user (lgtm-comment-author comment))
-                     (is-published (lgtm-comment-is-published comment))
                      (is-selected (eq (lgtm-comment-ref comment) (lgtm--selected-comment-comment-ref selected-index)))
-                     (header-pad (string-pad "" indent (string-to-char " ")))
-                     (header-content (concat header-pad (propertize (concat "| " user " at " time-str (if (not is-published) " [DRAFT]") " |") 'face 'underline))))
-                (magit-insert-heading (insert header-content))
-                (magit-insert-section-body
-                  (let ((content (lgtm-comment-content comment))
-                        (comment-face (if is-selected 'lgtm-selected-comment-face nil)))
-                    (lgtm--render-string-with-comment-mode content indent comment-face))
-                  (insert "\n\n"))))))))))
+                     (inserted-section (magit-insert-section (item positioned-comment)
+                (let* ((indent (* tab-width (lgtm--positioned-comment-indent positioned-comment)))
+                       (timestamp (lgtm-comment-created-timestamp comment))
+                       (time-str (if timestamp (lgtm--format-timestamp timestamp) ""))
+                       (user (lgtm-comment-author comment))
+                       (is-published (lgtm-comment-is-published comment))
+                       (header-pad (string-pad "" indent (string-to-char " ")))
+                       (header-content (concat header-pad (propertize (concat "| " user " at " time-str (if (not is-published) " [DRAFT]") " |") 'face 'underline))))
+                  (magit-insert-heading (insert header-content))
+                  (magit-insert-section-body
+                    (let ((content (lgtm-comment-content comment))
+                          (comment-face (if is-selected 'lgtm-selected-comment-face nil)))
+                      (lgtm--render-string-with-comment-mode content indent comment-face))
+                    (insert "\n\n"))))))
+
+                (when is-selected
+                  (setf selected-section inserted-section)))))))
+    (cl-assert selected-section t "Invariant: If a thread is selected, it has a selected (focused) comment in it")
+    (oref selected-section start)))
 
 (defun lgtm--add-comment-overlays (buffer selected-index depth thread)
   "Add overlays for the given THREAD in the currently-viewed file BUFFER.
 
 The SELECTED-INDEX is the highlighted comment, if any.  Indent the
-comment according to DEPTH, which encodes the reply structure.
+comment according to DEPTH, which encodes the reply structure.  Also
+scroll to the selected comment so that it is visible.
 
 The THREAD rooted at this comment is rendered in a posframe if this
 comment is selected."
@@ -604,16 +615,29 @@ comment is selected."
       (overlay-put ov 'lgtm-comment-id (lgtm-comment-ref root-comment))
       (overlay-put ov 'lgtm-overlay-type 'header)
       (when (and is-selected (posframe-workable-p))
-        (lgtm--render-comment-thread selected-index thread (get-buffer-create lgtm--posframe-comment-buffer))
-        (posframe-show lgtm--posframe-comment-buffer
-                       :hidehandler #'posframe-hidehandler-when-buffer-switch
-                       :border-width 1
-                       :border-color "black"
-                       :position (point)))
+        (let ((selected-pos (lgtm--render-comment-thread selected-index thread (get-buffer-create lgtm--posframe-comment-buffer))))
+          (posframe-show lgtm--posframe-comment-buffer
+                         :hidehandler #'posframe-hidehandler-when-buffer-switch
+                         :border-width 1
+                         :height lgtm-comment-thread-frame-height
+                         :border-color "black"
+                         :position (point))
+          ;; Scroll the contents of the posframe to ensure the active comment is visible.  We have
+          ;; to do this after showing it, as showing the frame seems to reset the point.  I.e.,
+          ;; setting the point when rendering the contents of the comment buffer seems to have no
+          ;; effect.
+          (posframe-funcall lgtm--posframe-comment-buffer #'goto-char selected-pos)))
       (with-temp-buffer
         (lgtm--render-string-with-comment-mode header-content (* tab-width depth))
         (insert "\n")
-        (overlay-put ov 'before-string (propertize (buffer-substring (point-min) (point-max)) 'face comment-face)))))
+        (overlay-put ov 'before-string (propertize (buffer-substring (point-min) (point-max)) 'face comment-face)))
+
+      ;; Scroll the window to the selected comment so that is visible
+      (when is-selected
+        (with-current-buffer buffer
+          (with-selected-window (get-buffer-window buffer)
+            (message "going to line %d" (lgtm-comment-location-start-line (lgtm-comment-location root-comment)))
+            (goto-line (lgtm-comment-location-start-line (lgtm-comment-location root-comment))))))))
 
 (defun lgtm--init-comment-overlays (state modified-file)
   "Initialize comment overlays for the given MODIFIED-FILE file.

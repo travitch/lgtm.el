@@ -88,6 +88,13 @@ banner to not be rendered."
   :type 'symbol
   :group 'lgtm)
 
+(defcustom lgtm-comment-thread-frame-height 50
+  "The height of the comment thread popup.
+
+This is defined as a number of lines.  The default is 50."
+  :type 'number
+  :group 'lgtm)
+
 ;;; Faces
 
 (defface lgtm-default-comment-face
