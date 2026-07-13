@@ -555,7 +555,7 @@ replied to.")
   (table (make-hash-table :test 'equal) :read-only t :documentation "The storage for all comments, both
 published and unpublished.  The keys are `lgtm-comment-ref' objects.
 The values are `lgtm-comment' objects.")
-  (top-level-threads (make-lgtm--comment-threads) :read-only t :documentation "The thread structure for the top-level
+  (top-level-threads (make-lgtm--comment-threads) :documentation "The thread structure for the top-level
 comments.  This includes both published and unpublished comments."))
 
 (cl-defstruct lgtm--comment-bootstrap-state
@@ -632,6 +632,15 @@ modified file."
                               (seq-map (lambda (pos-com) (lgtm--positioned-comment-comment pos-com))
                                        (lgtm--linearize-comment-thread thread)))
                             top-level-threads))))
+
+(defun lgtm--comment-manager-unpublished-comments (comment-manager)
+  "Return all of the unpublished comments in COMMENT-MANAGER.
+
+There is no specific ordering of these comments.  This includes both
+file-level and top-level comments."
+  (let ((comments '()))
+    (maphash (lambda (_key comment) (push comment comments)) (lgtm--comment-manager-table comment-manager))
+    (seq-filter (lambda (c) (not (lgtm-comment-is-published c))) comments)))
 
 (defun lgtm--get-comments-from-refs (comment-manager refs)
   "Return a list of the comments corresponding to REFS from COMMENT-MANAGER."
@@ -833,6 +842,22 @@ buffers incrementally when ediff views are closed, but we also do a pass at
 the end in case any buffers are missed.
 
 [tag:buffer-cleanup]"))
+
+(defun lgtm--reset-comment-state (state)
+  "Reset the state of the STATE object.
+
+After this function returns, the `lgtm--state' contains no comments and
+is ready to be re-populated."
+  (let ((comment-manager (lgtm--state-comment-manager state))
+        (file-manager (lgtm--state-file-manager state)))
+    (setf (lgtm--comment-manager-top-level-threads comment-manager) (make-lgtm--comment-threads))
+    (clrhash (lgtm--comment-manager-table comment-manager))
+
+    (maphash (lambda (_key file-state)
+               (setf (lgtm--modified-file-state-base-threads file-state) (make-lgtm--comment-threads))
+               (setf (lgtm--modified-file-state-current-threads file-state) (make-lgtm--comment-threads))
+               (setf (lgtm--modified-file-state-selected-comment file-state) nil))
+             (lgtm--modified-file-manager-table file-manager))))
 
 (defun lgtm--get-selected-buffer-tag (state)
   "Get the tag of the active buffer.

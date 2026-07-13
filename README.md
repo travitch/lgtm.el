@@ -141,6 +141,7 @@ The keybindings can be changed freely.  The defaults for each part of the UI are
 - `A` approves the changeset and publishes any draft comments (`lgtm-approve`)
 - `C` creates a new top-level comment on the review (`lgtm-add-top-level-comment`)
 - `R` creates a reply to the selected top-level comment (if any) (`lgtm-reply-to-selected-comment`)
+- `F` fetches all comments and threads from the server and re-renders the UI (`lgtm-refresh-remote-conversations`)
 - `q` closes lgtm and cleans up any associated buffers (`lgtm-shutdown`)
 
 The overview UI also inherits all of the default keybindings from `magit-section`.

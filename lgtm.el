@@ -855,6 +855,35 @@ to submit the approval to the server."
 
     (kill-buffer (get-buffer lgtm--overview-buffer-name))))
 
+(defun lgtm-refresh-remote-conversations ()
+  "Re-fetch the remote conversation state.
+
+This function overwrites all of the comment state.  If there are any
+unpublished comments, it asks the user to confirm that unpublished
+comments will be lost."
+  (interactive)
+  (let* ((conf (lgtm--state-configuration lgtm--current-state))
+         (comment-manager (lgtm--state-comment-manager lgtm--current-state))
+         (file-manager (lgtm--state-file-manager lgtm--current-state))
+         (unpublished-comments (lgtm--comment-manager-unpublished-comments comment-manager))
+         (get-remote-conversations (lgtm-configuration-get-remote-conversations-function conf)))
+
+    (if get-remote-conversations
+        (when (or (= 0 (length unpublished-comments))
+                  (y-or-n-p (format "Reset the comment manager and discard %d comments?" (length unpublished-comments))))
+          (let ((remote-conversations (funcall get-remote-conversations file-manager)))
+            (message "Fetched %d comments" (length remote-conversations))
+            (lgtm--reset-comment-state lgtm--current-state)
+            (lgtm--add-remote-comments file-manager comment-manager remote-conversations)
+
+            ;; Immediately re-render the UI to reflect the change
+            ;;
+            ;; The only outstanding comment references are in the Magit sections containing comments.
+            ;; They will all be cleared by this operation.
+            (when (lgtm--state-active-reviewed-file lgtm--current-state)
+              (lgtm-close-review-file))
+            (lgtm--render-review-overview-ui)))
+      (warn "No remote conversation fetching function defined"))))
 
 (defun lgtm-start (conf)
   "Review the given changeset.
@@ -897,6 +926,7 @@ The backend-specific entrypoint is expected to pass in the necessary CONF."
     (define-key map (kbd "C") #'lgtm-add-top-level-comment)
     (define-key map (kbd "R") #'lgtm-reply-to-selected-comment)
     (define-key map (kbd "S") #'lgtm-submit-comments)
+    (define-key map (kbd "F") #'lgtm-refresh-remote-conversations)
     (define-key map (kbd "q") #'lgtm-shutdown)
 
     map))
