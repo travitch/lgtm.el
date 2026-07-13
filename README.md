@@ -135,10 +135,12 @@ The keybindings can be changed freely.  The defaults for each part of the UI are
 
 - `RET` on a modified file launches the `ediff` file review UI for that file (`lgtm-review-selected-modified-file`)
 - `TAB` collapses or expands regions (as in `magit-section`); shows diffs or top-level comments when the point is on one
-- `R` marks the selected file as reviewed (`lgtm-mark-selected-modified-file-reviewed`)
+- `M` marks the selected file as reviewed (`lgtm-mark-selected-modified-file-reviewed`)
 - `U` marks the selected file as unreviewed (`lgtm-mark-selected-modified-file-unreviewed`)
 - `S` publishes draft comments (`lgtm-submit-comments`)
 - `A` approves the changeset and publishes any draft comments (`lgtm-approve`)
+- `C` creates a new top-level comment on the review (`lgtm-add-top-level-comment`)
+- `R` creates a reply to the selected top-level comment (if any) (`lgtm-reply-to-selected-comment`)
 - `q` closes lgtm and cleans up any associated buffers (`lgtm-shutdown`)
 
 The overview UI also inherits all of the default keybindings from `magit-section`.
