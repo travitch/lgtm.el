@@ -548,7 +548,7 @@ with highlighting or not.  Top-level comments do not have a selected index.
 Returns the inserted section."
   (let* ((comment (lgtm--positioned-comment-comment positioned-comment))
          (is-selected (and selected-index (eq (lgtm-comment-ref comment) (lgtm--selected-comment-comment-ref selected-index)))))
-    (magit-insert-section (item positioned-comment)
+    (magit-insert-section (item comment)
       (let* ((indent (* tab-width (lgtm--positioned-comment-indent positioned-comment)))
              (timestamp (lgtm-comment-created-timestamp comment))
              (time-str (if timestamp (lgtm--format-timestamp timestamp) ""))
@@ -768,22 +768,33 @@ This reads the STATE and MODIFIED-FILE to set up ediff windows."
 (defun lgtm-reply-to-selected-comment ()
   "Create a reply to the selected comment, if any."
   (interactive)
-  (when-let* ((active-reviewed-file (lgtm--state-active-reviewed-file lgtm--current-state)))
-    (let* ((file-manager (lgtm--state-file-manager lgtm--current-state))
-           (active-file-state (lgtm--get-modified-file-state file-manager active-reviewed-file))
-           (comment-manager (lgtm--state-comment-manager lgtm--current-state))
-           (selected-comment (lgtm--modified-file-state-selected-comment active-file-state)))
-      (when selected-comment
-        (let* ((parent-comment-ref (lgtm--selected-comment-comment-ref selected-comment))
-               (parent-comment (lgtm--get-comment-content comment-manager parent-comment-ref))
-               (reply-to-id (lgtm-comment-reply-to-id parent-comment))
-               (config (lgtm--state-configuration lgtm--current-state))
-               (loc (lgtm-comment-location parent-comment))
-               (file-comment-location (make-lgtm--file-comment-location :modified-file-state active-file-state
-                                                                        :location loc))
-               (reply-comment (lgtm--make-new-comment-object config comment-manager reply-to-id file-comment-location)))
+  (let ((active-reviewed-file (lgtm--state-active-reviewed-file lgtm--current-state)))
+    (if active-reviewed-file
+        (let* ((file-manager (lgtm--state-file-manager lgtm--current-state))
+               (active-file-state (lgtm--get-modified-file-state file-manager active-reviewed-file))
+               (comment-manager (lgtm--state-comment-manager lgtm--current-state))
+               (selected-comment (lgtm--modified-file-state-selected-comment active-file-state)))
+          (when selected-comment
+            (let* ((parent-comment-ref (lgtm--selected-comment-comment-ref selected-comment))
+                   (parent-comment (lgtm--get-comment-content comment-manager parent-comment-ref))
+                   (reply-to-id (lgtm-comment-reply-to-id parent-comment))
+                   (config (lgtm--state-configuration lgtm--current-state))
+                   (loc (lgtm-comment-location parent-comment))
+                   (file-comment-location (make-lgtm--file-comment-location :modified-file-state active-file-state
+                                                                            :location loc))
+                   (reply-comment (lgtm--make-new-comment-object config comment-manager reply-to-id file-comment-location)))
 
-          (lgtm--edit-comment lgtm--current-state "Editing reply comment" (lgtm-comment-ref reply-comment)))))))
+              (lgtm--edit-comment lgtm--current-state "Editing reply comment" (lgtm-comment-ref reply-comment)))))
+      ;; This is a top-level comment
+      (let* ((current-section (magit-current-section))
+             (attached-value (oref current-section value)))
+        (if (lgtm-comment-p attached-value)
+          (let* ((reply-to-id (lgtm-comment-reply-to-id attached-value))
+                 (config (lgtm--state-configuration lgtm--current-state))
+                 (comment-manager (lgtm--state-comment-manager lgtm--current-state))
+                 (reply-comment (lgtm--make-new-comment-object config comment-manager reply-to-id)))
+            (lgtm--edit-comment lgtm--current-state "Editing top-level reply comment" (lgtm-comment-ref reply-comment)))
+          (warn "Selected section is not a comment that can be replied to"))))))
 
 (defun lgtm--create-comment-at-point (state)
   "Create a new comment at the point based on STATE."
@@ -880,10 +891,11 @@ The backend-specific entrypoint is expected to pass in the necessary CONF."
     (set-keymap-parent map magit-section-mode-map)
 
     (define-key map (kbd "RET") #'lgtm-review-selected-modified-file)
-    (define-key map (kbd "R") #'lgtm-mark-selected-modified-file-reviewed)
+    (define-key map (kbd "M") #'lgtm-mark-selected-modified-file-reviewed)
     (define-key map (kbd "U") #'lgtm-mark-selected-modified-file-unreviewed)
     (define-key map (kbd "A") #'lgtm-approve)
     (define-key map (kbd "C") #'lgtm-add-top-level-comment)
+    (define-key map (kbd "R") #'lgtm-reply-to-selected-comment)
     (define-key map (kbd "S") #'lgtm-submit-comments)
     (define-key map (kbd "q") #'lgtm-shutdown)
 
