@@ -633,15 +633,6 @@ modified file."
                                        (lgtm--linearize-comment-thread thread)))
                             top-level-threads))))
 
-(defun lgtm--comment-manager-unpublished-comments (comment-manager)
-  "Return all of the unpublished comments in COMMENT-MANAGER.
-
-There is no specific ordering of these comments.  This includes both
-file-level and top-level comments."
-  (let ((comments '()))
-    (maphash (lambda (_key comment) (push comment comments)) (lgtm--comment-manager-table comment-manager))
-    (seq-filter (lambda (c) (not (lgtm-comment-is-published c))) comments)))
-
 (defun lgtm--get-comments-from-refs (comment-manager refs)
   "Return a list of the comments corresponding to REFS from COMMENT-MANAGER."
   (let ((comment-table (lgtm--comment-manager-table comment-manager)))
