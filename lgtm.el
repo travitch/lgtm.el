@@ -865,24 +865,21 @@ comments will be lost."
   (let* ((conf (lgtm--state-configuration lgtm--current-state))
          (comment-manager (lgtm--state-comment-manager lgtm--current-state))
          (file-manager (lgtm--state-file-manager lgtm--current-state))
-         (unpublished-comments (lgtm--comment-manager-unpublished-comments comment-manager))
          (get-remote-conversations (lgtm-configuration-get-remote-conversations-function conf)))
 
     (if get-remote-conversations
-        (when (or (= 0 (length unpublished-comments))
-                  (y-or-n-p (format "Reset the comment manager and discard %d comments?" (length unpublished-comments))))
-          (let ((remote-conversations (funcall get-remote-conversations file-manager)))
-            (message "Fetched %d comments" (length remote-conversations))
-            (lgtm--reset-comment-state lgtm--current-state)
-            (lgtm--add-remote-comments file-manager comment-manager remote-conversations)
+        (let ((remote-conversations (funcall get-remote-conversations file-manager)))
+          (message "Fetched %d comments" (length remote-conversations))
+          (lgtm--reset-comment-state lgtm--current-state)
+          (lgtm--add-remote-comments file-manager comment-manager remote-conversations)
 
-            ;; Immediately re-render the UI to reflect the change
-            ;;
-            ;; The only outstanding comment references are in the Magit sections containing comments.
-            ;; They will all be cleared by this operation.
-            (when (lgtm--state-active-reviewed-file lgtm--current-state)
-              (lgtm-close-review-file))
-            (lgtm--render-review-overview-ui)))
+          ;; Immediately re-render the UI to reflect the change
+          ;;
+          ;; The only outstanding comment references are in the Magit sections containing comments.
+          ;; They will all be cleared by this operation.
+          (when (lgtm--state-active-reviewed-file lgtm--current-state)
+            (lgtm-close-review-file))
+          (lgtm--render-review-overview-ui))
       (warn "No remote conversation fetching function defined"))))
 
 (defun lgtm-start (conf)
