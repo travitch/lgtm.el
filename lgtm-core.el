@@ -367,12 +367,12 @@ Invariant: The comment already exists in the comment manager."
   (selected-comment nil :documentation "A `lgtm--selected-comment' or nil if there is no selected comment.")
   (base-threads (make-lgtm--comment-threads) :documentation "The conversations in the base version of the file.
 
-This is a list of `lgtm-comment-ref' stored in structural order.  The structural
-order is such that a linear traversal respects thread order and nesting.")
+This is a `lgtm--comment-threads' object that associates comment threads
+with file locations.")
   (current-threads (make-lgtm--comment-threads) :documentation "The conversations in the current version of the file.
 
-This is a list of `lgtm-comment-ref' stored in structural order.  The structural
-order is such that a linear traversal respects thread order and nesting."))
+This is a `lgtm--comment-threads' object that associates comment threads
+with file locations."))
 
 (defun lgtm--path-of-file-at-version (version modified-file)
   "Get the path of the VERSION of the MODIFIED-FILE.
