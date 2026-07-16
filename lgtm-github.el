@@ -43,7 +43,7 @@
 
 ;;; Constants
 
-(defconst lgtm-github--pr-url-rx "^https://github.com/\\([[:alnum:]-_]+\\)/\\([[:alnum:]-_]+\\)/pull/\\([[:digit:]]+\\)$")
+(defconst lgtm-github--pr-url-rx "^https://github.com/\\([[:alnum:]-_]+\\)/\\([[:alnum:]-_.]+\\)/pull/\\([[:digit:]]+\\)$")
 
 (defconst lgtm-github--pr-ref-rx "^refs/pull/\\([0-9]+\\)/head$")
 
