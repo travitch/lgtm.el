@@ -97,12 +97,16 @@ then updates the UI."
             (setf (lgtm-comment-backend-data current-comment) comment-id))
         (warn "No create comment function defined, not sending comment to server")))
 
+    (if (lgtm-comment-location current-comment)
+      (let* ((modified-file (lgtm--state-active-reviewed-file lgtm--current-state))
+             (modified-file-state (lgtm--get-modified-file-state file-manager modified-file)))
+        (lgtm--add-comment-to-file modified-file-state current-comment))
+      (lgtm--comment-manager-add-top-level comment-manager current-comment-ref))
+
     ;; Note: we only update overlays *if* this is a comment attached to a file. If this is a
     ;; top-level comment, there are no overlays to update.
     (when (lgtm-comment-location current-comment)
-      (let* ((modified-file (lgtm--state-active-reviewed-file lgtm--current-state))
-             (modified-file-state (lgtm--get-modified-file-state file-manager modified-file)))
-        (lgtm--add-comment-to-file modified-file-state current-comment)
+      (let* ((modified-file (lgtm--state-active-reviewed-file lgtm--current-state)))
         (lgtm--init-comment-overlays lgtm--current-state modified-file))))
 
   (quit-restore-window (get-buffer-window lgtm--comment-editor-buffer-name) 'kill)
@@ -424,7 +428,6 @@ Top-level comments are associated with the review and not a range of code."
          (comment-manager (lgtm--state-comment-manager lgtm--current-state))
          (comment (lgtm--make-new-comment-object config comment-manager nil))
          (ref (lgtm-comment-ref comment)))
-    (lgtm--comment-manager-add-top-level comment-manager ref)
     (lgtm--edit-comment lgtm--current-state "Editing a top level comment" ref)))
 
 (defun lgtm-mark-selected-modified-file-reviewed ()
