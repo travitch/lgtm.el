@@ -36,7 +36,6 @@
 (require 'cl-lib)
 (require 'ghub)
 (require 'ghub-graphql)
-(require 'ghub-legacy)
 
 (require 'lgtm)
 (require 'lgtm-core)
@@ -225,8 +224,8 @@ Also takes a Github REPOSITORY."
          (repo (lgtm-github--repository-repo repository))
          (pull-number (lgtm-github--pr-ref-pr-number pr-descriptor))
          (variables `((owner . ,owner) (name . ,repo) (number . ,(string-to-number pull-number))))
-         (raw-response (ghub-graphql lgtm-github--get-pr-info-query variables :auth 'lgtm))
-         (narrowed-response (lgtm-github--graphql-select (car raw-response) '((data . 0) (repository . 0) pullRequest))))
+         (raw-response (ghub-query lgtm-github--get-pr-info-query variables :auth 'lgtm :synchronous t))
+         (narrowed-response (lgtm-github--graphql-select raw-response '((data . 0) (repository . 0) pullRequest))))
     (let-alist narrowed-response
       (make-lgtm-github--pr-info
        :id .id
@@ -246,7 +245,7 @@ Also takes a Github REPOSITORY."
   "Parse COMMENT-ITEM into a `lgtm-comment'.
 
 This requires the FILE-MANAGER to map the location back to a `lgtm-modified-file'."
-  (let-alist (lgtm-github--graphql-select comment-item '(node))
+  (let-alist comment-item
     (let* ((version (lgtm-github--get-comment-revision .diffSide))
            (file (lgtm-github--get-file-of-change file-manager version .path))
            (loc (make-lgtm-comment-location :version version :file file :start-line .startLine :end-line .line)))
@@ -269,7 +268,7 @@ The LOC is passed in because it is already parsed.  The THREAD-ID is the
 identifier for the thread containing the comment.  This is important as
 replies to any comment in this thread should be attached to this thread
 id."
-  (let-alist (lgtm-github--graphql-select comment-item '(node))
+  (let-alist comment-item
     (let ((ref (make-lgtm-comment-ref :id (string-to-number .fullDatabaseId))))
       (make-lgtm-comment
        :ref ref
@@ -288,12 +287,11 @@ id."
 
 The FILE-MANAGER is used to map comments back to the internal representation
 of source files."
-  (let-alist (lgtm-github--graphql-select thread-item '(node))
+  (let-alist thread-item
     (let* ((version (lgtm-github--get-comment-revision .diffSide))
            (file (lgtm-github--get-file-of-change file-manager version .path))
            (loc (make-lgtm-comment-location :version version :file file :start-line .startLine :end-line .line))
-           (nested-comments-list (lgtm-github--graphql-select (seq-elt .comments 1) '(edges)))
-           (flattened-comments-list (seq-mapcat (lambda (s) s) nested-comments-list)))
+           (flattened-comments-list .comments))
       (if (and version file)
           (seq-map (lambda (comment-item) (lgtm-github--parse-server-comment loc comment-item)) flattened-comments-list)
         (progn
@@ -302,7 +300,7 @@ of source files."
 
 (defun lgtm-github--parse-top-level-comment-thread (comment-item)
   "Parse COMMENT-ITEM from the server into a list of comments for the thread."
-  (let-alist (lgtm-github--graphql-select comment-item '(node))
+  (let-alist comment-item
     (let ((ref (make-lgtm-comment-ref :id .id)))
       (make-lgtm-comment
        :ref ref
@@ -322,11 +320,11 @@ required to map file names to file objects."
          (repo (lgtm-github--repository-repo repository))
          (pull-number (string-to-number (lgtm-github--pr-ref-pr-number pr-descriptor)))
          (arguments `((owner . ,owner) (name . ,repo) (number . ,pull-number)))
-         (raw-result-file-comments (ghub-graphql lgtm-github--get-pr-comments-query arguments :auth 'lgtm))
-         (narrow-result-file-comments (seq-map #'car (alist-get 'edges (lgtm-github--graphql-select (car raw-result-file-comments) '((data . 0) (repository . 0) (pullRequest . 0) reviewThreads)))))
+         (raw-result-file-comments (ghub-query lgtm-github--get-pr-comments-query arguments :auth 'lgtm :synchronous t))
+         (narrow-result-file-comments (lgtm-github--graphql-select raw-result-file-comments '((data . 0) (repository . 0) (pullRequest . 0) reviewThreads)))
          (file-comments (seq-map (lambda (node) (lgtm-github--parse-comment-thread file-manager node)) narrow-result-file-comments))
-         (raw-result-top-level-comments (ghub-graphql lgtm-github--get-pr-top-level-comments-query arguments :auth 'lgtm))
-         (narrow-result-top-level-comments (seq-map #'car (alist-get 'edges (lgtm-github--graphql-select (car raw-result-top-level-comments) '((data . 0) (repository . 0) (pullRequest . 0) comments)))))
+         (raw-result-top-level-comments (ghub-query lgtm-github--get-pr-top-level-comments-query arguments :auth 'lgtm :synchronous t))
+         (narrow-result-top-level-comments (lgtm-github--graphql-select raw-result-top-level-comments '((data . 0) (repository . 0) (pullRequest . 0) comments)))
          (top-level-comments (seq-map (lambda (node) (lgtm-github--parse-top-level-comment-thread node)) narrow-result-top-level-comments)))
     (seq-concatenate 'list top-level-comments (seq-mapcat (lambda (x) x) file-comments))))
 
@@ -400,11 +398,11 @@ state (instead of the base).  See [ref:get-review-comments-query]."
          (author gh-username)
          (states '["PENDING"])
          (variables `((owner . ,owner) (name . ,repo) (number . ,pull-number) (author . ,author) (states . ,states)))
-         (raw-response (ghub-graphql lgtm-github--get-current-review-comments-query variables :auth 'lgtm))
+         (raw-response (ghub-query lgtm-github--get-current-review-comments-query variables :auth 'lgtm :synchronous t))
          ;; We select the first (0th) review because there is exactly one pending review right now
          ;; (we know since we created it and limited the search to only pending reviews, and there
          ;; can only be one pending review per user).
-         (narrowed-response (lgtm-github--graphql-select (car raw-response) '((data . 0) (repository . 0) (pullRequest . 0) (reviews . edges) 0 (node . 0) (comments . edges))))
+         (narrowed-response (lgtm-github--graphql-select raw-response '((data . 0) (repository . 0) (pullRequest . 0) (reviews . 0) 0 comments)))
          (parsed-comments (seq-map (lambda (node) (lgtm-github--parse-review-comment file-manager node)) narrowed-response)))
     parsed-comments))
 
