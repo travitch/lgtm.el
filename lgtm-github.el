@@ -214,7 +214,8 @@ This assumes that the URL is in the format git@github.com:USER/REPO.git."
   (url nil :read-only t :documentation "The URL to the PR")
   (review-id nil :documentation "The identifier of the pending review, if any.
 
-This is nil when there is no pending review.  It gets updated as the review evolves."))
+This is nil when there is no pending review.
+It gets updated as the review evolves."))
 
 (defun lgtm-github--get-pr-info (repository pr-descriptor)
   "Query the Github API to get information for the given PR-DESCRIPTOR.
@@ -244,7 +245,8 @@ Also takes a Github REPOSITORY."
 (defun lgtm-github--parse-review-comment (file-manager comment-item)
   "Parse COMMENT-ITEM into a `lgtm-comment'.
 
-This requires the FILE-MANAGER to map the location back to a `lgtm-modified-file'."
+This requires the FILE-MANAGER to map the location back
+to a `lgtm-modified-file'."
   (let-alist comment-item
     (let* ((version (lgtm-github--get-comment-revision .diffSide))
            (file (lgtm-github--get-file-of-change file-manager version .path))
