@@ -691,7 +691,15 @@ This reads the STATE and MODIFIED-FILE to set up ediff windows."
       (lgtm-ediff-mode))
 
     (lgtm--init-comment-overlays state modified-file)
-    (lgtm--restore-saved-buffer-locations state modified-file)))
+    (lgtm--restore-saved-buffer-locations state modified-file)
+
+    ;; If there is going to be an empty buffer, just suppress it.  These don't add any information
+    ;; and just take up screen space.
+    (pcase (lgtm--modified-file-type modified-file)
+      ('added (with-selected-window (get-buffer-window base-revision-buffer)
+                  (delete-window)))
+      ('deleted (with-selected-window (get-buffer-window current-revision-buffer)
+                  (delete-window))))))
 
 (defun lgtm-select-next-thread ()
   "Select the next comment in the current file version being reviewed."
