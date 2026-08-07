@@ -59,6 +59,7 @@ reference.  Takes the username from the CONFIG."
                                      :author user
                                      :parent reply-to-id
                                      :is-published nil
+                                     :created-timestamp (time-convert (current-time) 'integer)
                                      :content ""))
          (tbl (lgtm--comment-manager-table comment-manager)))
     (puthash ref comment tbl)
