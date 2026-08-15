@@ -6,7 +6,7 @@
 ;; Maintainer: Tristan Ravitch <tristan@ravit.ch>
 ;; URL: https://github.com/travitch/lgtm.el
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "29.1") (ghub "4.3.0")
+;; Package-Requires: ((emacs "29.1") (ghub "4.3.0"))
 ;; Keywords: convenience tools
 
 
