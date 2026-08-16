@@ -1,0 +1,10 @@
+name = "LgtmLean"
+version = "0.1.0"
+defaultTargets = ["lgtmlean"]
+
+[[lean_lib]]
+name = "LgtmLean"
+
+[[lean_exe]]
+name = "lgtmlean"
+root = "Main"
