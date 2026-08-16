@@ -7,9 +7,8 @@ private structure Tree (α : Type) where
   value : α
   children : List (Tree α)
 
-def Tree.«add-child» (t : Tree α) (child : Tree α) : Tree α :=
+def Tree.addChild (t : Tree α) (child : Tree α) : Tree α :=
   ⟨t.value, child :: t.children⟩
-
 
 /-- A reference that can be mapped to (mutable) comment contents -/
 structure CommentRef where
@@ -42,6 +41,10 @@ inductive CommentLocation where
   | fileLocation : CommentFileLocation → CommentLocation
   | topLevel : CommentLocation
   deriving Hashable, BEq
+
+private def CommentLocation.isTopLevel : CommentLocation → Bool
+| .topLevel => true
+| .fileLocation _ => false
 
 structure ServerId where
   id : String
@@ -83,7 +86,7 @@ structure Comment where
   /-- The content of the comment. -/
   content : String
 
-def Comment.«is-persisted-to-server» (c : Comment) : Bool := c.backendId.isSome
+def Comment.isPersistedToServer (c : Comment) : Bool := c.backendId.isSome
 
   -- FIXME: Should this be a tree of comments instead? There should be no harm (it is fine in the current implementation)
 abbrev CommentThread := Tree CommentRef
@@ -91,21 +94,38 @@ abbrev CommentThread := Tree CommentRef
 /-- The collected threads for a scope (file version or top-level). -/
 private structure CommentThreads where
   /-- The tree node for each comment. -/
-
   commentTreeNodes : Std.HashMap CommentRef CommentThread
 
   serverCommentIds : Std.HashMap ServerId CommentRef
 
-  /-- Invariant: Either there is one location that is top or there are no locations that are top -/
   locationRoots : Std.HashMap CommentLocation (List CommentRef)
 
-private def emptyCommentThreads : CommentThreads := ⟨ Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity ⟩
+  /-- Invariant: Either there is one location that is top or there are no locations that are top -/
+  hLocationsConsistent : (∀ loc, loc ∈ locationRoots.keys → loc.isTopLevel ∧ locationRoots.size = 1) ∨ (∀ loc, loc ∈ locationRoots.keys → ¬ loc.isTopLevel)
+
+private def CommentThreads.empty : CommentThreads := ⟨ Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity, by sorry ⟩
+
+/-- Locations of threads for rendering purposes.
+
+These locations are less precise than the comment locations and are just
+used for the renderer to group threads appropriately. -/
+private inductive ThreadLocation where
+| topLevel
+| lineNumber : Nat → ThreadLocation
+
+private def CommentThreads.asAlist (threads : CommentThreads) : List (ThreadLocation × List CommentThread) := sorry
+
+-- TODO: Add a theorem that the result of CommentThreads.asAlist is sorted
+--
+-- The alist is sorted by location
+--
+-- Each sub-list is sorted by the timestamp of the root
 
 private structure CommentManager where
   comments : Std.HashMap CommentRef Comment
   topLevelThreads : CommentThreads
 
-private def emptyCommentManager : CommentManager := ⟨Std.HashMap.emptyWithCapacity, emptyCommentThreads⟩
+private def CommentManager.empty : CommentManager := ⟨Std.HashMap.emptyWithCapacity, CommentThreads.empty⟩
 
 /-- The comment selected in the file review UI. -/
 structure SelectedComment where
@@ -183,8 +203,8 @@ private structure ModifiedFileManager where
 private def ModifiedFileManager.resetCommentState (fileManager : ModifiedFileManager) : ModifiedFileManager :=
   let updatedState := fileManager.state.map (fun modifiedFileRef fileState =>
     {fileState with selectedComment := none,
-                    baseThreads := emptyCommentThreads,
-                    currentThreads := emptyCommentThreads})
+                    baseThreads := CommentThreads.empty,
+                    currentThreads := CommentThreads.empty})
   { fileManager with state := updatedState, hConsistentState := by sorry }
 
 /-- This would ideally be an inductive, but different servers can provide different statuses.  We just
@@ -213,9 +233,12 @@ private structure State where
 
 abbrev LgtmM α := StateT State (Except String) α
 
-def resetCommentState : LgtmM Unit := do
+/-- Delete all of the comments in the current review state.
+
+This is used to prepare to fetch an updated state from the server. -/
+private def resetCommentState : LgtmM Unit := do
   let s₀ ← get
   let manager₁ := s₀.fileManager.resetCommentState
-  set { s₀ with commentManager := emptyCommentManager, fileManager := manager₁ }
+  set { s₀ with commentManager := CommentManager.empty, fileManager := manager₁ }
 
 end Lgtm
