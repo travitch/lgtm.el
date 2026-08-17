@@ -143,13 +143,14 @@ private def CommentManager.get (manager : CommentManager) (ref : CommentRef) : C
 The list is sorted by location.  Each list at a given location is sorted by comment timestamp.
 The comment manager is required to get access to those timestamps. -/
 private def CommentThreads.asAlist (threads : CommentThreads) (manager : CommentManager) : List (ThreadLocation × List CommentThread) :=
-  threads.locationRoots.toList.attach.map (λ ⟨(loc, threadRoots), hpair⟩ =>
+  let unsorted := threads.locationRoots.toList.attach.map (λ ⟨(loc, threadRoots), hpair⟩ =>
     let commentThreads := threadRoots.attach.map (λ ⟨commentRef, href⟩ =>
       let hMember := Std.HashMap.mem_iff_contains.mpr (threads.hHasNodeForComment loc threadRoots hpair commentRef href)
       threads.commentTreeNodes.get commentRef hMember)
     let sortByComparison := λ t1 t2 => (compare (manager.get t1.value).createdTimestamp (manager.get t2.value).createdTimestamp).isLE
     let sortedThreads := List.mergeSort commentThreads sortByComparison
     (loc, sortedThreads))
+  unsorted.mergeSort (λ p1 p2 => (compare p1.fst p2.fst).isLE)
 
 def hasConsistentLocationsPredicate (locations : List ThreadLocation) : Prop :=
   (∀ loc, loc ∈ locations → loc.isTopLevel) ∨ (∀ loc, loc ∈ locations → !loc.isTopLevel)
@@ -159,7 +160,7 @@ theorem CommentThreads.asAlist.hasConsistentLocations (threads : CommentThreads)
   have hmem : ∀ loc, loc ∈ List.map Prod.fst (threads.asAlist manager) → loc ∈ threads.locationRoots.keys := by
     intro loc hloc
     unfold CommentThreads.asAlist at hloc
-    simp only [List.mem_map, List.mem_attach, true_and] at hloc
+    simp only [List.mem_map, List.mem_mergeSort, List.mem_attach, true_and] at hloc
     obtain ⟨a, ⟨a1, heq1⟩, heq2⟩ := hloc
     have hloceq : loc = a1.1.fst := by rw [← heq2, ← heq1]
     rw [hloceq, ← Std.HashMap.map_fst_toList_eq_keys]
@@ -173,14 +174,30 @@ private def listIsSortedPredicate (locations : List ThreadLocation) : Prop :=
   | [] => True
   | loc :: rest => rest.all (λ other => (compare loc other).isLE) ∧ listIsSortedPredicate rest
 
-theorem CommentThreads.asAlist.isSortedByLocation (threads : CommentThreads) (manager : CommentManager) :
-  listIsSortedPredicate (List.map fst (threads.asAlist manager)) := by sorry
+private def ThreadLocation.le (a b : ThreadLocation) : Bool := (compare a b).isLE
 
--- TODO: Add a theorem that the result of CommentThreads.asAlist is sorted
---
--- The alist is sorted by location
---
--- Each sub-list is sorted by the timestamp of the root
+private theorem ThreadLocation.le_trans : ∀ (a b c : ThreadLocation), le a b → le b c → le a c := by
+  intro a b c
+  unfold le compare instOrdThreadLocation instOrdThreadLocation.ord
+  rcases a <;> rcases b <;> rcases c <;> simp [Nat.isLE_compare] <;> omega
+
+private theorem ThreadLocation.le_total : ∀ (a b : ThreadLocation), le a b || le b a := by
+  intro a b
+  unfold le compare instOrdThreadLocation instOrdThreadLocation.ord
+  rcases a <;> rcases b <;> simp [Nat.isLE_compare] <;> omega
+
+private theorem listIsSortedPredicate_iff_pairwise (l : List ThreadLocation) :
+    listIsSortedPredicate l ↔ l.Pairwise (fun a b => ThreadLocation.le a b = true) := by
+  induction l with
+  | nil => simp [listIsSortedPredicate]
+  | cons a l ih => simp [listIsSortedPredicate, ih, ThreadLocation.le]
+
+theorem CommentThreads.asAlist.isSortedByLocation (threads : CommentThreads) (manager : CommentManager) :
+  listIsSortedPredicate (List.map Prod.fst (threads.asAlist manager)) := by
+  unfold CommentThreads.asAlist
+  rw [List.map_mergeSort (s := ThreadLocation.le) (by intro a _ b _; rfl)]
+  rw [listIsSortedPredicate_iff_pairwise]
+  exact List.pairwise_mergeSort ThreadLocation.le_trans ThreadLocation.le_total _
 
 /-- The comment selected in the file review UI. -/
 structure SelectedComment where
