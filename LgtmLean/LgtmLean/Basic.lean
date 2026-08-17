@@ -240,7 +240,7 @@ structure SelectedComment where
 /-- A hash of a git revision -/
 private structure GitRevision where
   hash : String
-  deriving Hashable, BEq
+  deriving Hashable, DecidableEq
 
 private structure RepositoryRef where
   /-- The name of the repository -/
@@ -249,7 +249,7 @@ private structure RepositoryRef where
   path : System.FilePath
   /-- The revision that the changeset will be applied to in the repository -/
   baseRevision : GitRevision
-  deriving Hashable, BEq
+  deriving Hashable, DecidableEq
 
 structure Repository where
   /-- The name of the repository -/
@@ -271,7 +271,7 @@ inductive ModificationType where
 | renamed
 | copied
 | typechange
-deriving Hashable, BEq
+deriving Hashable, DecidableEq
 
 private structure ModifiedFileRef where
   repositoryRef : RepositoryRef
@@ -280,7 +280,7 @@ private structure ModifiedFileRef where
   baseFileHash : GitRevision
   currentFileName : String
   currentFileHash : GitRevision
-  deriving Hashable, BEq
+  deriving Hashable, DecidableEq
 
 /--
 The mutable state for a file that can be reviewed.
@@ -309,7 +309,11 @@ private def ModifiedFileManager.resetCommentState (fileManager : ModifiedFileMan
     {fileState with selectedComment := none,
                     baseThreads := CommentThreads.empty,
                     currentThreads := CommentThreads.empty})
-  { fileManager with state := updatedState, hConsistentState := by sorry }
+  have hConsistent : ∀ modifiedFile, modifiedFile ∈ fileManager.modifiedFiles → updatedState.contains modifiedFile := by
+    intro modifiedFile hmem
+    simp only [updatedState, Std.HashMap.contains_map]
+    exact fileManager.hConsistentState modifiedFile hmem
+  { fileManager with state := updatedState, hConsistentState := hConsistent }
 
 /-- This would ideally be an inductive, but different servers can provide different statuses.  We just
 take what they give us. -/
