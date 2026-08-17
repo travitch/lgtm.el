@@ -132,9 +132,10 @@ The list is sorted by location.  Each list at a given location is sorted by comm
 The comment manager is required to get access to those timestamps. -/
 private def CommentThreads.asAlist (threads : CommentThreads) (manager : CommentManager) : List (ThreadLocation × List CommentThread) :=
   threads.locationRoots.toList.attach.map (λ ⟨(loc, threadRoots), hpair⟩ =>
-    (loc, threadRoots.attach.map (λ ⟨commentRef, href⟩ =>
+    let commentThreads := threadRoots.attach.map (λ ⟨commentRef, href⟩ =>
       let hMember := Std.HashMap.mem_iff_contains.mpr (threads.hHasNodeForComment loc threadRoots hpair commentRef href)
-      threads.commentTreeNodes.get commentRef hMember)))
+      threads.commentTreeNodes.get commentRef hMember)
+    (loc, commentThreads))
 
 def hasConsistentLocationsPredicate (locations : List ThreadLocation) : Prop :=
   (∀ loc, loc ∈ locations → loc.isTopLevel) ∨ (∀ loc, loc ∈ locations → !loc.isTopLevel)
