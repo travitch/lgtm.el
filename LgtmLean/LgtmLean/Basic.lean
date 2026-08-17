@@ -186,11 +186,11 @@ private theorem ThreadLocation.le_total : ∀ (a b : ThreadLocation), le a b || 
   unfold le compare instOrdThreadLocation instOrdThreadLocation.ord
   rcases a <;> rcases b <;> simp [Nat.isLE_compare] <;> omega
 
-private theorem listIsSortedPredicate_iff_pairwise (l : List ThreadLocation) :
-    listIsSortedPredicate l ↔ l.Pairwise (fun a b => ThreadLocation.le a b = true) := by
+private theorem listIsSortedPredicate_iff_pairwise {α} [Ord α] (l : List α) :
+    listIsSortedPredicate l ↔ l.Pairwise (fun a b => (compare a b).isLE = true) := by
   induction l with
   | nil => simp [listIsSortedPredicate]
-  | cons a l ih => simp [listIsSortedPredicate, ih, ThreadLocation.le]
+  | cons a l ih => simp [listIsSortedPredicate, ih]
 
 theorem CommentThreads.asAlist.isSortedByLocation (threads : CommentThreads) (manager : CommentManager) :
   listIsSortedPredicate (List.map Prod.fst (threads.asAlist manager)) := by
@@ -199,8 +199,36 @@ theorem CommentThreads.asAlist.isSortedByLocation (threads : CommentThreads) (ma
   rw [listIsSortedPredicate_iff_pairwise]
   exact List.pairwise_mergeSort ThreadLocation.le_trans ThreadLocation.le_total _
 
+private theorem nat_compareLE_trans : ∀ (a b c : Nat), (compare a b).isLE → (compare b c).isLE → (compare a c).isLE := by
+  intro a b c
+  simp only [Nat.isLE_compare]
+  omega
+
+private theorem nat_compareLE_total : ∀ (a b : Nat), (compare a b).isLE || (compare b a).isLE := by
+  intro a b
+  simp only [Nat.isLE_compare, Bool.or_eq_true]
+  omega
+
 theorem CommentThreads.asAlist.threadLocationsSortedByTimestamp (threads : CommentThreads) (manager : CommentManager) :
-  ∀ threadList, threadList ∈ (List.map Prod.snd (threads.asAlist manager)) → listIsSortedPredicate (List.map (λ commentRef => (manager.get commentRef.value).createdTimestamp) threadList) := sorry
+  ∀ threadList, threadList ∈ (List.map Prod.snd (threads.asAlist manager)) → listIsSortedPredicate (List.map (λ commentRef => (manager.get commentRef.value).createdTimestamp) threadList) := by
+  intro threadList hthreadList
+  unfold CommentThreads.asAlist at hthreadList
+  simp only [List.mem_map, List.mem_mergeSort, List.mem_attach, true_and] at hthreadList
+  obtain ⟨a, ⟨⟨⟨loc, threadRoots⟩, hpair⟩, heq1⟩, heq2⟩ := hthreadList
+  have hthreadListEq : threadList =
+      List.mergeSort
+        (List.map (fun x => threads.commentTreeNodes.get x.val
+            (Std.HashMap.mem_iff_contains.mpr (threads.hHasNodeForComment loc threadRoots hpair x.val x.2)))
+          threadRoots.attach)
+        (fun t1 t2 => (compare (manager.get t1.value).createdTimestamp (manager.get t2.value).createdTimestamp).isLE) := by
+    rw [← heq2, ← heq1]
+  rw [listIsSortedPredicate_iff_pairwise, List.pairwise_map, hthreadListEq]
+  refine (List.pairwise_mergeSort ?_ ?_ _).imp (fun {x y} h => ?_)
+  · intro t1 t2 t3 h1 h2
+    exact nat_compareLE_trans _ _ _ h1 h2
+  · intro t1 t2
+    exact nat_compareLE_total _ _
+  · exact h
 
 /-- The comment selected in the file review UI. -/
 structure SelectedComment where
