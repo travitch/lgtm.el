@@ -8,6 +8,7 @@ private structure Tree (α : Type) where
   value : α
   children : List (Tree α)
 
+
 def Tree.addChild (t : Tree α) (child : Tree α) : Tree α :=
   ⟨t.value, child :: t.children⟩
 
@@ -18,7 +19,7 @@ structure CommentRef where
   These are only unique within a session.
   -/
   id : String
-  deriving Inhabited, Hashable, BEq
+  deriving Inhabited, Hashable, DecidableEq
 
 structure FileRef where
   path : String
@@ -97,6 +98,9 @@ def Comment.isPersistedToServer (c : Comment) : Bool := c.backendId.isSome
 -- the better design
 abbrev CommentThread := Tree CommentRef
 
+instance : Inhabited (Tree CommentRef) where
+  default := ⟨default, []⟩
+
 /-- Locations of threads for rendering purposes.
 
 These locations are less precise than the comment locations and are just
@@ -128,6 +132,7 @@ private structure CommentThreads where
 
 private def CommentThreads.empty : CommentThreads := ⟨Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity, by simp, by simp⟩
 
+private def CommentThreads.isEmpty (threads : CommentThreads) : Bool := threads.commentTreeNodes.isEmpty
 
 private structure CommentManager where
   comments : Std.HashMap CommentRef Comment
@@ -256,6 +261,59 @@ structure SelectedComment where
   version : FileVersion
   thread : CommentThread
   comment : CommentRef
+
+/--
+Given a collection of threads and a selection, return the next thread to select linearly.
+
+The VERSION is included because the user can switch files; as there is only one global selection,
+if the user selects the next comment in a different file, the whole selection resets.
+
+The linear order is as established in the ordering defined by CommentThreads.
+
+Note: It would be nice to keep the association between the selection and the threads objects it references.  Future work.
+-/
+private def CommentThreads.nextThread (threads : CommentThreads) (manager : CommentManager) (version : FileVersion) (selection : SelectedComment) : Option SelectedComment :=
+  let orderedThreads := threads.toThreadsOrdered manager
+  match version == selection.version, orderedThreads with
+  | false, [] => none
+  | false, firstThread :: _ => some ⟨version, firstThread, firstThread.value⟩
+  | true, _ =>
+    match orderedThreads.findIdx? (·.value == selection.thread.value) with
+    | none => none
+    | some curIdx =>
+      /- This should be provable because if we found the thread in the list, the list cannot be empty -/
+      let nextIdx := Nat.min (curIdx + 1) (orderedThreads.length - 1)
+      let nextThread := orderedThreads[nextIdx]!
+      some ⟨version, nextThread, nextThread.value⟩
+
+private theorem CommentThreads.toThreadsOrdered.eq_nil_of_isEmpty (threads : CommentThreads) (manager : CommentManager)
+    (hEmpty : threads.isEmpty) : threads.toThreadsOrdered manager = [] := by
+  have hThreadRootsEmpty : ∀ loc threadRoots, (loc, threadRoots) ∈ threads.locationRoots.toList → threadRoots = [] := by
+    intro loc threadRoots hpair
+    match threadRoots with
+    | [] => rfl
+    | ref :: rest =>
+      have hcontains := threads.hHasNodeForComment loc (ref :: rest) hpair ref (List.mem_cons_self ..)
+      simp [Std.HashMap.contains_of_isEmpty hEmpty] at hcontains
+  unfold CommentThreads.toThreadsOrdered CommentThreads.asAlist
+  rw [List.flatMap_eq_nil_iff]
+  intro p hp
+  simp only [List.mem_mergeSort, List.mem_map, List.mem_attach, true_and] at hp
+  obtain ⟨⟨⟨loc, threadRoots⟩, hpair⟩, heq⟩ := hp
+  have hRootsEmpty := hThreadRootsEmpty loc threadRoots hpair
+  subst hRootsEmpty
+  rw [← heq]
+  simp
+
+theorem CommentThreads.nextThread.noSelectionForEmptyFile (threads : CommentThreads) (manager : CommentManager) (version : FileVersion) (selection : SelectedComment) :
+  version ≠ selection.version ∧ threads.isEmpty → threads.nextThread manager version selection = none := by
+  rintro ⟨hverne, hEmpty⟩
+  have hVerNe : (version == selection.version) = false := by
+    obtain ⟨sv, sthread, scomment⟩ := selection
+    cases version <;> cases sv <;> simp_all <;> rfl
+  unfold CommentThreads.nextThread
+  rw [CommentThreads.toThreadsOrdered.eq_nil_of_isEmpty threads manager hEmpty]
+  simp [hVerNe]
 
 /-- A hash of a git revision -/
 private structure GitRevision where
