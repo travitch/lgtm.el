@@ -104,7 +104,7 @@ used for the renderer to group threads appropriately. -/
 private inductive ThreadLocation where
 | topLevel
 | lineNumber : Nat → ThreadLocation
-deriving Hashable, BEq, Ord
+deriving Hashable, Ord, DecidableEq
 
 private def ThreadLocation.isTopLevel : ThreadLocation → Bool
 | .topLevel => true
@@ -155,7 +155,18 @@ def hasConsistentLocationsPredicate (locations : List ThreadLocation) : Prop :=
   (∀ loc, loc ∈ locations → loc.isTopLevel) ∨ (∀ loc, loc ∈ locations → !loc.isTopLevel)
 
 theorem CommentThreads.asAlist.hasConsistentLocations (threads : CommentThreads) (manager : CommentManager) :
-  hasConsistentLocationsPredicate (List.map fst (threads.asAlist manager)) := by sorry
+  hasConsistentLocationsPredicate (List.map Prod.fst (threads.asAlist manager)) := by
+  have hmem : ∀ loc, loc ∈ List.map Prod.fst (threads.asAlist manager) → loc ∈ threads.locationRoots.keys := by
+    intro loc hloc
+    unfold CommentThreads.asAlist at hloc
+    simp only [List.mem_map, List.mem_attach, true_and] at hloc
+    obtain ⟨a, ⟨a1, heq1⟩, heq2⟩ := hloc
+    have hloceq : loc = a1.1.fst := by rw [← heq2, ← heq1]
+    rw [hloceq, ← Std.HashMap.map_fst_toList_eq_keys]
+    exact List.mem_map.mpr ⟨a1.1, a1.2, rfl⟩
+  rcases threads.hLocationsConsistent with hc | hc
+  · exact Or.inl (fun loc hloc => (hc loc (hmem loc hloc)).1)
+  · exact Or.inr (fun loc hloc => by simpa using hc loc (hmem loc hloc))
 
 private def listIsSortedPredicate (locations : List ThreadLocation) : Prop :=
   match locations with
