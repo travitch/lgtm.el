@@ -88,22 +88,12 @@ structure Comment where
 
 def Comment.isPersistedToServer (c : Comment) : Bool := c.backendId.isSome
 
-  -- FIXME: Should this be a tree of comments instead? There should be no harm (it is fine in the current implementation)
+-- FIXME: Should this be a tree of comments instead? There should be no harm (it is fine in the current implementation)
+--
+-- Downside: The current implementation acts more like IORefs everywhere.  Mutations to comments here would
+-- not work or be visible.  Therefore, keeping all of the comments actually in the manager instead is probably
+-- the better design
 abbrev CommentThread := Tree CommentRef
-
-/-- The collected threads for a scope (file version or top-level). -/
-private structure CommentThreads where
-  /-- The tree node for each comment. -/
-  commentTreeNodes : Std.HashMap CommentRef CommentThread
-
-  serverCommentIds : Std.HashMap ServerId CommentRef
-
-  locationRoots : Std.HashMap CommentLocation (List CommentRef)
-
-  /-- Invariant: Either there is one location that is top or there are no locations that are top -/
-  hLocationsConsistent : (∀ loc, loc ∈ locationRoots.keys → loc.isTopLevel ∧ locationRoots.size = 1) ∨ (∀ loc, loc ∈ locationRoots.keys → ¬ loc.isTopLevel)
-
-private def CommentThreads.empty : CommentThreads := ⟨ Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity, by sorry ⟩
 
 /-- Locations of threads for rendering purposes.
 
@@ -112,8 +102,49 @@ used for the renderer to group threads appropriately. -/
 private inductive ThreadLocation where
 | topLevel
 | lineNumber : Nat → ThreadLocation
+deriving Hashable, BEq, Ord
 
-private def CommentThreads.asAlist (threads : CommentThreads) : List (ThreadLocation × List CommentThread) := sorry
+private def ThreadLocation.isTopLevel : ThreadLocation → Bool
+| .topLevel => true
+| .lineNumber _ => false
+
+/-- The collected threads for a scope (file version or top-level). -/
+private structure CommentThreads where
+  /-- The tree node for each comment. -/
+  commentTreeNodes : Std.HashMap CommentRef CommentThread
+
+  serverCommentIds : Std.HashMap ServerId CommentRef
+
+  locationRoots : Std.HashMap ThreadLocation (List CommentRef)
+
+  /-- Invariant: Either there is one location that is top or there are no locations that are top -/
+  hLocationsConsistent : (∀ loc, loc ∈ locationRoots.keys → loc.isTopLevel ∧ locationRoots.size = 1) ∨ (∀ loc, loc ∈ locationRoots.keys → ¬ loc.isTopLevel)
+
+  /-- All referenced comments have an associated node -/
+  hHasNodeForComment : ∀ loc, loc ∈ locationRoots.values.flatMap id → commentTreeNodes.contains loc
+
+private def CommentThreads.empty : CommentThreads := ⟨ Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity, by sorry, by sorry ⟩
+
+/-- Extract an alist of threads grouped by location.
+
+The list is sorted by location.  Each list at a given location is sorted by comment timestamp.
+The comment manager is required to get access to those timestamps. -/
+private def CommentThreads.asAlist (threads : CommentThreads) (manager : CommentManager) : List (ThreadLocation × List CommentThread) :=
+  threads.locationRoots.toList.map (λ (loc, threadRoots) => (loc, List.map (λ commentRef => threads.commentTreeNodes.get commentRef sorry) threadRoots))
+
+def hasConsistentLocationsPredicate (locations : List ThreadLocation) : Prop :=
+  (∀ loc, loc ∈ locations → loc.isTopLevel) ∨ (∀ loc, loc ∈ locations → !loc.isTopLevel)
+
+theorem CommentThreads.asAlist.hasConsistentLocations (threads : CommentThreads) (manager : CommentManager) :
+  hasConsistentLocationsPredicate (List.map fst (threads.asAlist manager)) := by sorry
+
+private def listIsSortedPredicate (locations : List ThreadLocation) : Prop :=
+  match locations with
+  | [] => True
+  | loc :: rest => rest.all (λ other => (compare loc other).isLE) ∧ listIsSortedPredicate rest
+
+theorem CommentThreads.asAlist.isSortedByLocation (threads : CommentThreads) (manager : CommentManager) :
+  listIsSortedPredicate (List.map fst (threads.asAlist manager)) := by sorry
 
 -- TODO: Add a theorem that the result of CommentThreads.asAlist is sorted
 --
