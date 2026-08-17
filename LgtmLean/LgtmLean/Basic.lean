@@ -121,7 +121,8 @@ private structure CommentThreads where
   hLocationsConsistent : (∀ loc, loc ∈ locationRoots.keys → loc.isTopLevel ∧ locationRoots.size = 1) ∨ (∀ loc, loc ∈ locationRoots.keys → ¬ loc.isTopLevel)
 
   /-- All referenced comments have an associated node -/
-  hHasNodeForComment : ∀ loc, loc ∈ locationRoots.values.flatMap id → commentTreeNodes.contains loc
+  hHasNodeForComment : ∀ loc threadRoots, (loc, threadRoots) ∈ locationRoots.toList →
+    ∀ ref, ref ∈ threadRoots → commentTreeNodes.contains ref
 
 private def CommentThreads.empty : CommentThreads := ⟨Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity, by simp, by simp⟩
 
@@ -130,7 +131,10 @@ private def CommentThreads.empty : CommentThreads := ⟨Std.HashMap.emptyWithCap
 The list is sorted by location.  Each list at a given location is sorted by comment timestamp.
 The comment manager is required to get access to those timestamps. -/
 private def CommentThreads.asAlist (threads : CommentThreads) (manager : CommentManager) : List (ThreadLocation × List CommentThread) :=
-  threads.locationRoots.toList.map (λ (loc, threadRoots) => (loc, List.map (λ commentRef => threads.commentTreeNodes.get commentRef sorry) threadRoots))
+  threads.locationRoots.toList.attach.map (λ ⟨(loc, threadRoots), hpair⟩ =>
+    (loc, threadRoots.attach.map (λ ⟨commentRef, href⟩ =>
+      let hMember := Std.HashMap.mem_iff_contains.mpr (threads.hHasNodeForComment loc threadRoots hpair commentRef href)
+      threads.commentTreeNodes.get commentRef hMember)))
 
 def hasConsistentLocationsPredicate (locations : List ThreadLocation) : Prop :=
   (∀ loc, loc ∈ locations → loc.isTopLevel) ∨ (∀ loc, loc ∈ locations → !loc.isTopLevel)
