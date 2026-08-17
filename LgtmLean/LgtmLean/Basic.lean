@@ -1,5 +1,6 @@
 import Std
 import Init.System
+import Init.Data.List.Sort
 
 namespace Lgtm
 
@@ -17,7 +18,7 @@ structure CommentRef where
   These are only unique within a session.
   -/
   id : String
-  deriving Hashable, BEq
+  deriving Inhabited, Hashable, BEq
 
 structure FileRef where
   path : String
@@ -48,7 +49,7 @@ private def CommentLocation.isTopLevel : CommentLocation → Bool
 
 structure ServerId where
   id : String
-  deriving Hashable, BEq
+  deriving Inhabited, Hashable, BEq
 
 /-- The actual contents of a comment.
 
@@ -85,6 +86,7 @@ structure Comment where
 
   /-- The content of the comment. -/
   content : String
+  deriving Inhabited
 
 def Comment.isPersistedToServer (c : Comment) : Bool := c.backendId.isSome
 
@@ -126,6 +128,16 @@ private structure CommentThreads where
 
 private def CommentThreads.empty : CommentThreads := ⟨Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity, by simp, by simp⟩
 
+
+private structure CommentManager where
+  comments : Std.HashMap CommentRef Comment
+  topLevelThreads : CommentThreads
+
+private def CommentManager.empty : CommentManager := ⟨Std.HashMap.emptyWithCapacity, CommentThreads.empty⟩
+
+private def CommentManager.get (manager : CommentManager) (ref : CommentRef) : Comment :=
+  manager.comments[ref]!
+
 /-- Extract an alist of threads grouped by location.
 
 The list is sorted by location.  Each list at a given location is sorted by comment timestamp.
@@ -135,7 +147,9 @@ private def CommentThreads.asAlist (threads : CommentThreads) (manager : Comment
     let commentThreads := threadRoots.attach.map (λ ⟨commentRef, href⟩ =>
       let hMember := Std.HashMap.mem_iff_contains.mpr (threads.hHasNodeForComment loc threadRoots hpair commentRef href)
       threads.commentTreeNodes.get commentRef hMember)
-    (loc, commentThreads))
+    let sortByComparison := λ t1 t2 => (compare (manager.get t1.value).createdTimestamp (manager.get t2.value).createdTimestamp).isLE
+    let sortedThreads := List.mergeSort commentThreads sortByComparison
+    (loc, sortedThreads))
 
 def hasConsistentLocationsPredicate (locations : List ThreadLocation) : Prop :=
   (∀ loc, loc ∈ locations → loc.isTopLevel) ∨ (∀ loc, loc ∈ locations → !loc.isTopLevel)
@@ -156,12 +170,6 @@ theorem CommentThreads.asAlist.isSortedByLocation (threads : CommentThreads) (ma
 -- The alist is sorted by location
 --
 -- Each sub-list is sorted by the timestamp of the root
-
-private structure CommentManager where
-  comments : Std.HashMap CommentRef Comment
-  topLevelThreads : CommentThreads
-
-private def CommentManager.empty : CommentManager := ⟨Std.HashMap.emptyWithCapacity, CommentThreads.empty⟩
 
 /-- The comment selected in the file review UI. -/
 structure SelectedComment where
