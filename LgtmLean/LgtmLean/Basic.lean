@@ -169,10 +169,10 @@ theorem CommentThreads.asAlist.hasConsistentLocations (threads : CommentThreads)
   · exact Or.inl (fun loc hloc => (hc loc (hmem loc hloc)).1)
   · exact Or.inr (fun loc hloc => by simpa using hc loc (hmem loc hloc))
 
-private def listIsSortedPredicate (locations : List ThreadLocation) : Prop :=
-  match locations with
+private def listIsSortedPredicate [Ord α] (values : List α) : Prop :=
+  match values with
   | [] => True
-  | loc :: rest => rest.all (λ other => (compare loc other).isLE) ∧ listIsSortedPredicate rest
+  | v :: rest => rest.all (λ other => (compare v other).isLE) ∧ listIsSortedPredicate rest
 
 private def ThreadLocation.le (a b : ThreadLocation) : Bool := (compare a b).isLE
 
@@ -198,6 +198,9 @@ theorem CommentThreads.asAlist.isSortedByLocation (threads : CommentThreads) (ma
   rw [List.map_mergeSort (s := ThreadLocation.le) (by intro a _ b _; rfl)]
   rw [listIsSortedPredicate_iff_pairwise]
   exact List.pairwise_mergeSort ThreadLocation.le_trans ThreadLocation.le_total _
+
+theorem CommentThreads.asAlist.threadLocationsSortedByTimestamp (threads : CommentThreads) (manager : CommentManager) :
+  ∀ threadList, threadList ∈ (List.map Prod.snd (threads.asAlist manager)) → listIsSortedPredicate (List.map (λ commentRef => (manager.get commentRef.value).createdTimestamp) threadList) := sorry
 
 /-- The comment selected in the file review UI. -/
 structure SelectedComment where
