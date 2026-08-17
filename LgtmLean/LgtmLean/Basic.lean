@@ -130,9 +130,16 @@ private structure CommentThreads where
   hHasNodeForComment : ∀ loc threadRoots, (loc, threadRoots) ∈ locationRoots.toList →
     ∀ ref, ref ∈ threadRoots → commentTreeNodes.contains ref
 
-private def CommentThreads.empty : CommentThreads := ⟨Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity, by simp, by simp⟩
+  hAllCommentTreeNodesAreLive : ∀ commentRef, commentRef ∈ commentTreeNodes.keys → ∃ threadsList, threadsList ∈ locationRoots.values ∧ commentRef ∈ threadsList
 
-private def CommentThreads.isEmpty (threads : CommentThreads) : Bool := threads.commentTreeNodes.isEmpty
+private def CommentThreads.empty : CommentThreads := ⟨Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity, by simp, by simp, by simp⟩
+
+/-- Whether there are any threads to show.
+
+Note: this is based on `locationRoots` (what's actually reachable/displayable), not
+`commentTreeNodes` (which can contain tree nodes that no location references). -/
+private def CommentThreads.isEmpty (threads : CommentThreads) : Bool :=
+  threads.locationRoots.toList.all (fun p => p.2.isEmpty)
 
 private structure CommentManager where
   comments : Std.HashMap CommentRef Comment
@@ -290,11 +297,9 @@ private theorem CommentThreads.toThreadsOrdered.eq_nil_of_isEmpty (threads : Com
     (hEmpty : threads.isEmpty) : threads.toThreadsOrdered manager = [] := by
   have hThreadRootsEmpty : ∀ loc threadRoots, (loc, threadRoots) ∈ threads.locationRoots.toList → threadRoots = [] := by
     intro loc threadRoots hpair
-    match threadRoots with
-    | [] => rfl
-    | ref :: rest =>
-      have hcontains := threads.hHasNodeForComment loc (ref :: rest) hpair ref (List.mem_cons_self ..)
-      simp [Std.HashMap.contains_of_isEmpty hEmpty] at hcontains
+    unfold CommentThreads.isEmpty at hEmpty
+    rw [List.all_eq_true] at hEmpty
+    simpa using hEmpty (loc, threadRoots) hpair
   unfold CommentThreads.toThreadsOrdered CommentThreads.asAlist
   rw [List.flatMap_eq_nil_iff]
   intro p hp
@@ -314,6 +319,53 @@ theorem CommentThreads.nextThread.noSelectionForEmptyFile (threads : CommentThre
   unfold CommentThreads.nextThread
   rw [CommentThreads.toThreadsOrdered.eq_nil_of_isEmpty threads manager hEmpty]
   simp [hVerNe]
+
+/-- Every location's thread list contributes a matching-length group to `asAlist`'s output. -/
+private theorem CommentThreads.asAlist.mem_of_locationRoots (threads : CommentThreads) (manager : CommentManager) :
+    ∀ loc threadRoots, (loc, threadRoots) ∈ threads.locationRoots.toList →
+      ∃ sortedThreads, (loc, sortedThreads) ∈ threads.asAlist manager ∧ sortedThreads.length = threadRoots.length := by
+  intro loc threadRoots hpair
+  unfold CommentThreads.asAlist
+  refine ⟨_, List.mem_mergeSort.mpr (List.mem_map.mpr ⟨⟨(loc, threadRoots), hpair⟩, List.mem_attach _ _, rfl⟩), ?_⟩
+  simp
+
+private theorem CommentThreads.toThreadsOrdered.isEmpty_of_eq_nil (threads : CommentThreads) (manager : CommentManager)
+    (hNil : threads.toThreadsOrdered manager = []) : threads.isEmpty := by
+  unfold CommentThreads.isEmpty
+  rw [List.all_eq_true]
+  rintro ⟨loc, threadRoots⟩ hpair
+  obtain ⟨sortedThreads, hmem, hlen⟩ := CommentThreads.asAlist.mem_of_locationRoots threads manager loc threadRoots hpair
+  unfold CommentThreads.toThreadsOrdered at hNil
+  rw [List.flatMap_eq_nil_iff] at hNil
+  have hsnil := hNil (loc, sortedThreads) hmem
+  simp only at hsnil
+  rw [hsnil, List.length_nil] at hlen
+  simp only [List.isEmpty_iff_length_eq_zero]
+  omega
+
+private theorem CommentThreads.toThreadsOrdered.ne_nil_of_not_isEmpty (threads : CommentThreads) (manager : CommentManager)
+    (hNonEmpty : ¬ threads.isEmpty) : threads.toThreadsOrdered manager ≠ [] := by
+  intro hNil
+  exact hNonEmpty (CommentThreads.toThreadsOrdered.isEmpty_of_eq_nil threads manager hNil)
+
+theorem CommentThreads.nextThread.selectFirstForDifferentFile (threads : CommentThreads) (manager : CommentManager) (version : FileVersion) (selection : SelectedComment) :
+  version ≠ selection.version ∧ ¬ threads.isEmpty →
+    ∃ thread, (threads.toThreadsOrdered manager).head? = some thread ∧
+              threads.nextThread manager version selection = some ⟨version, thread, thread.value⟩ := by
+  rintro ⟨hverne, hNonEmpty⟩
+  have hVerNe : (version == selection.version) = false := by
+    obtain ⟨sv, sthread, scomment⟩ := selection
+    cases version <;> cases sv <;> simp_all <;> rfl
+  have hNeNil : threads.toThreadsOrdered manager ≠ [] :=
+    CommentThreads.toThreadsOrdered.ne_nil_of_not_isEmpty threads manager hNonEmpty
+  unfold CommentThreads.nextThread
+  match hmatch : threads.toThreadsOrdered manager with
+  | [] => exact absurd hmatch hNeNil
+  | firstThread :: rest =>
+    exact ⟨firstThread, by simp, by simp [hVerNe]⟩
+
+/- theorem CommentThreads.nextThread.saturateIfLastThreadSelected (threads : CommentThreads) (manager : CommentManager) (version : FileVersion) (selection : SelectedComment) :
+ -   version = selection.version ∧ ∃ idx, -/
 
 /-- A hash of a git revision -/
 private structure GitRevision where
