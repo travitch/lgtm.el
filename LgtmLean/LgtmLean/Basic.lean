@@ -210,7 +210,8 @@ private theorem nat_compareLE_total : ∀ (a b : Nat), (compare a b).isLE || (co
   omega
 
 theorem CommentThreads.asAlist.threadLocationsSortedByTimestamp (threads : CommentThreads) (manager : CommentManager) :
-  ∀ threadList, threadList ∈ (List.map Prod.snd (threads.asAlist manager)) → listIsSortedPredicate (List.map (λ commentRef => (manager.get commentRef.value).createdTimestamp) threadList) := by
+  ∀ threadList, threadList ∈ (List.map Prod.snd (threads.asAlist manager)) →
+       listIsSortedPredicate (List.map (λ commentRef => (manager.get commentRef.value).createdTimestamp) threadList) := by
   intro threadList hthreadList
   unfold CommentThreads.asAlist at hthreadList
   simp only [List.mem_map, List.mem_mergeSort, List.mem_attach, true_and] at hthreadList
