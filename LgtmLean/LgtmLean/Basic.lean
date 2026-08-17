@@ -236,8 +236,20 @@ theorem CommentThreads.asAlist.threadLocationsSortedByTimestamp (threads : Comme
 private def CommentThreads.toThreadsOrdered (threads : CommentThreads) (manager : CommentManager) : List CommentThread :=
   List.flatMap (λ p => Prod.snd p) (threads.asAlist manager)
 
-theorem CommentThreads.toThreadsOrdered.threadsAreSorted (threads : CommentThreads) (manager : CommentManager) :
-  listIsSortedPredicate (List.map (λ thread => (manager.get thread.value).createdTimestamp) (threads.toThreadsOrdered manager)) := sorry
+/-- Each group of threads that `toThreadsOrdered` concatenates in (i.e. each location's thread
+list from `asAlist`) occurs as a contiguous run in the result, and that run is sorted by
+timestamp. -/
+theorem CommentThreads.toThreadsOrdered.groupsAreSorted (threads : CommentThreads) (manager : CommentManager) :
+  ∀ threadList, threadList ∈ (List.map Prod.snd (threads.asAlist manager)) →
+    threadList.IsInfix (threads.toThreadsOrdered manager) ∧
+    listIsSortedPredicate (List.map (λ thread => (manager.get thread.value).createdTimestamp) threadList) := by
+  intro threadList hthreadList
+  refine ⟨?_, CommentThreads.asAlist.threadLocationsSortedByTimestamp threads manager threadList hthreadList⟩
+  obtain ⟨p, hp_mem, hp_eq⟩ := List.mem_map.mp hthreadList
+  obtain ⟨s, t, hst⟩ := List.append_of_mem hp_mem
+  refine ⟨List.flatMap Prod.snd s, List.flatMap Prod.snd t, ?_⟩
+  unfold CommentThreads.toThreadsOrdered
+  rw [hst, List.flatMap_append, List.flatMap_cons, hp_eq, List.append_assoc]
 
 /-- The comment selected in the file review UI. -/
 structure SelectedComment where
