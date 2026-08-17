@@ -231,6 +231,14 @@ theorem CommentThreads.asAlist.threadLocationsSortedByTimestamp (threads : Comme
     exact nat_compareLE_total _ _
   · exact h
 
+
+/-- Return the threads in sorted order. -/
+private def CommentThreads.toThreadsOrdered (threads : CommentThreads) (manager : CommentManager) : List CommentThread :=
+  List.flatMap (λ p => Prod.snd p) (threads.asAlist manager)
+
+theorem CommentThreads.toThreadsOrdered.threadsAreSorted (threads : CommentThreads) (manager : CommentManager) :
+  listIsSortedPredicate (List.map (λ thread => (manager.get thread.value).createdTimestamp) (threads.toThreadsOrdered manager)) := sorry
+
 /-- The comment selected in the file review UI. -/
 structure SelectedComment where
   version : FileVersion
