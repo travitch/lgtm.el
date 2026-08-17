@@ -123,7 +123,7 @@ private structure CommentThreads where
   /-- All referenced comments have an associated node -/
   hHasNodeForComment : ∀ loc, loc ∈ locationRoots.values.flatMap id → commentTreeNodes.contains loc
 
-private def CommentThreads.empty : CommentThreads := ⟨ Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity, by sorry, by sorry ⟩
+private def CommentThreads.empty : CommentThreads := ⟨Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity, by simp, by simp⟩
 
 /-- Extract an alist of threads grouped by location.
 
