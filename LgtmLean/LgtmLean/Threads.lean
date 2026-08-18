@@ -6,7 +6,7 @@ import all LgtmLean.Basic
 
 The list is sorted by location.  Each list at a given location is sorted by comment timestamp.
 The comment manager is required to get access to those timestamps. -/
-private def CommentThreads.asAlist (threads : CommentThreads) (manager : CommentManager) : List (ThreadLocation × List CommentThread) :=
+def CommentThreads.asAlist (threads : CommentThreads) (manager : CommentManager) : List (ThreadLocation × List CommentThread) :=
   let unsorted := threads.locationRoots.toList.attach.map (λ ⟨(loc, threadRoots), hpair⟩ =>
     let commentThreads := threadRoots.attach.map (λ ⟨commentRef, href⟩ =>
       let hMember := Std.HashMap.mem_iff_contains.mpr (threads.hHasNodeForComment loc threadRoots hpair commentRef href)
@@ -16,7 +16,7 @@ private def CommentThreads.asAlist (threads : CommentThreads) (manager : Comment
     (loc, sortedThreads))
   unsorted.mergeSort (λ p1 p2 => (compare p1.fst p2.fst).isLE)
 
-def hasConsistentLocationsPredicate (locations : List ThreadLocation) : Prop :=
+private def hasConsistentLocationsPredicate (locations : List ThreadLocation) : Prop :=
   (∀ loc, loc ∈ locations → loc.isTopLevel) ∨ (∀ loc, loc ∈ locations → !loc.isTopLevel)
 
 theorem CommentThreads.asAlist.hasConsistentLocations (threads : CommentThreads) (manager : CommentManager) :
@@ -95,7 +95,6 @@ theorem CommentThreads.asAlist.threadLocationsSortedByTimestamp (threads : Comme
     exact nat_compareLE_total _ _
   · exact h
 
-
 /-- Return the threads in sorted order. -/
 private def CommentThreads.toThreadsOrdered (threads : CommentThreads) (manager : CommentManager) : List CommentThread :=
   List.flatMap (λ p => Prod.snd p) (threads.asAlist manager)
@@ -125,7 +124,7 @@ The linear order is as established in the ordering defined by CommentThreads.
 
 Note: It would be nice to keep the association between the selection and the threads objects it references.  Future work.
 -/
-private def CommentThreads.nextThread (threads : CommentThreads) (manager : CommentManager) (version : FileVersion) (selection : SelectedComment) : Option SelectedComment :=
+def CommentThreads.nextThread (threads : CommentThreads) (manager : CommentManager) (version : FileVersion) (selection : SelectedComment) : Option SelectedComment :=
   let orderedThreads := threads.toThreadsOrdered manager
   match version == selection.version, orderedThreads with
   | false, [] => none
@@ -210,5 +209,76 @@ theorem CommentThreads.nextThread.selectFirstForDifferentFile (threads : Comment
   | firstThread :: rest =>
     exact ⟨firstThread, by simp, by simp [hVerNe]⟩
 
-/- theorem CommentThreads.nextThread.saturateIfLastThreadSelected (threads : CommentThreads) (manager : CommentManager) (version : FileVersion) (selection : SelectedComment) :
- -   version = selection.version ∧ ∃ idx, -/
+private theorem List.perm_flatMap_of_forall_perm {α β} {l : List α} {f g : α → List β}
+    (h : ∀ x ∈ l, List.Perm (f x) (g x)) : List.Perm (l.flatMap f) (l.flatMap g) := by
+  induction l with
+  | nil => simp
+  | cons a l ih =>
+    simp only [List.flatMap_cons]
+    exact (h a List.mem_cons_self).append (ih (fun x hx => h x (List.mem_cons_of_mem a hx)))
+
+private theorem CommentThreads.asAlist.flatMap_valueMap_perm (threads : CommentThreads) (manager : CommentManager) :
+    List.Perm ((threads.asAlist manager).flatMap (fun p => p.snd.map (·.value)))
+      (threads.locationRoots.toList.flatMap Prod.snd) := by
+  unfold CommentThreads.asAlist
+  refine (List.Perm.flatMap_right _ (List.mergeSort_perm _ _)).trans ?_
+  rw [List.flatMap_map]
+  refine (List.perm_flatMap_of_forall_perm (l := threads.locationRoots.toList.attach)
+      (g := fun x => x.1.2) ?_).trans ?_
+  · rintro ⟨⟨loc, threadRoots⟩, hpair⟩ -
+    dsimp only
+    refine ((List.mergeSort_perm _ _).map (fun t : CommentThread => t.value)).trans ?_
+    rw [List.map_map]
+    have heq : (fun t : CommentThread => t.value) ∘ (fun x : {r // r ∈ threadRoots} =>
+        threads.commentTreeNodes.get x.1
+          (Std.HashMap.mem_iff_contains.mpr (threads.hHasNodeForComment loc threadRoots hpair x.1 x.2))) =
+        (fun x : {r // r ∈ threadRoots} => x.1) := by
+      funext x
+      exact threads.hCommentTreeNodeRootMatchesKey x.1 _
+    rw [heq, List.attach_map_subtype_val]
+  · have heq2 : (threads.locationRoots.toList.attach.flatMap (fun x => x.1.2)) =
+        threads.locationRoots.toList.flatMap Prod.snd := by
+      rw [List.flatMap_subtype (f := fun x : {p : ThreadLocation × List CommentRef //
+          p ∈ threads.locationRoots.toList} => x.1.2) (g := Prod.snd) (fun x h => rfl)]
+      rw [List.unattach_attach]
+    rw [heq2]
+
+private theorem CommentThreads.toThreadsOrdered.nodupValues (threads : CommentThreads) (manager : CommentManager) :
+    ((threads.toThreadsOrdered manager).map (fun t : CommentThread => t.value)).Nodup := by
+  unfold CommentThreads.toThreadsOrdered
+  rw [List.map_flatMap]
+  exact (CommentThreads.asAlist.flatMap_valueMap_perm threads manager).nodup_iff.mpr
+    threads.hLocationRootsNodup
+
+theorem CommentThreads.nextThread.saturateIfLastThreadSelected (threads : CommentThreads) (manager : CommentManager) (version : FileVersion) (selection₀ : SelectedComment) :
+  (version = selection₀.version ∧ ¬ threads.isEmpty ∧ ∃ thread, (threads.toThreadsOrdered manager).getLast? = some thread ∧ selection₀.thread = thread) →
+     ∃ selection₁, threads.nextThread manager version selection₀ = some selection₁ ∧ selection₀.thread = selection₁.thread := by
+  rintro ⟨hver, -, thread, hLast, hSelEq⟩
+  have hVerEq : (version == selection₀.version) = true := by
+    subst hver
+    cases selection₀.version <;> rfl
+  obtain ⟨ys, hys⟩ := List.getLast?_eq_some_iff.mp hLast
+  have hNodup := CommentThreads.toThreadsOrdered.nodupValues threads manager
+  rw [hys, List.map_append, List.map_cons, List.map_nil, List.nodup_append] at hNodup
+  obtain ⟨-, -, hdisj⟩ := hNodup
+  have hNotMemVal : ∀ y ∈ ys, y.value ≠ thread.value := by
+    intro y hy
+    exact hdisj y.value (List.mem_map_of_mem hy) thread.value (List.mem_singleton_self thread.value)
+  have hFindIdx : (threads.toThreadsOrdered manager).findIdx? (fun t => t.value == selection₀.thread.value) = some ys.length := by
+    rw [hSelEq, hys, List.findIdx?_append]
+    have hNone : ys.findIdx? (fun t => t.value == thread.value) = none := by
+      rw [List.findIdx?_eq_none_iff]
+      intro x hx
+      exact beq_eq_false_iff_ne.mpr (hNotMemVal x hx)
+    simp [hNone]
+  have hLenEq : (threads.toThreadsOrdered manager).length = ys.length + 1 := by
+    rw [hys]; simp
+  have hNextIdxEq : Nat.min (ys.length + 1) ((threads.toThreadsOrdered manager).length - 1) = ys.length := by
+    rw [hLenEq]; simp
+  have hGetElem : (threads.toThreadsOrdered manager)[ys.length]! = thread := by
+    apply List.getElem!_of_getElem?
+    rw [hys]
+    exact List.getElem?_concat_length
+  refine ⟨⟨version, thread, thread.value⟩, ?_, by simpa using hSelEq⟩
+  unfold CommentThreads.nextThread
+  simp only [hVerEq, hFindIdx, hNextIdxEq, hGetElem]

@@ -126,7 +126,15 @@ structure CommentThreads where
 
   hAllCommentTreeNodesAreLive : ∀ commentRef, commentRef ∈ commentTreeNodes.keys → ∃ threadsList, threadsList ∈ locationRoots.values ∧ commentRef ∈ threadsList
 
-def CommentThreads.empty : CommentThreads := ⟨Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity, by simp, by simp, by simp⟩
+  /-- The tree stored for a comment is actually rooted at that comment: `commentTreeNodes` is
+  keyed consistently with the trees it stores. -/
+  hCommentTreeNodeRootMatchesKey : ∀ ref (h : commentTreeNodes.contains ref), (commentTreeNodes.get ref h).value = ref
+
+  /-- A comment can be the root of at most one thread: no `CommentRef` occurs twice across all of
+  the (possibly per-location) thread-root lists. -/
+  hLocationRootsNodup : (locationRoots.toList.flatMap Prod.snd).Nodup
+
+def CommentThreads.empty : CommentThreads := ⟨Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity, by simp, by simp, by simp, by simp, by simp⟩
 
 /-- Whether there are any threads to show.
 
