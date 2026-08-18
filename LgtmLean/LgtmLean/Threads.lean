@@ -311,39 +311,43 @@ theorem CommentThreads.nextThread.selectNextIfNotLastThreadSelected (threads : C
       ∃ idx₀ idx₁, List.findIdx? (·.value == selection₀.thread.value) (threads.toThreadsOrdered manager) = some idx₀ ∧
                    List.findIdx? (·.value == selection₁.thread.value) (threads.toThreadsOrdered manager) = some idx₁ ∧
                    idx₀ + 1 = idx₁) := by
-  rintro ⟨hver, -, ⟨idx₀, hFindIdx0⟩, thread, hLast, hNeVal⟩
+  rintro ⟨hver, -, ⟨idx₀, hFindIdx₀⟩, lastThread, hLast, hNeVal⟩
   have hVerEq : (version == selection₀.version) = true := by
     subst hver
     cases selection₀.version <;> rfl
-  obtain ⟨hidx0Lt, hidx0Beq, -⟩ := List.findIdx?_eq_some_iff_getElem.mp hFindIdx0
-  have hidx0Get : (threads.toThreadsOrdered manager)[idx₀]? =
-      some ((threads.toThreadsOrdered manager)[idx₀]'hidx0Lt) := List.getElem?_eq_getElem hidx0Lt
-  have hidx0Eq : ((threads.toThreadsOrdered manager)[idx₀]'hidx0Lt).value = selection₀.thread.value :=
-    beq_iff_eq.mp hidx0Beq
+  have hNodup := CommentThreads.toThreadsOrdered.nodupValues threads manager
   obtain ⟨ys, hys⟩ := List.getLast?_eq_some_iff.mp hLast
   have hLenEq : (threads.toThreadsOrdered manager).length = ys.length + 1 := by
     rw [hys]; simp
-  have hLastGet : (threads.toThreadsOrdered manager)[ys.length]? = some thread := by
-    rw [hys]; exact List.getElem?_concat_length
-  have hIdxNe : idx₀ ≠ ys.length := by
+  obtain ⟨hIdx₀Lt, hIdx₀P, -⟩ := List.findIdx?_eq_some_iff_getElem.mp hFindIdx₀
+  have hGetElem₀Val : (threads.toThreadsOrdered manager)[idx₀].value = selection₀.thread.value :=
+    beq_iff_eq.mp hIdx₀P
+  have hLastElem : (threads.toThreadsOrdered manager)[ys.length]! = lastThread := by
+    apply List.getElem!_of_getElem?
+    rw [hys]
+    exact List.getElem?_concat_length
+  have hIdx₀Ne : idx₀ ≠ ys.length := by
     intro heq
-    subst heq
     apply hNeVal
-    rw [← hidx0Eq, Option.some.inj (hidx0Get.symm.trans hLastGet)]
-  have hIdxLt : idx₀ < ys.length := by omega
-  have hIdx1Lt : idx₀ + 1 < (threads.toThreadsOrdered manager).length := by omega
+    have h1 : (threads.toThreadsOrdered manager)[idx₀]? = some lastThread := by
+      rw [heq, hys]
+      exact List.getElem?_concat_length
+    rw [List.getElem?_eq_getElem hIdx₀Lt] at h1
+    rw [← hGetElem₀Val]
+    exact congrArg Tree.value (Option.some.inj h1)
+  have hIdx₀LtYs : idx₀ < ys.length := by
+    rw [hLenEq] at hIdx₀Lt
+    omega
   have hNextIdxEq : Nat.min (idx₀ + 1) ((threads.toThreadsOrdered manager).length - 1) = idx₀ + 1 := by
     rw [hLenEq]
-    simp only [Nat.min_def]
-    split <;> omega
-  let nextVal := (threads.toThreadsOrdered manager)[idx₀ + 1]!
-  have hNextValDef : nextVal = (threads.toThreadsOrdered manager)[idx₀ + 1]! := rfl
-  have hNextElemEq : (threads.toThreadsOrdered manager)[idx₀ + 1]'hIdx1Lt = nextVal := by
-    rw [hNextValDef, getElem!_pos]
-  have hFindIdx1 : (threads.toThreadsOrdered manager).findIdx? (fun t => t.value == nextVal.value) =
-      some (idx₀ + 1) := by
-    have h := CommentThreads.toThreadsOrdered.findIdx_of_getElem threads manager hIdx1Lt
-    rwa [hNextElemEq] at h
-  refine ⟨⟨version, nextVal, nextVal.value⟩, ?_, idx₀, idx₀ + 1, hFindIdx0, hFindIdx1, rfl⟩
-  unfold CommentThreads.nextThread
-  simp only [hVerEq, hFindIdx0, hNextIdxEq, hNextValDef]
+    exact Nat.min_eq_left (by omega)
+  have hIdx₁Lt : idx₀ + 1 < (threads.toThreadsOrdered manager).length := by
+    rw [hLenEq]; omega
+  have hGetElem₁ : (threads.toThreadsOrdered manager)[idx₀ + 1]! = (threads.toThreadsOrdered manager)[idx₀ + 1] :=
+    List.getElem!_of_getElem? (List.getElem?_eq_getElem hIdx₁Lt)
+  have hFindIdx₁ := CommentThreads.toThreadsOrdered.findIdx_of_getElem threads manager hIdx₁Lt
+  refine ⟨⟨version, (threads.toThreadsOrdered manager)[idx₀ + 1], (threads.toThreadsOrdered manager)[idx₀ + 1].value⟩,
+    ?_, idx₀, idx₀ + 1, hFindIdx₀, ?_, rfl⟩
+  · unfold CommentThreads.nextThread
+    simp only [hVerEq, hFindIdx₀, hNextIdxEq, hGetElem₁]
+  · simpa using hFindIdx₁
