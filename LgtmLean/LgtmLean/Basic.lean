@@ -219,22 +219,21 @@ structure ModifiedFileState where
 structure ModifiedFileManager where
   state : Std.HashMap ModifiedFileRef ModifiedFileState
   /-- The files affected by the change in a server-defined order.  This is stored
-  separately to preserve that order, which would be lost with only the hash map.
-
-  Invariant: Each one of these has an entry in `state`. -/
+  separately to preserve that order, which would be lost with only the hash map. -/
   modifiedFiles : List ModifiedFileRef
 
-  hConsistentState : ∀ modifiedFile, modifiedFile ∈ modifiedFiles → state.contains modifiedFile
+  /-- Invariant: Each modified file ref has an entry in `state`. -/
+  hConsistentState : ∀ modifiedFile, modifiedFile ∈ modifiedFiles ↔ state.contains modifiedFile
 
 def ModifiedFileManager.resetCommentState (fileManager : ModifiedFileManager) : ModifiedFileManager :=
   let updatedState := fileManager.state.map (fun modifiedFileRef fileState =>
     {fileState with selectedComment := none,
                     baseThreads := CommentThreads.empty,
                     currentThreads := CommentThreads.empty})
-  have hConsistent : ∀ modifiedFile, modifiedFile ∈ fileManager.modifiedFiles → updatedState.contains modifiedFile := by
-    intro modifiedFile hmem
+  have hConsistent : ∀ modifiedFile, modifiedFile ∈ fileManager.modifiedFiles ↔ updatedState.contains modifiedFile := by
+    intro modifiedFile
     simp only [updatedState, Std.HashMap.contains_map]
-    exact fileManager.hConsistentState modifiedFile hmem
+    exact fileManager.hConsistentState modifiedFile
   { fileManager with state := updatedState, hConsistentState := hConsistent }
 
 /-- This would ideally be an inductive, but different servers can provide different statuses.  We just
@@ -270,3 +269,7 @@ def resetCommentState : LgtmM Unit := do
   let s₀ ← get
   let manager₁ := s₀.fileManager.resetCommentState
   set { s₀ with commentManager := CommentManager.empty, fileManager := manager₁ }
+
+
+def addRemoteComments (comments : List Comment) : LgtmM Unit := do
+  pure ()
