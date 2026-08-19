@@ -3,5 +3,6 @@
 module
 
 import LgtmLean.Basic
+import LgtmLean.CreateThreads
 import LgtmLean.Threads
 import LgtmLean.Tree

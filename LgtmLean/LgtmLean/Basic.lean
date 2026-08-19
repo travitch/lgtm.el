@@ -22,7 +22,20 @@ structure FileRef where
 inductive FileVersion where
   | base
   | current
-  deriving Hashable, BEq
+  deriving Hashable, DecidableEq
+
+/-- Locations of threads for rendering purposes.
+
+These locations are less precise than the comment locations and are just
+used for the renderer to group threads appropriately. -/
+inductive ThreadLocation where
+| topLevel
+| lineNumber : Nat → ThreadLocation
+deriving Hashable, Ord, DecidableEq
+
+def ThreadLocation.isTopLevel : ThreadLocation → Bool
+| .topLevel => true
+| .lineNumber _ => false
 
 structure CommentFileLocation where
   version : FileVersion
@@ -36,15 +49,19 @@ structure CommentFileLocation where
 inductive CommentLocation where
   | fileLocation : CommentFileLocation → CommentLocation
   | topLevel : CommentLocation
-  deriving Hashable, BEq
+  deriving Hashable, Inhabited, BEq
 
 def CommentLocation.isTopLevel : CommentLocation → Bool
 | .topLevel => true
 | .fileLocation _ => false
 
+def CommentLocation.asThreadLocation : CommentLocation → ThreadLocation
+| .topLevel => .topLevel
+| .fileLocation loc => .lineNumber loc.startLine
+
 structure ServerId where
   id : String
-  deriving Inhabited, Hashable, BEq
+  deriving Inhabited, Hashable, DecidableEq
 
 /-- The actual contents of a comment.
 
@@ -61,10 +78,8 @@ structure Comment where
   comments fetched from the server and for comments that are sent to the server
   (even if they are unpublished) -/
   backendId : Option ServerId
-  /-- The location of the comment.
-
-  This is none for top-level comments. -/
-  location : Option CommentLocation
+  /-- The location of the comment. -/
+  location : CommentLocation
   isPublished : Bool
   author : String
   createdTimestamp : Nat
@@ -95,19 +110,6 @@ abbrev CommentThread := Tree CommentRef
 instance : Inhabited (Tree CommentRef) where
   default := ⟨default, []⟩
 
-/-- Locations of threads for rendering purposes.
-
-These locations are less precise than the comment locations and are just
-used for the renderer to group threads appropriately. -/
-inductive ThreadLocation where
-| topLevel
-| lineNumber : Nat → ThreadLocation
-deriving Hashable, Ord, DecidableEq
-
-def ThreadLocation.isTopLevel : ThreadLocation → Bool
-| .topLevel => true
-| .lineNumber _ => false
-
 /-- The collected threads for a scope (file version or top-level). -/
 structure CommentThreads where
   /-- The tree node for each comment. -/
@@ -115,6 +117,10 @@ structure CommentThreads where
 
   serverCommentIds : Std.HashMap ServerId CommentRef
 
+  /-- The comment tree roots at each location.
+
+  Note that the root comments are not stored in any particular order.
+  They are sorted at access time. -/
   locationRoots : Std.HashMap ThreadLocation (List CommentRef)
 
   /-- Invariant: Either there is one location that is top or there are no locations that are top -/
