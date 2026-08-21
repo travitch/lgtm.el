@@ -110,6 +110,16 @@ abbrev CommentThread := Tree CommentRef
 instance : Inhabited (Tree CommentRef) where
   default := ⟨default, []⟩
 
+/-- `descendant` is reachable from `root` in `nodes` by following zero or more `Tree.children`
+links. Used by `CommentThreads.hAllCommentTreeNodesAreLive` to say every stored node belongs to
+some displayed thread instead of being an orphan. -/
+inductive CommentThreads.NodeReachable (nodes : Std.HashMap CommentRef CommentThread) :
+    CommentRef → CommentRef → Prop
+  | refl (root : CommentRef) : CommentThreads.NodeReachable nodes root root
+  | step {root parent child : CommentRef} (h : CommentThreads.NodeReachable nodes root parent)
+      (hparent : nodes.contains parent) (hchild : child ∈ (nodes.get parent hparent).children) :
+      CommentThreads.NodeReachable nodes root child
+
 /-- The collected threads for a scope (file version or top-level). -/
 structure CommentThreads where
   /-- The tree node for each comment. -/
@@ -130,7 +140,9 @@ structure CommentThreads where
   hHasNodeForComment : ∀ loc threadRoots, (loc, threadRoots) ∈ locationRoots.toList →
     ∀ ref, ref ∈ threadRoots → commentTreeNodes.contains ref
 
-  hAllCommentTreeNodesAreLive : ∀ commentRef, commentRef ∈ commentTreeNodes.keys → ∃ threadsList, threadsList ∈ locationRoots.values ∧ commentRef ∈ threadsList
+  hAllCommentTreeNodesAreLive : ∀ commentRef, commentRef ∈ commentTreeNodes.keys →
+    ∃ loc threadsList, (loc, threadsList) ∈ locationRoots.toList ∧
+      ∃ root ∈ threadsList, CommentThreads.NodeReachable commentTreeNodes root commentRef
 
   /-- The tree stored for a comment is actually rooted at that comment: `commentTreeNodes` is
   keyed consistently with the trees it stores. -/
