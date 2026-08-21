@@ -59,6 +59,25 @@ def CommentThreads.previousThread (threads : CommentThreads) (manager : CommentM
       let prevThread := orderedThreads[prevIdx]!
       some ⟨version, prevThread, prevThread.value⟩
 
+/-- Depth-first walk of `thread`'s descendants, resolving child refs against `threads` up to
+`fuel` levels deep. `fuel := threads.commentTreeNodes.size` in `CommentThread.linearize` is enough
+to reach every node of a genuine (cycle-free) thread, since such a thread's depth cannot exceed
+its node count. Children are sorted by timestamp at each level, matching `CommentThreads.asAlist`. -/
+private def CommentThread.linearizeRecWithFuel (threads : CommentThreads) (manager : CommentManager) :
+    Nat → CommentThread → List Comment
+  | 0, _ => []
+  | fuel + 1, thread =>
+    let comparisonFunction := fun a b => (compare (manager.get a).createdTimestamp (manager.get b).createdTimestamp).isLE
+    let sortedChildren := thread.children.mergeSort comparisonFunction
+    manager.get thread.value :: sortedChildren.flatMap (fun childRef =>
+      match threads.commentTreeNodes[childRef]? with
+      | none => []
+      | some childThread => CommentThread.linearizeRecWithFuel threads manager fuel childThread)
+
+/-- Linearize a comment THREAD (belonging to `threads`) with a depth-first traversal. -/
+private def CommentThread.linearize (thread : CommentThread) (threads : CommentThreads) (manager : CommentManager) :
+    List Comment :=
+  CommentThread.linearizeRecWithFuel threads manager threads.commentTreeNodes.size thread
 
 private def hasConsistentLocationsPredicate (locations : List ThreadLocation) : Prop :=
   (∀ loc, loc ∈ locations → loc.isTopLevel) ∨ (∀ loc, loc ∈ locations → !loc.isTopLevel)

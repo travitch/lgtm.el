@@ -100,11 +100,6 @@ structure Comment where
 
 def Comment.isPersistedToServer (c : Comment) : Bool := c.backendId.isSome
 
--- FIXME: Should this be a tree of comments instead? There should be no harm (it is fine in the current implementation)
---
--- Downside: The current implementation acts more like IORefs everywhere.  Mutations to comments here would
--- not work or be visible.  Therefore, keeping all of the comments actually in the manager instead is probably
--- the better design
 abbrev CommentThread := Tree CommentRef
 
 instance : Inhabited (Tree CommentRef) where
