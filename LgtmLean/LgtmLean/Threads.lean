@@ -346,6 +346,25 @@ theorem CommentThreads.nextThread.saturateIfLastThreadSelected (threads : Commen
   unfold CommentThreads.nextThread
   simp only [hVerEq, hFindIdx, hNextIdxEq, hGetElem]
 
+theorem CommentThreads.previousThread.saturateIfFirstThreadSelected (threads : CommentThreads) (manager : CommentManager) (version : FileVersion) (selection₀ : SelectedComment) :
+  (version = selection₀.version ∧ ¬ threads.isEmpty ∧ ∃ thread, (threads.toThreadsOrdered manager).head? = some thread ∧ selection₀.thread = thread) →
+     ∃ selection₁, threads.previousThread manager version selection₀ = some selection₁ ∧ selection₀.thread = selection₁.thread := by
+  rintro ⟨hver, -, thread, hHead, hSelEq⟩
+  have hVerEq : (version == selection₀.version) = true := by
+    subst hver
+    cases selection₀.version <;> rfl
+  obtain ⟨ys, hys⟩ := List.head?_eq_some_iff.mp hHead
+  have hFindIdx : (threads.toThreadsOrdered manager).findIdx? (fun t => t.value == selection₀.thread.value) = some 0 := by
+    rw [hSelEq, hys]
+    simp [List.findIdx?_cons]
+  have hGetElem : (threads.toThreadsOrdered manager)[0]! = thread := by
+    apply List.getElem!_of_getElem?
+    rw [hys]
+    simp
+  refine ⟨⟨version, thread, thread.value⟩, ?_, by simpa using hSelEq⟩
+  unfold CommentThreads.previousThread
+  simp only [hVerEq, hFindIdx, hGetElem, beq_self_eq_true, if_true]
+
 theorem CommentThreads.nextThread.selectNextIfNotLastThreadSelected (threads : CommentThreads) (manager : CommentManager) (version : FileVersion) (selection₀ : SelectedComment) :
   (version = selection₀.version ∧ ¬ threads.isEmpty ∧
     (∃ idx₀, List.findIdx? (·.value == selection₀.thread.value) (threads.toThreadsOrdered manager) = some idx₀) ∧
