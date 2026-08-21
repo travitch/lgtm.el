@@ -138,6 +138,21 @@ def CommentThreads.nextThread (threads : CommentThreads) (manager : CommentManag
       let nextThread := orderedThreads[nextIdx]!
       some ⟨version, nextThread, nextThread.value⟩
 
+def CommentThreads.previousThread (threads : CommentThreads) (manager : CommentManager) (version : FileVersion) (selection : SelectedComment) : Option SelectedComment :=
+  let orderedThreads := threads.toThreadsOrdered manager
+  match version == selection.version, orderedThreads with
+  | false, [] => none
+  | false, a :: as =>
+    let lastThread := (a :: as).getLast (List.cons_ne_nil a as)
+    some ⟨version, lastThread, lastThread.value⟩
+  | true, _ =>
+    match orderedThreads.findIdx? (·.value == selection.thread.value) with
+    | none => none
+    | some curIdx =>
+      let prevIdx := if curIdx == 0 then 0 else curIdx - 1
+      let prevThread := orderedThreads[prevIdx]!
+      some ⟨version, prevThread, prevThread.value⟩
+
 private theorem CommentThreads.toThreadsOrdered.eq_nil_of_isEmpty (threads : CommentThreads) (manager : CommentManager)
     (hEmpty : threads.isEmpty) : threads.toThreadsOrdered manager = [] := by
   have hThreadRootsEmpty : ∀ loc threadRoots, (loc, threadRoots) ∈ threads.locationRoots.toList → threadRoots = [] := by
@@ -162,6 +177,16 @@ theorem CommentThreads.nextThread.noSelectionForEmptyFile (threads : CommentThre
     obtain ⟨sv, sthread, scomment⟩ := selection
     cases version <;> cases sv <;> simp_all <;> rfl
   unfold CommentThreads.nextThread
+  rw [CommentThreads.toThreadsOrdered.eq_nil_of_isEmpty threads manager hEmpty]
+  simp [hVerNe]
+
+theorem CommentThreads.previousThread.noSelectionForEmptyFile (threads : CommentThreads) (manager : CommentManager) (version : FileVersion) (selection : SelectedComment) :
+  version ≠ selection.version ∧ threads.isEmpty → threads.previousThread manager version selection = none := by
+  rintro ⟨hverne, hEmpty⟩
+  have hVerNe : (version == selection.version) = false := by
+    obtain ⟨sv, sthread, scomment⟩ := selection
+    cases version <;> cases sv <;> simp_all <;> rfl
+  unfold CommentThreads.previousThread
   rw [CommentThreads.toThreadsOrdered.eq_nil_of_isEmpty threads manager hEmpty]
   simp [hVerNe]
 
@@ -208,6 +233,24 @@ theorem CommentThreads.nextThread.selectFirstForDifferentFile (threads : Comment
   | [] => exact absurd hmatch hNeNil
   | firstThread :: rest =>
     exact ⟨firstThread, by simp, by simp [hVerNe]⟩
+
+theorem CommentThreads.previousThread.selectLastForDifferentFile (threads : CommentThreads) (manager : CommentManager) (version : FileVersion) (selection : SelectedComment) :
+  version ≠ selection.version ∧ ¬ threads.isEmpty →
+    ∃ thread, (threads.toThreadsOrdered manager).getLast? = some thread ∧
+              threads.previousThread manager version selection = some ⟨version, thread, thread.value⟩ := by
+  rintro ⟨hverne, hNonEmpty⟩
+  have hVerNe : (version == selection.version) = false := by
+    obtain ⟨sv, sthread, scomment⟩ := selection
+    cases version <;> cases sv <;> simp_all <;> rfl
+  have hNeNil : threads.toThreadsOrdered manager ≠ [] :=
+    CommentThreads.toThreadsOrdered.ne_nil_of_not_isEmpty threads manager hNonEmpty
+  unfold CommentThreads.previousThread
+  match hmatch : threads.toThreadsOrdered manager with
+  | [] => exact absurd hmatch hNeNil
+  | a :: as =>
+    exact ⟨(a :: as).getLast (List.cons_ne_nil a as),
+      List.getLast?_eq_some_getLast (List.cons_ne_nil a as), by simp [hVerNe]⟩
+
 
 private theorem List.perm_flatMap_of_forall_perm {α β} {l : List α} {f g : α → List β}
     (h : ∀ x ∈ l, List.Perm (f x) (g x)) : List.Perm (l.flatMap f) (l.flatMap g) := by
