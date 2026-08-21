@@ -413,3 +413,45 @@ theorem CommentThreads.nextThread.selectNextIfNotLastThreadSelected (threads : C
   · unfold CommentThreads.nextThread
     simp only [hVerEq, hFindIdx₀, hNextIdxEq, hGetElem₁]
   · simpa using hFindIdx₁
+
+theorem CommentThreads.previousThread.selectPreviousIfNotFirstThreadSelected (threads : CommentThreads) (manager : CommentManager) (version : FileVersion) (selection₀ : SelectedComment) :
+  (version = selection₀.version ∧ ¬ threads.isEmpty ∧
+    (∃ idx₀, List.findIdx? (·.value == selection₀.thread.value) (threads.toThreadsOrdered manager) = some idx₀) ∧
+    ∃ thread, (threads.toThreadsOrdered manager).head? = some thread ∧ selection₀.thread.value ≠ thread.value) →
+     (∃ selection₁, threads.previousThread manager version selection₀ = some selection₁ ∧
+      ∃ idx₀ idx₁, List.findIdx? (·.value == selection₀.thread.value) (threads.toThreadsOrdered manager) = some idx₀ ∧
+                   List.findIdx? (·.value == selection₁.thread.value) (threads.toThreadsOrdered manager) = some idx₁ ∧
+                   idx₀ - 1 = idx₁) := by
+  rintro ⟨hver, -, ⟨idx₀, hFindIdx₀⟩, firstThread, hHead, hNeVal⟩
+  have hVerEq : (version == selection₀.version) = true := by
+    subst hver
+    cases selection₀.version <;> rfl
+  obtain ⟨ys, hys⟩ := List.head?_eq_some_iff.mp hHead
+  obtain ⟨hIdx₀Lt, hIdx₀P, -⟩ := List.findIdx?_eq_some_iff_getElem.mp hFindIdx₀
+  have hGetElem₀Val : (threads.toThreadsOrdered manager)[idx₀].value = selection₀.thread.value :=
+    beq_iff_eq.mp hIdx₀P
+  have hFirstElem : (threads.toThreadsOrdered manager)[0]! = firstThread := by
+    apply List.getElem!_of_getElem?
+    rw [hys]
+    simp
+  have hIdx₀Ne : idx₀ ≠ 0 := by
+    intro heq
+    apply hNeVal
+    have h1 : (threads.toThreadsOrdered manager)[idx₀]? = some firstThread := by
+      rw [heq, hys]
+      simp
+    rw [List.getElem?_eq_getElem hIdx₀Lt] at h1
+    rw [← hGetElem₀Val]
+    exact congrArg Tree.value (Option.some.inj h1)
+  have hPrevIdxEq : (if idx₀ == 0 then 0 else idx₀ - 1) = idx₀ - 1 := by
+    have hFalse : (idx₀ == 0) = false := by simpa using hIdx₀Ne
+    simp [hFalse]
+  have hIdx₁Lt : idx₀ - 1 < (threads.toThreadsOrdered manager).length := by omega
+  have hGetElem₁ : (threads.toThreadsOrdered manager)[idx₀ - 1]! = (threads.toThreadsOrdered manager)[idx₀ - 1] :=
+    List.getElem!_of_getElem? (List.getElem?_eq_getElem hIdx₁Lt)
+  have hFindIdx₁ := CommentThreads.toThreadsOrdered.findIdx_of_getElem threads manager hIdx₁Lt
+  refine ⟨⟨version, (threads.toThreadsOrdered manager)[idx₀ - 1], (threads.toThreadsOrdered manager)[idx₀ - 1].value⟩,
+    ?_, idx₀, idx₀ - 1, hFindIdx₀, ?_, rfl⟩
+  · unfold CommentThreads.previousThread
+    simp only [hVerEq, hFindIdx₀, hPrevIdxEq, hGetElem₁]
+  · simpa using hFindIdx₁
