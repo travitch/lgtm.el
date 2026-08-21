@@ -16,6 +16,50 @@ def CommentThreads.asAlist (threads : CommentThreads) (manager : CommentManager)
     (loc, sortedThreads))
   unsorted.mergeSort (λ p1 p2 => (compare p1.fst p2.fst).isLE)
 
+/-- Return the threads in sorted order. -/
+def CommentThreads.toThreadsOrdered (threads : CommentThreads) (manager : CommentManager) : List CommentThread :=
+  List.flatMap (λ p => Prod.snd p) (threads.asAlist manager)
+
+/--
+Given a collection of threads and a selection, return the next thread to select linearly.
+
+The VERSION is included because the user can switch files; as there is only one global selection,
+if the user selects the next comment in a different file, the whole selection resets.
+
+The linear order is as established in the ordering defined by CommentThreads.
+
+Note: It would be nice to keep the association between the selection and the threads objects it references.  Future work.
+-/
+def CommentThreads.nextThread (threads : CommentThreads) (manager : CommentManager) (version : FileVersion) (selection : SelectedComment) : Option SelectedComment :=
+  let orderedThreads := threads.toThreadsOrdered manager
+  match version == selection.version, orderedThreads with
+  | false, [] => none
+  | false, firstThread :: _ => some ⟨version, firstThread, firstThread.value⟩
+  | true, _ =>
+    match orderedThreads.findIdx? (·.value == selection.thread.value) with
+    | none => none
+    | some curIdx =>
+      /- This should be provable because if we found the thread in the list, the list cannot be empty -/
+      let nextIdx := Nat.min (curIdx + 1) (orderedThreads.length - 1)
+      let nextThread := orderedThreads[nextIdx]!
+      some ⟨version, nextThread, nextThread.value⟩
+
+def CommentThreads.previousThread (threads : CommentThreads) (manager : CommentManager) (version : FileVersion) (selection : SelectedComment) : Option SelectedComment :=
+  let orderedThreads := threads.toThreadsOrdered manager
+  match version == selection.version, orderedThreads with
+  | false, [] => none
+  | false, a :: as =>
+    let lastThread := (a :: as).getLast (List.cons_ne_nil a as)
+    some ⟨version, lastThread, lastThread.value⟩
+  | true, _ =>
+    match orderedThreads.findIdx? (·.value == selection.thread.value) with
+    | none => none
+    | some curIdx =>
+      let prevIdx := if curIdx == 0 then 0 else curIdx - 1
+      let prevThread := orderedThreads[prevIdx]!
+      some ⟨version, prevThread, prevThread.value⟩
+
+
 private def hasConsistentLocationsPredicate (locations : List ThreadLocation) : Prop :=
   (∀ loc, loc ∈ locations → loc.isTopLevel) ∨ (∀ loc, loc ∈ locations → !loc.isTopLevel)
 
@@ -95,10 +139,6 @@ theorem CommentThreads.asAlist.threadLocationsSortedByTimestamp (threads : Comme
     exact nat_compareLE_total _ _
   · exact h
 
-/-- Return the threads in sorted order. -/
-private def CommentThreads.toThreadsOrdered (threads : CommentThreads) (manager : CommentManager) : List CommentThread :=
-  List.flatMap (λ p => Prod.snd p) (threads.asAlist manager)
-
 /-- Each group of threads that `toThreadsOrdered` concatenates in (i.e. each location's thread
 list from `asAlist`) occurs as a contiguous run in the result, and that run is sorted by
 timestamp. -/
@@ -113,45 +153,6 @@ theorem CommentThreads.toThreadsOrdered.groupsAreSorted (threads : CommentThread
   refine ⟨List.flatMap Prod.snd s, List.flatMap Prod.snd t, ?_⟩
   unfold CommentThreads.toThreadsOrdered
   rw [hst, List.flatMap_append, List.flatMap_cons, hp_eq, List.append_assoc]
-
-/--
-Given a collection of threads and a selection, return the next thread to select linearly.
-
-The VERSION is included because the user can switch files; as there is only one global selection,
-if the user selects the next comment in a different file, the whole selection resets.
-
-The linear order is as established in the ordering defined by CommentThreads.
-
-Note: It would be nice to keep the association between the selection and the threads objects it references.  Future work.
--/
-def CommentThreads.nextThread (threads : CommentThreads) (manager : CommentManager) (version : FileVersion) (selection : SelectedComment) : Option SelectedComment :=
-  let orderedThreads := threads.toThreadsOrdered manager
-  match version == selection.version, orderedThreads with
-  | false, [] => none
-  | false, firstThread :: _ => some ⟨version, firstThread, firstThread.value⟩
-  | true, _ =>
-    match orderedThreads.findIdx? (·.value == selection.thread.value) with
-    | none => none
-    | some curIdx =>
-      /- This should be provable because if we found the thread in the list, the list cannot be empty -/
-      let nextIdx := Nat.min (curIdx + 1) (orderedThreads.length - 1)
-      let nextThread := orderedThreads[nextIdx]!
-      some ⟨version, nextThread, nextThread.value⟩
-
-def CommentThreads.previousThread (threads : CommentThreads) (manager : CommentManager) (version : FileVersion) (selection : SelectedComment) : Option SelectedComment :=
-  let orderedThreads := threads.toThreadsOrdered manager
-  match version == selection.version, orderedThreads with
-  | false, [] => none
-  | false, a :: as =>
-    let lastThread := (a :: as).getLast (List.cons_ne_nil a as)
-    some ⟨version, lastThread, lastThread.value⟩
-  | true, _ =>
-    match orderedThreads.findIdx? (·.value == selection.thread.value) with
-    | none => none
-    | some curIdx =>
-      let prevIdx := if curIdx == 0 then 0 else curIdx - 1
-      let prevThread := orderedThreads[prevIdx]!
-      some ⟨version, prevThread, prevThread.value⟩
 
 private theorem CommentThreads.toThreadsOrdered.eq_nil_of_isEmpty (threads : CommentThreads) (manager : CommentManager)
     (hEmpty : threads.isEmpty) : threads.toThreadsOrdered manager = [] := by
@@ -250,7 +251,6 @@ theorem CommentThreads.previousThread.selectLastForDifferentFile (threads : Comm
   | a :: as =>
     exact ⟨(a :: as).getLast (List.cons_ne_nil a as),
       List.getLast?_eq_some_getLast (List.cons_ne_nil a as), by simp [hVerNe]⟩
-
 
 private theorem List.perm_flatMap_of_forall_perm {α β} {l : List α} {f g : α → List β}
     (h : ∀ x ∈ l, List.Perm (f x) (g x)) : List.Perm (l.flatMap f) (l.flatMap g) := by
