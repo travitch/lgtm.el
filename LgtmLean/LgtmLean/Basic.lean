@@ -156,24 +156,46 @@ Note: this is based on `locationRoots` (what's actually reachable/displayable), 
 def CommentThreads.isEmpty (threads : CommentThreads) : Bool :=
   threads.locationRoots.toList.all (fun p => p.2.isEmpty)
 
-structure CommentManager where
-  comments : Std.HashMap CommentRef Comment
-  topLevelThreads : CommentThreads
-
-def CommentManager.empty : CommentManager := ⟨Std.HashMap.emptyWithCapacity, CommentThreads.empty⟩
-
-def CommentManager.get (manager : CommentManager) (ref : CommentRef) : Comment :=
-  manager.comments[ref]!
-
-
 /-- The comment selected in the file review UI. -/
 structure SelectedComment where
   version : FileVersion
   thread : CommentThread
   comment : CommentRef
-  -- FIXME: Add an invariant that the comment exists in the given thread
-  --
-  -- This is a bit tricky because the tree structure is only available in the CommentThreads structure
+
+/-- A selection is well-formed with respect to a set of `threads` when `sel.thread` is exactly the
+live tree node recorded for it in `threads`, and `sel.comment` is actually reachable from that
+node. This is the invariant needed to guarantee that indexing into the thread's linearization (as
+done by `CommentThreads.nextCommentInThread` / `CommentThreads.previousCommentInThread`) never
+falls out of bounds: it forces the linearization to be nonempty and to actually contain
+`sel.comment`. -/
+def SelectedComment.WellFormed (threads : CommentThreads) (sel : SelectedComment) : Prop :=
+  ∃ h : threads.commentTreeNodes.contains sel.thread.value,
+    threads.commentTreeNodes.get sel.thread.value h = sel.thread ∧
+    CommentThreads.NodeReachable threads.commentTreeNodes sel.thread.value sel.comment
+
+/-- A well-formed selection's thread is registered, so `threads.commentTreeNodes` is nonempty.
+This is the fact that ultimately makes indexing into the thread's linearization total: the
+linearization always emits at least the thread's own node before it can run out of fuel. -/
+theorem SelectedComment.WellFormed.commentTreeNodes_size_ne_zero {threads : CommentThreads} {sel : SelectedComment}
+    (hWF : SelectedComment.WellFormed threads sel) : threads.commentTreeNodes.size ≠ 0 := by
+  obtain ⟨h, -, -⟩ := hWF
+  rw [← Std.HashMap.length_keys, ne_eq, List.length_eq_zero_iff]
+  exact List.ne_nil_of_mem (Std.HashMap.mem_keys.mpr (Std.HashMap.contains_iff_mem.mp h))
+
+structure CommentManager where
+  comments : Std.HashMap CommentRef Comment
+  topLevelThreads : CommentThreads
+  /-- The comment currently selected while browsing the changeset's top-level (unattached)
+  threads, independent of any specific file's own selection. -/
+  selectedComment : Option SelectedComment
+
+  hSelectedCommentWellFormed : ∀ sel, selectedComment = some sel →
+    SelectedComment.WellFormed topLevelThreads sel
+
+def CommentManager.empty : CommentManager := ⟨Std.HashMap.emptyWithCapacity, CommentThreads.empty, none, by simp⟩
+
+def CommentManager.get (manager : CommentManager) (ref : CommentRef) : Comment :=
+  manager.comments[ref]!
 
 /-- A hash of a git revision -/
 structure GitRevision where
@@ -232,6 +254,13 @@ structure ModifiedFileState where
   baseThreads : CommentThreads
   currentThreads : CommentThreads
 
+  /-- If a comment is selected, it is well-formed with respect to whichever of `baseThreads` /
+  `currentThreads` its `version` selects. -/
+  hSelectedCommentWellFormed : ∀ sel, selectedComment = some sel →
+    SelectedComment.WellFormed (match sel.version with
+      | .base => baseThreads
+      | .current => currentThreads) sel
+
 structure ModifiedFileManager where
   state : Std.HashMap ModifiedFileRef ModifiedFileState
   /-- The files affected by the change in a server-defined order.  This is stored
@@ -245,7 +274,8 @@ def ModifiedFileManager.resetCommentState (fileManager : ModifiedFileManager) : 
   let updatedState := fileManager.state.map (fun modifiedFileRef fileState =>
     {fileState with selectedComment := none,
                     baseThreads := CommentThreads.empty,
-                    currentThreads := CommentThreads.empty})
+                    currentThreads := CommentThreads.empty,
+                    hSelectedCommentWellFormed := by simp})
   have hConsistent : ∀ modifiedFile, modifiedFile ∈ fileManager.modifiedFiles ↔ updatedState.contains modifiedFile := by
     intro modifiedFile
     simp only [updatedState, Std.HashMap.contains_map]

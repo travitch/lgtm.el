@@ -78,96 +78,138 @@ private def CommentThread.linearizeRecWithFuel (threads : CommentThreads) (manag
 private def CommentThread.linearize (thread : CommentThread) (threads : CommentThreads) (manager : CommentManager) : List Comment :=
   CommentThread.linearizeRecWithFuel threads manager threads.commentTreeNodes.size thread
 
+private theorem CommentThread.linearizeRecWithFuel.ne_nil_of_fuel_ne_zero (threads : CommentThreads)
+    (manager : CommentManager) {fuel : Nat} (hFuel : fuel ≠ 0) (thread : CommentThread) :
+    CommentThread.linearizeRecWithFuel threads manager fuel thread ≠ [] := by
+  cases fuel with
+  | zero => exact absurd rfl hFuel
+  | succ n => simp [CommentThread.linearizeRecWithFuel]
+
+/-- The linearization of any thread is nonempty as soon as `threads.commentTreeNodes` is: the
+recursion always emits the thread's own node before its fuel (`threads.commentTreeNodes.size`) can
+run out. -/
+private theorem CommentThread.linearize.ne_nil_of_commentTreeNodes_size_ne_zero (thread : CommentThread)
+    (threads : CommentThreads) (manager : CommentManager) (hSize : threads.commentTreeNodes.size ≠ 0) :
+    thread.linearize threads manager ≠ [] :=
+  CommentThread.linearizeRecWithFuel.ne_nil_of_fuel_ne_zero threads manager hSize thread
+
+/-- A well-formed selection's linearized comment-ref list is always nonempty, which is exactly what
+totality of the indexing in `nextCommentInThread` / `previousCommentInThread` needs. -/
+private theorem SelectedComment.WellFormed.linearizedCommentRefs_ne_nil {threads : CommentThreads}
+    {sel : SelectedComment} (manager : CommentManager) (hWF : SelectedComment.WellFormed threads sel) :
+    ((sel.thread.linearize threads manager).map (·.ref)) ≠ [] := by
+  rw [ne_eq, List.map_eq_nil_iff]
+  exact CommentThread.linearize.ne_nil_of_commentTreeNodes_size_ne_zero sel.thread threads manager
+    hWF.commentTreeNodes_size_ne_zero
 
 /-- Given a selection, select the next comment in the linear order.
 
-Note that this currently is not as complete as would be idea.  We should prove that the selected
-comment is in the given thread.  It is difficult to state because the full thread structure is not
-contained in `SelectedComment` (it needs to reference `CommentThreads`).
-
-Right now, just select an arbitrary next comment if that invariant doesn't hold (it does, but it is
-hard to prove).
-
--/
-def CommentThreads.nextCommentInThread (threads : CommentThreads) (manager : CommentManager) (selection : SelectedComment) : SelectedComment :=
+`hWF` certifies that `selection` is well-formed with respect to `threads`, which is what makes the
+indexing into the thread's linearization provably in-bounds (see
+`SelectedComment.WellFormed.linearizedCommentRefs_ne_nil`) instead of relying on a `!`-panic
+fallback. -/
+def CommentThreads.nextCommentInThread (threads : CommentThreads) (manager : CommentManager)
+    (selection : SelectedComment) (hWF : SelectedComment.WellFormed threads selection) : SelectedComment :=
   let selectedThread := selection.thread
   let linearizedComments := selectedThread.linearize threads manager
   let linearizedCommentRefs := linearizedComments.map (λ c => c.ref)
   let currentlySelectedRef := selection.comment
   let currentlySelectedIndex := linearizedCommentRefs.idxOf currentlySelectedRef
   let nextIdx := min (currentlySelectedIndex + 1) (linearizedCommentRefs.length - 1)
-  ⟨selection.version, selection.thread, linearizedCommentRefs[nextIdx]!⟩
+  have hNonempty : linearizedCommentRefs ≠ [] := hWF.linearizedCommentRefs_ne_nil manager
+  have hBound : nextIdx < linearizedCommentRefs.length := by
+    have h1 : nextIdx ≤ linearizedCommentRefs.length - 1 := Nat.min_le_right _ _
+    have h2 : 0 < linearizedCommentRefs.length := List.ne_nil_iff_length_pos.mp hNonempty
+    omega
+  ⟨selection.version, selection.thread, linearizedCommentRefs[nextIdx]'hBound⟩
 
 
-def CommentThreads.previousCommentInThread (threads : CommentThreads) (manager : CommentManager) (selection : SelectedComment) : SelectedComment :=
+/-- Given a selection, select the previous comment in the linear order.
+
+`hWF` certifies that `selection` is well-formed with respect to `threads`; see
+`CommentThreads.nextCommentInThread` for why this makes the indexing provably in-bounds. -/
+def CommentThreads.previousCommentInThread (threads : CommentThreads) (manager : CommentManager)
+    (selection : SelectedComment) (hWF : SelectedComment.WellFormed threads selection) : SelectedComment :=
   let selectedThread := selection.thread
   let linearizedComments := selectedThread.linearize threads manager
   let linearizedCommentRefs := linearizedComments.map (λ c => c.ref)
   let currentlySelectedRef := selection.comment
   let currentlySelectedIndex := linearizedCommentRefs.idxOf currentlySelectedRef
   let nextIdx := max 0 (currentlySelectedIndex - 1)
-  ⟨selection.version, selection.thread, linearizedCommentRefs[nextIdx]!⟩
+  have hNonempty : linearizedCommentRefs ≠ [] := hWF.linearizedCommentRefs_ne_nil manager
+  have hEq : nextIdx = currentlySelectedIndex - 1 := Nat.max_eq_right (Nat.zero_le _)
+  have hBound : nextIdx < linearizedCommentRefs.length := by
+    have h2 : currentlySelectedIndex ≤ linearizedCommentRefs.length := List.idxOf_le_length
+    have h3 : 0 < linearizedCommentRefs.length := List.ne_nil_iff_length_pos.mp hNonempty
+    omega
+  ⟨selection.version, selection.thread, linearizedCommentRefs[nextIdx]'hBound⟩
 
 
 theorem CommentThreads.nextCommentInThread.selectNextIfNotLastCommentSelected
     (threads : CommentThreads) (manager : CommentManager) (selection : SelectedComment)
+    (hWF : SelectedComment.WellFormed threads selection)
     (refs : List CommentRef) (idx : Nat)
     (hRefs : refs = (selection.thread.linearize threads manager).map (·.ref))
     (hIdx : refs.idxOf selection.comment = idx)
     (hNotLast : idx + 1 < refs.length) :
-    threads.nextCommentInThread manager selection = ⟨selection.version, selection.thread, refs[idx + 1]!⟩ := by
+    threads.nextCommentInThread manager selection hWF =
+      ⟨selection.version, selection.thread, refs[idx + 1]!⟩ := by
   unfold CommentThreads.nextCommentInThread
   have hNextIdxEq : Nat.min (idx + 1) (refs.length - 1) = idx + 1 := Nat.min_eq_left (by omega)
   simp only [← hRefs, hIdx, hNextIdxEq]
+  congr 1
+  exact (List.getElem!_of_getElem? (List.getElem?_eq_getElem hNotLast)).symm
 
 theorem CommentThreads.nextCommentInThread.saturateIfLastCommentSelected
     (threads : CommentThreads) (manager : CommentManager) (selection : SelectedComment)
+    (hWF : SelectedComment.WellFormed threads selection)
     (refs : List CommentRef) (idx : Nat)
     (hRefs : refs = (selection.thread.linearize threads manager).map (·.ref))
     (hIdx : refs.idxOf selection.comment = idx)
     (hLast : idx + 1 = refs.length) :
-    threads.nextCommentInThread manager selection = selection := by
+    threads.nextCommentInThread manager selection hWF = selection := by
   subst hIdx
   unfold CommentThreads.nextCommentInThread
   have hIdxLt : refs.idxOf selection.comment < refs.length := by omega
   have hGetElem : refs[refs.idxOf selection.comment] = selection.comment := List.getElem_idxOf hIdxLt
-  have hGetElemBang : refs[refs.idxOf selection.comment]! = selection.comment := by
-    rw [List.getElem!_of_getElem? (List.getElem?_eq_getElem hIdxLt), hGetElem]
   have hNextIdxEq : Nat.min (refs.idxOf selection.comment + 1) (refs.length - 1) = refs.idxOf selection.comment :=
     (Nat.min_eq_right (by omega)).trans (by omega)
   obtain ⟨sv, sthread, scomment⟩ := selection
-  simp only [← hRefs, hNextIdxEq] at hGetElemBang ⊢
-  simp only [hGetElemBang]
+  simp only [← hRefs, hNextIdxEq] at hGetElem ⊢
+  simp only [hGetElem]
 
 theorem CommentThreads.previousCommentInThread.selectPreviousIfNotFirstCommentSelected
     (threads : CommentThreads) (manager : CommentManager) (selection : SelectedComment)
+    (hWF : SelectedComment.WellFormed threads selection)
     (refs : List CommentRef) (idx : Nat)
     (hRefs : refs = (selection.thread.linearize threads manager).map (·.ref))
     (hIdx : refs.idxOf selection.comment = idx)
     (_hNotFirst : idx ≠ 0) :
-    threads.previousCommentInThread manager selection = ⟨selection.version, selection.thread, refs[idx - 1]!⟩ := by
+    threads.previousCommentInThread manager selection hWF =
+      ⟨selection.version, selection.thread, refs[idx - 1]!⟩ := by
   unfold CommentThreads.previousCommentInThread
   have hNextIdxEq : max 0 (idx - 1) = idx - 1 := Nat.max_eq_right (Nat.zero_le _)
   simp only [← hRefs, hIdx, hNextIdxEq]
+  congr 1
+  refine (List.getElem!_of_getElem? (List.getElem?_eq_getElem ?_)).symm
 
 theorem CommentThreads.previousCommentInThread.saturateIfFirstCommentSelected
     (threads : CommentThreads) (manager : CommentManager) (selection : SelectedComment)
+    (hWF : SelectedComment.WellFormed threads selection)
     (refs : List CommentRef) (idx : Nat)
     (hRefs : refs = (selection.thread.linearize threads manager).map (·.ref))
     (hIdx : refs.idxOf selection.comment = idx)
     (hMem : selection.comment ∈ refs)
     (hFirst : idx = 0) :
-    threads.previousCommentInThread manager selection = selection := by
+    threads.previousCommentInThread manager selection hWF = selection := by
   subst hIdx
   unfold CommentThreads.previousCommentInThread
   have hIdxLt : refs.idxOf selection.comment < refs.length := List.idxOf_lt_length_of_mem hMem
   have hGetElem : refs[refs.idxOf selection.comment] = selection.comment := List.getElem_idxOf hIdxLt
-  have hGetElemBang : refs[refs.idxOf selection.comment]! = selection.comment := by
-    rw [List.getElem!_of_getElem? (List.getElem?_eq_getElem hIdxLt), hGetElem]
   have hNextIdxEq : max 0 (refs.idxOf selection.comment - 1) = refs.idxOf selection.comment := by omega
   obtain ⟨sv, sthread, scomment⟩ := selection
-  simp only [← hRefs, hNextIdxEq] at hGetElemBang ⊢
-  simp only [hGetElemBang]
+  simp only [← hRefs, hNextIdxEq] at hGetElem ⊢
+  simp only [hGetElem]
 
 private def hasConsistentLocationsPredicate (locations : List ThreadLocation) : Prop :=
   (∀ loc, loc ∈ locations → loc.isTopLevel) ∨ (∀ loc, loc ∈ locations → !loc.isTopLevel)
