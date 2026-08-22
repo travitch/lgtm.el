@@ -171,6 +171,9 @@ structure SelectedComment where
   version : FileVersion
   thread : CommentThread
   comment : CommentRef
+  -- FIXME: Add an invariant that the comment exists in the given thread
+  --
+  -- This is a bit tricky because the tree structure is only available in the CommentThreads structure
 
 /-- A hash of a git revision -/
 structure GitRevision where
