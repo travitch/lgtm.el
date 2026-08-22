@@ -147,7 +147,16 @@ structure CommentThreads where
   the (possibly per-location) thread-root lists. -/
   hLocationRootsNodup : (locationRoots.toList.flatMap Prod.snd).Nodup
 
-def CommentThreads.empty : CommentThreads := ⟨Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity, by simp, by simp, by simp, by simp, by simp⟩
+  /-- Every ref appearing in some registered node's children is itself a registered node: the graph
+  has no dangling child references. This is what lets reachability (`CommentThreads.NodeReachable`)
+  imply that `CommentThread.linearize`'s traversal actually visits the node, instead of silently
+  dropping an unregistered child. -/
+  hChildrenAreRegistered : ∀ ref (h : commentTreeNodes.contains ref) (child : CommentRef),
+    child ∈ (commentTreeNodes.get ref h).children → commentTreeNodes.contains child
+
+def CommentThreads.empty : CommentThreads :=
+  ⟨Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity,
+    by simp, by simp, by simp, by simp, by simp, by simp⟩
 
 /-- Whether there are any threads to show.
 
@@ -192,10 +201,26 @@ structure CommentManager where
   hSelectedCommentWellFormed : ∀ sel, selectedComment = some sel →
     SelectedComment.WellFormed topLevelThreads sel
 
-def CommentManager.empty : CommentManager := ⟨Std.HashMap.emptyWithCapacity, CommentThreads.empty, none, by simp⟩
+  /-- `comments` is keyed consistently with its own values: the comment stored at a ref really is
+  the comment with that ref. This is what lets `CommentManager.get` (which looks a `Comment` up by
+  `CommentRef` and reports its `.ref`) actually report back the ref it was looked up by. -/
+  hCommentsKeyedByRef : ∀ ref (h : comments.contains ref), (comments.get ref h).ref = ref
+
+def CommentManager.empty : CommentManager :=
+  ⟨Std.HashMap.emptyWithCapacity, CommentThreads.empty, none, by simp, by simp⟩
 
 def CommentManager.get (manager : CommentManager) (ref : CommentRef) : Comment :=
   manager.comments[ref]!
+
+/-- `CommentManager.get` actually reports back the ref it was looked up by, as long as that ref is
+covered (has an entry in `comments` at all) -- otherwise `[ref]!` would silently fall back to
+`default`. -/
+theorem CommentManager.get_ref_eq (manager : CommentManager) {ref : CommentRef}
+    (h : manager.comments.contains ref) : (manager.get ref).ref = ref := by
+  have hmem : ref ∈ manager.comments := Std.HashMap.mem_iff_contains.mpr h
+  show (manager.comments[ref]!).ref = ref
+  rw [← Std.HashMap.getElem_eq_getElem! (h' := hmem), ← Std.HashMap.get_eq_getElem (h := hmem)]
+  exact manager.hCommentsKeyedByRef ref h
 
 /-- A hash of a git revision -/
 structure GitRevision where

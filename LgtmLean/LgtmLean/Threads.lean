@@ -85,6 +85,168 @@ private theorem CommentThread.linearizeRecWithFuel.ne_nil_of_fuel_ne_zero (threa
   | zero => exact absurd rfl hFuel
   | succ n => simp [CommentThread.linearizeRecWithFuel]
 
+/-- More fuel only ever adds to the traversal, never removes from it: increasing `fuel` by one keeps
+every previously-emitted comment. -/
+private theorem CommentThread.linearizeRecWithFuel.subset_succ (threads : CommentThreads) (manager : CommentManager)
+    (fuel : Nat) (thread : CommentThread) :
+    CommentThread.linearizeRecWithFuel threads manager fuel thread ⊆
+      CommentThread.linearizeRecWithFuel threads manager (fuel + 1) thread := by
+  induction fuel generalizing thread with
+  | zero => exact List.nil_subset _
+  | succ n ih =>
+    intro x hx
+    unfold CommentThread.linearizeRecWithFuel at hx ⊢
+    rcases List.mem_cons.mp hx with rfl | hx
+    · exact List.mem_cons_self
+    · refine List.mem_cons_of_mem _ ?_
+      rw [List.mem_flatMap] at hx ⊢
+      obtain ⟨childRef, hcr, hxc⟩ := hx
+      refine ⟨childRef, hcr, ?_⟩
+      cases hlookup : threads.commentTreeNodes[childRef]? with
+      | none => rw [hlookup] at hxc; exact absurd hxc (by simp)
+      | some childThread => rw [hlookup] at hxc; exact ih childThread hxc
+
+/-- More fuel never removes anything, for any amount of extra fuel (not just one more). -/
+private theorem CommentThread.linearizeRecWithFuel.subset_of_le (threads : CommentThreads) (manager : CommentManager)
+    {fuel fuel' : Nat} (hle : fuel ≤ fuel') (thread : CommentThread) :
+    CommentThread.linearizeRecWithFuel threads manager fuel thread ⊆
+      CommentThread.linearizeRecWithFuel threads manager fuel' thread := by
+  induction fuel' with
+  | zero =>
+    have hfz : fuel = 0 := by omega
+    subst hfz
+    exact fun _ h => h
+  | succ n ih =>
+    by_cases heq : fuel = n + 1
+    · exact heq ▸ fun _ h => h
+    · exact fun x hx =>
+        CommentThread.linearizeRecWithFuel.subset_succ threads manager n thread (ih (by omega) hx)
+
+/-- If `childRef` is one of `parentThread`'s children, everything reachable from `childRef`'s own
+node is also reachable from `parentThread`, one level of fuel later: `linearizeRecWithFuel`
+recurses into every child via `flatMap`, so `childRef`'s own recursive call is literally one of the
+pieces being unioned together. -/
+private theorem CommentThread.linearizeRecWithFuel.subset_of_mem_children (threads : CommentThreads)
+    (manager : CommentManager) (parentThread : CommentThread) (childRef : CommentRef)
+    (hChildMem : childRef ∈ parentThread.children) (hChildContains : threads.commentTreeNodes.contains childRef)
+    (fuel : Nat) :
+    CommentThread.linearizeRecWithFuel threads manager fuel (threads.commentTreeNodes.get childRef hChildContains) ⊆
+      CommentThread.linearizeRecWithFuel threads manager (fuel + 1) parentThread := by
+  intro x hx
+  show x ∈ CommentThread.linearizeRecWithFuel threads manager (fuel + 1) parentThread
+  unfold CommentThread.linearizeRecWithFuel
+  refine List.mem_cons_of_mem _ (List.mem_flatMap.mpr ⟨childRef, ?_, ?_⟩)
+  · exact List.mem_mergeSort.mpr hChildMem
+  · rw [Std.HashMap.getElem?_eq_some_getElem hChildContains]
+    exact hx
+
+/-- A concrete walk from `root` to `endpoint` through `nodes`, following `.children` links,
+recorded as the list of nodes visited (built by appending one node at a time). Unlike
+`CommentThreads.NodeReachable`, a `PathTo` carries its own witness list, which lets us bound its
+length and connect it to `CommentThread.linearizeRecWithFuel`'s fuel. -/
+private inductive CommentThreads.PathTo (nodes : Std.HashMap CommentRef CommentThread) (root : CommentRef) :
+    CommentRef → List CommentRef → Prop
+  | refl : CommentThreads.PathTo nodes root root [root]
+  | step {parent child : CommentRef} {path : List CommentRef} (h : CommentThreads.PathTo nodes root parent path)
+      (hparent : nodes.contains parent) (hchild : child ∈ (nodes.get parent hparent).children) :
+      CommentThreads.PathTo nodes root child (path ++ [child])
+
+/-- If `x` occurs anywhere along a walk, there is a (no-longer-than) walk to `x` too: either the
+walk to the immediately preceding node (a `step`'s hypothesis) already reaches `x`, or `x` is the
+last node just reached by the outer walk itself. Either way, the walk found is a `Nodup` sublist of
+the original (in fact, a prefix), so it stays `Nodup` given the original is. -/
+private theorem CommentThreads.PathTo.exists_nodup_of_mem {nodes : Std.HashMap CommentRef CommentThread}
+    {root endpoint : CommentRef} {path : List CommentRef} (h : CommentThreads.PathTo nodes root endpoint path)
+    (hNodup : path.Nodup) (x : CommentRef) (hx : x ∈ path) :
+    ∃ path', CommentThreads.PathTo nodes root x path' ∧ path'.Nodup := by
+  induction h with
+  | refl =>
+    obtain rfl := List.mem_singleton.mp hx
+    exact ⟨[x], .refl, by simp⟩
+  | step h hparent hchild ih =>
+    rw [List.mem_append, List.mem_singleton] at hx
+    rcases hx with hx | rfl
+    · exact ih (List.nodup_append.mp hNodup).1 hx
+    · exact ⟨_, .step h hparent hchild, hNodup⟩
+
+/-- `CommentThreads.NodeReachable`'s existential, possibly-repeating witness can always be turned
+into a genuine (`Nodup`) walk: extend the walk one node at a time, and whenever the new node has
+already been visited, jump back to that earlier occurrence instead of revisiting it. -/
+private theorem CommentThreads.NodeReachable.exists_nodup_pathTo {nodes : Std.HashMap CommentRef CommentThread}
+    {root target : CommentRef} (h : CommentThreads.NodeReachable nodes root target) :
+    ∃ path, CommentThreads.PathTo nodes root target path ∧ path.Nodup := by
+  induction h with
+  | refl => exact ⟨[root], .refl, by simp⟩
+  | step h hparent hchild ih =>
+    obtain ⟨path, hpath, hnodup⟩ := ih
+    rename_i parent child
+    by_cases hmem : child ∈ path
+    · exact hpath.exists_nodup_of_mem hnodup child hmem
+    · refine ⟨path ++ [child], hpath.step hparent hchild,
+        List.nodup_append.mpr ⟨hnodup, by simp, ?_⟩⟩
+      intro a ha b hb heq
+      subst heq
+      rw [List.mem_singleton] at hb
+      subst hb
+      exact hmem ha
+
+/-- Every node along a walk is registered, provided its own root is and every registered node's
+children are (`CommentThreads.hChildrenAreRegistered`). -/
+private theorem CommentThreads.PathTo.mem_registered {nodes : Std.HashMap CommentRef CommentThread}
+    (hChildrenRegistered : ∀ ref (h : nodes.contains ref) (child : CommentRef),
+      child ∈ (nodes.get ref h).children → nodes.contains child)
+    {root endpoint : CommentRef} {path : List CommentRef} (h : CommentThreads.PathTo nodes root endpoint path)
+    (hRootContains : nodes.contains root) :
+    ∀ x ∈ path, nodes.contains x := by
+  induction h with
+  | refl => simpa using hRootContains
+  | step h hparent hchild ih =>
+    intro x hx
+    rw [List.mem_append, List.mem_singleton] at hx
+    rcases hx with hx | rfl
+    · exact ih x hx
+    · exact hChildrenRegistered _ hparent x hchild
+
+/-- A `Nodup` walk can never be longer than the number of registered nodes: its elements are a
+`Nodup` subset of `nodes.keys`. -/
+private theorem CommentThreads.PathTo.length_le_size {nodes : Std.HashMap CommentRef CommentThread}
+    (hChildrenRegistered : ∀ ref (h : nodes.contains ref) (child : CommentRef),
+      child ∈ (nodes.get ref h).children → nodes.contains child)
+    {root endpoint : CommentRef} {path : List CommentRef} (h : CommentThreads.PathTo nodes root endpoint path)
+    (hNodup : path.Nodup) (hRootContains : nodes.contains root) :
+    path.length ≤ nodes.size := by
+  rw [← Std.HashMap.length_keys]
+  refine List.Nodup.length_le_of_subset hNodup (fun x hx => ?_)
+  exact Std.HashMap.mem_keys.mpr (Std.HashMap.contains_iff_mem.mp (h.mem_registered hChildrenRegistered hRootContains x hx))
+
+/-- The whole point of tracking a walk explicitly: `endpoint`'s own recursive call, at any fuel
+`k+1`, is contained in `root`'s recursive call at `path.length + k` fuel. Proved by induction on the
+walk, chaining `CommentThread.linearizeRecWithFuel.subset_of_mem_children` (one more link in the
+walk costs one more level of fuel) with the induction hypothesis (the rest of the walk already fits
+in `path.length - 1` extra fuel). -/
+private theorem CommentThreads.PathTo.linearize_subset {threads : CommentThreads} (manager : CommentManager)
+    (hChildrenRegistered : ∀ ref (h : threads.commentTreeNodes.contains ref) (child : CommentRef),
+      child ∈ (threads.commentTreeNodes.get ref h).children → threads.commentTreeNodes.contains child)
+    {root endpoint : CommentRef} {path : List CommentRef}
+    (h : CommentThreads.PathTo threads.commentTreeNodes root endpoint path)
+    (h₀ : threads.commentTreeNodes.contains root) :
+    ∃ he : threads.commentTreeNodes.contains endpoint, ∀ k : Nat,
+      CommentThread.linearizeRecWithFuel threads manager (k + 1) (threads.commentTreeNodes.get endpoint he) ⊆
+        CommentThread.linearizeRecWithFuel threads manager (path.length + k) (threads.commentTreeNodes.get root h₀) := by
+  induction h with
+  | refl => exact ⟨h₀, fun k x hx => by simpa [Nat.add_comm] using hx⟩
+  | step h hparent hchild ih =>
+    obtain ⟨heParent, ihsub⟩ := ih
+    rename_i parent child path'
+    have heChild := hChildrenRegistered parent hparent child hchild
+    refine ⟨heChild, fun k => ?_⟩
+    have hstep := CommentThread.linearizeRecWithFuel.subset_of_mem_children threads manager
+      (threads.commentTreeNodes.get parent hparent) child hchild heChild (k + 1)
+    have hchain := ihsub (k + 1)
+    simp only [List.length_append, List.length_singleton]
+    intro x hx
+    exact (by omega : path'.length + (k + 1) = path'.length + 1 + k) ▸ hchain (hstep hx)
+
 /-- The linearization of any thread is nonempty as soon as `threads.commentTreeNodes` is: the
 recursion always emits the thread's own node before its fuel (`threads.commentTreeNodes.size`) can
 run out. -/
@@ -92,6 +254,18 @@ private theorem CommentThread.linearize.ne_nil_of_commentTreeNodes_size_ne_zero 
     (threads : CommentThreads) (manager : CommentManager) (hSize : threads.commentTreeNodes.size ≠ 0) :
     thread.linearize threads manager ≠ [] :=
   CommentThread.linearizeRecWithFuel.ne_nil_of_fuel_ne_zero threads manager hSize thread
+
+/-- At fuel 1, a node's own recursive call emits nothing but itself (no fuel remains to descend
+into any child), and reports back its own ref (given coverage, so `manager.get` doesn't fall back
+to `default`). -/
+private theorem CommentThread.mem_linearizeRecWithFuel_one (threads : CommentThreads) (manager : CommentManager)
+    (hCoverage : ∀ ref, threads.commentTreeNodes.contains ref → manager.comments.contains ref)
+    (ref : CommentRef) (h : threads.commentTreeNodes.contains ref) :
+    ref ∈ (CommentThread.linearizeRecWithFuel threads manager 1 (threads.commentTreeNodes.get ref h)).map (·.ref) := by
+  have hval : (threads.commentTreeNodes.get ref h).value = ref := threads.hCommentTreeNodeRootMatchesKey ref h
+  have hgetref : (manager.get (threads.commentTreeNodes.get ref h).value).ref = ref := by
+    rw [hval]; exact manager.get_ref_eq (hCoverage ref h)
+  simp [CommentThread.linearizeRecWithFuel, hgetref]
 
 /-- A well-formed selection's linearized comment-ref list is always nonempty, which is exactly what
 totality of the indexing in `nextCommentInThread` / `previousCommentInThread` needs. -/
@@ -101,6 +275,47 @@ private theorem SelectedComment.WellFormed.linearizedCommentRefs_ne_nil {threads
   rw [ne_eq, List.map_eq_nil_iff]
   exact CommentThread.linearize.ne_nil_of_commentTreeNodes_size_ne_zero sel.thread threads manager
     hWF.commentTreeNodes_size_ne_zero
+
+/-- The comment a well-formed selection names is genuinely present in its thread's linearization --
+not just that the linearization is nonempty, but that this specific comment is the one found. This
+needs `hCoverage`: every registered thread node must have actual comment content available in
+`manager`, which is not implied by `SelectedComment.WellFormed` alone (it says nothing about
+`manager`), so it is required separately here. -/
+theorem SelectedComment.WellFormed.comment_mem_linearizedCommentRefs {threads : CommentThreads}
+    {sel : SelectedComment} (manager : CommentManager)
+    (hCoverage : ∀ ref, threads.commentTreeNodes.contains ref → manager.comments.contains ref)
+    (hWF : SelectedComment.WellFormed threads sel) :
+    sel.comment ∈ (sel.thread.linearize threads manager).map (·.ref) := by
+  obtain ⟨h, heq, hreach⟩ := hWF
+  obtain ⟨path, hpath, hnodup⟩ := hreach.exists_nodup_pathTo
+  obtain ⟨he, hsub⟩ := hpath.linearize_subset manager threads.hChildrenAreRegistered h
+  have hlen : path.length ≤ threads.commentTreeNodes.size :=
+    hpath.length_le_size threads.hChildrenAreRegistered hnodup h
+  obtain ⟨c, hc, hcref⟩ := List.mem_map.mp (CommentThread.mem_linearizeRecWithFuel_one threads manager hCoverage
+    sel.comment he)
+  have hc' : c ∈ CommentThread.linearizeRecWithFuel threads manager (path.length + 0)
+      (threads.commentTreeNodes.get sel.thread.value h) := hsub 0 hc
+  have hc'' : c ∈ CommentThread.linearizeRecWithFuel threads manager threads.commentTreeNodes.size
+      (threads.commentTreeNodes.get sel.thread.value h) :=
+    CommentThread.linearizeRecWithFuel.subset_of_le threads manager hlen _ (by simpa using hc')
+  rw [heq] at hc''
+  unfold CommentThread.linearize
+  exact List.mem_map.mpr ⟨c, hc'', hcref⟩
+
+/-- The index `nextCommentInThread` / `previousCommentInThread` compute via `idxOf` genuinely finds
+`sel.comment` -- it is not the "not found" sentinel, and the entry it points at really is
+`sel.comment`, not some coincidentally-earlier match. This is the "and the one that is selected"
+half of `SelectedComment.WellFormed`; totality alone (`linearizedCommentRefs_ne_nil`) doesn't need
+it, but genuine correctness of the selection does. -/
+theorem SelectedComment.WellFormed.currentlySelectedIndex_eq {threads : CommentThreads} {sel : SelectedComment}
+    (manager : CommentManager) (hCoverage : ∀ ref, threads.commentTreeNodes.contains ref → manager.comments.contains ref)
+    (hWF : SelectedComment.WellFormed threads sel) :
+    ∃ h : ((sel.thread.linearize threads manager).map (·.ref)).idxOf sel.comment <
+        ((sel.thread.linearize threads manager).map (·.ref)).length,
+      ((sel.thread.linearize threads manager).map (·.ref))[
+        ((sel.thread.linearize threads manager).map (·.ref)).idxOf sel.comment] = sel.comment := by
+  have hlt := List.idxOf_lt_length_of_mem (hWF.comment_mem_linearizedCommentRefs manager hCoverage)
+  exact ⟨hlt, List.getElem_idxOf hlt⟩
 
 /-- Given a selection, select the next comment in the linear order.
 
@@ -196,14 +411,16 @@ theorem CommentThreads.previousCommentInThread.selectPreviousIfNotFirstCommentSe
 theorem CommentThreads.previousCommentInThread.saturateIfFirstCommentSelected
     (threads : CommentThreads) (manager : CommentManager) (selection : SelectedComment)
     (hWF : SelectedComment.WellFormed threads selection)
+    (hCoverage : ∀ ref, threads.commentTreeNodes.contains ref → manager.comments.contains ref)
     (refs : List CommentRef) (idx : Nat)
     (hRefs : refs = (selection.thread.linearize threads manager).map (·.ref))
     (hIdx : refs.idxOf selection.comment = idx)
-    (hMem : selection.comment ∈ refs)
     (hFirst : idx = 0) :
     threads.previousCommentInThread manager selection hWF = selection := by
   subst hIdx
   unfold CommentThreads.previousCommentInThread
+  have hMem : selection.comment ∈ refs := by
+    rw [hRefs]; exact hWF.comment_mem_linearizedCommentRefs manager hCoverage
   have hIdxLt : refs.idxOf selection.comment < refs.length := List.idxOf_lt_length_of_mem hMem
   have hGetElem : refs[refs.idxOf selection.comment] = selection.comment := List.getElem_idxOf hIdxLt
   have hNextIdxEq : max 0 (refs.idxOf selection.comment - 1) = refs.idxOf selection.comment := by omega

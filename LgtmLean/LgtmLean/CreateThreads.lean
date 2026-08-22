@@ -287,6 +287,27 @@ private theorem registerServerCommentIds_rootMatchesKey
       exact beq_iff_eq.mp h
     · exact hInv ref val hget
 
+/-- Every node `registerServerCommentIds` inserts starts out childless (`⟨comment.ref, []⟩`), and it
+never modifies an existing entry, so every live node still has no children once it's done. This is
+half of what's needed to know that `linkReplies` (which is the only step that ever adds children) is
+the sole source of any child ref, and so every child ref is itself a registered comment. -/
+private theorem registerServerCommentIds_children_empty
+    (comments : List Comment) (hAll : allCommentsHaveBackendId comments)
+    (s₀ : CommentTreeBootstrapState)
+    (hInv : ∀ (ref : CommentRef) (val : CommentThread), s₀.commentTreeNodes[ref]? = some val → val.children = []) :
+    ∀ (ref : CommentRef) (val : CommentThread),
+      (registerServerCommentIds comments hAll s₀).commentTreeNodes[ref]? = some val → val.children = [] := by
+  induction comments generalizing s₀ with
+  | nil => simpa [registerServerCommentIds] using hInv
+  | cons head tail ih =>
+    rw [registerServerCommentIds_cons]
+    apply ih
+    intro ref val hget
+    rw [Std.HashMap.getElem?_insert] at hget
+    split at hget
+    · rw [← Option.some.inj hget]
+    · exact hInv ref val hget
+
 /-- Attach every reply comment to its parent's tree node, and collect the root comments into
 `locationRoots`. -/
 private def linkReplies (serverCommentIds : Std.HashMap ServerId CommentRef) :
@@ -524,6 +545,46 @@ private theorem linkReplies_children_mem_of_parent (serverCommentIds : Std.HashM
         rw [linkReplies_cons_some serverCommentIds head rest parentId' h2 hParentsHaveNode s hInv hContains']
         exact linkReplies_children_mem_of_parent serverCommentIds rest _ _ _ comment hc' parentId hparent hContains
 
+/-- If every child ref appearing in `s`'s nodes is itself a registered comment ref, that property
+survives `linkReplies`: the only new child `linkReplies` ever inserts (via `Tree.addChild`) is
+`comment.ref` for the `comment` being processed, which `hCommentsRegistered` shows is already
+registered in `s`, and `s`'s existing keys are never removed. -/
+private theorem linkReplies_children_subset (serverCommentIds : Std.HashMap ServerId CommentRef) :
+    (comments : List Comment) →
+    (hParentsHaveNode : ∀ c, c ∈ comments → ∀ parentId, c.parent = some parentId → parentId ∈ serverCommentIds) →
+    (s : CommentTreeBootstrapState) →
+    (hInv : ∀ sid (h : sid ∈ serverCommentIds), serverCommentIds.get sid h ∈ s.commentTreeNodes) →
+    (hCommentsRegistered : ∀ c, c ∈ comments → c.ref ∈ s.commentTreeNodes) →
+    (hSChildrenSubset : ∀ (ref : CommentRef) (node : CommentThread), s.commentTreeNodes[ref]? = some node →
+      ∀ child, child ∈ node.children → child ∈ s.commentTreeNodes) →
+    ∀ (ref : CommentRef) (node : CommentThread),
+      (linkReplies serverCommentIds comments hParentsHaveNode s hInv).commentTreeNodes[ref]? = some node →
+      ∀ child, child ∈ node.children → child ∈ (linkReplies serverCommentIds comments hParentsHaveNode s hInv).commentTreeNodes
+  | [], _, s, _, _, hSChildrenSubset => by rw [linkReplies_nil]; exact hSChildrenSubset
+  | comment :: rest, hParentsHaveNode, s, hInv, hCommentsRegistered, hSChildrenSubset => by
+    rcases h2 : comment.parent with _ | parentId
+    · rw [linkReplies_cons_none serverCommentIds comment rest h2 hParentsHaveNode s hInv]
+      apply linkReplies_children_subset
+      · exact fun c hc => hCommentsRegistered c (List.mem_cons_of_mem comment hc)
+      · exact hSChildrenSubset
+    · have hContains : parentId ∈ serverCommentIds := hParentsHaveNode comment List.mem_cons_self parentId h2
+      rw [linkReplies_cons_some serverCommentIds comment rest parentId h2 hParentsHaveNode s hInv hContains]
+      apply linkReplies_children_subset
+      · exact fun c hc => Std.HashMap.mem_insert.mpr (Or.inr (hCommentsRegistered c (List.mem_cons_of_mem comment hc)))
+      · intro ref node hget child hchild
+        rw [Std.HashMap.getElem?_insert] at hget
+        split at hget
+        · next hkeq =>
+          have hnode : node = Tree.addChild (s.commentTreeNodes.get (serverCommentIds.get parentId hContains)
+              (hInv parentId hContains)) comment.ref := (Option.some.inj hget).symm
+          rw [hnode] at hchild
+          rcases List.mem_cons.mp hchild with rfl | hchild
+          · exact Std.HashMap.mem_insert.mpr (Or.inr (hCommentsRegistered comment List.mem_cons_self))
+          · exact Std.HashMap.mem_insert.mpr (Or.inr
+              (hSChildrenSubset _ _ (Std.HashMap.getElem?_eq_some_getElem (hInv parentId hContains)) child hchild))
+        · next hkne =>
+          exact Std.HashMap.mem_insert.mpr (Or.inr (hSChildrenSubset ref node hget child hchild))
+
 /-- `linkReplies` never adds or removes `commentTreeNodes` keys: it only ever updates the value at
 an already-live key (the resolved parent), via `hInv`. -/
 private theorem linkReplies_commentTreeNodes_contains_iff (serverCommentIds : Std.HashMap ServerId CommentRef) :
@@ -690,6 +751,33 @@ private theorem bootstrapCommentTrees_commentTreeNodes_contains_iff
   unfold bootstrapCommentTrees
   rw [linkReplies_commentTreeNodes_contains_iff, registerServerCommentIds_commentTreeNodes_contains_iff]
   simp [emptyBootstrapState]
+
+/-- Every child ref appearing in any live node is itself a registered comment ref: the only source
+of children is `linkReplies` attaching `comment.ref` for comments already registered by
+`registerServerCommentIds` (`linkReplies_children_subset`), starting from the fact that freshly
+registered nodes have no children yet (`registerServerCommentIds_children_empty`). -/
+private theorem bootstrapCommentTrees_children_registered
+    (comments : List Comment) (hCommentsHaveBackendIds : allCommentsHaveBackendId comments)
+    (hParentsInComments : allParentsInComments comments) (ref : CommentRef) (node : CommentThread)
+    (hget : (bootstrapCommentTrees comments hCommentsHaveBackendIds hParentsInComments
+        emptyBootstrapState (fun _sid h => absurd h Std.HashMap.not_mem_emptyWithCapacity)).commentTreeNodes[ref]? =
+      some node)
+    (child : CommentRef) (hchild : child ∈ node.children) :
+    (bootstrapCommentTrees comments hCommentsHaveBackendIds hParentsInComments
+        emptyBootstrapState (fun _sid h => absurd h Std.HashMap.not_mem_emptyWithCapacity)).commentTreeNodes.contains
+        child := by
+  unfold bootstrapCommentTrees at hget ⊢
+  apply Std.HashMap.mem_iff_contains.mp
+  refine linkReplies_children_subset _ comments _ _ _ ?_ ?_ ref node hget child hchild
+  · intro c hc
+    exact Std.HashMap.mem_iff_contains.mpr
+      ((registerServerCommentIds_commentTreeNodes_contains_iff comments hCommentsHaveBackendIds
+        emptyBootstrapState c.ref).mpr (Or.inl ⟨c, hc, rfl⟩))
+  · intro ref' node' hget' child' hchild'
+    have hempty := registerServerCommentIds_children_empty comments hCommentsHaveBackendIds emptyBootstrapState
+      (fun ref'' val'' hget'' => by simp [emptyBootstrapState] at hget'') ref' node' hget'
+    rw [hempty] at hchild'
+    exact absurd hchild' List.not_mem_nil
 
 private theorem bootstrapCommentTrees_rootMatchesKey
     (comments : List Comment) (hCommentsHaveBackendIds : allCommentsHaveBackendId comments)
@@ -886,5 +974,9 @@ def assembleCommentTrees (comments : List Comment)
         (finalState.commentTreeNodes.get ref h)
         (Std.HashMap.getElem?_eq_some_getElem (Std.HashMap.mem_iff_contains.mpr h)),
     hLocationRootsNodup :=
-      bootstrapCommentTrees_locationRootsNodup comments hCommentsHaveBackendIds hParentsInComments hRefsNodup
+      bootstrapCommentTrees_locationRootsNodup comments hCommentsHaveBackendIds hParentsInComments hRefsNodup,
+    hChildrenAreRegistered := fun ref h child hchild =>
+      bootstrapCommentTrees_children_registered comments hCommentsHaveBackendIds hParentsInComments ref
+        (finalState.commentTreeNodes.get ref h)
+        (Std.HashMap.getElem?_eq_some_getElem (Std.HashMap.mem_iff_contains.mpr h)) child hchild
     }
