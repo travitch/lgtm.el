@@ -4,5 +4,7 @@ module
 
 import LgtmLean.Basic
 import LgtmLean.CreateThreads
+import LgtmLean.Files
+import LgtmLean.Repository
 import LgtmLean.Threads
 import LgtmLean.Tree

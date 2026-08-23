@@ -980,3 +980,5 @@ def assembleCommentTrees (comments : List Comment)
         (finalState.commentTreeNodes.get ref h)
         (Std.HashMap.getElem?_eq_some_getElem (Std.HashMap.mem_iff_contains.mpr h)) child hchild
     }
+
+def addCommentToThread (commentThreads : CommentThreads) (comment : Comment) : Unit := sorry
