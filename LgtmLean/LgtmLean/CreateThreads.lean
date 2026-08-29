@@ -981,4 +981,411 @@ def assembleCommentTrees (comments : List Comment)
         (Std.HashMap.getElem?_eq_some_getElem (Std.HashMap.mem_iff_contains.mpr h)) child hchild
     }
 
-def addCommentToThread (commentThreads : CommentThreads) (comment : Comment) : Unit := sorry
+private theorem isSome_insertSingletonOrAppend (value : α) (current : Option (List α)) :
+    (insertSingletonOrAppend value current).isSome = true := by
+  cases current <;> simp [insertSingletonOrAppend]
+
+private theorem ThreadLocation.isTopLevel_eq_true_iff {l : ThreadLocation} :
+    l.isTopLevel = true ↔ l = .topLevel := by
+  cases l <;> simp [ThreadLocation.isTopLevel]
+
+/-- Inserting a new ref at `loc` (via `alter`/`insertSingletonOrAppend`) preserves
+`CommentThreads.hLocationsConsistent`, provided `loc`'s top-level-ness matches whatever's already
+in `locationRoots` (`hScope`). Used by `addCommentToThread`'s `none`-parent branch, where `loc` may
+be a brand-new key. -/
+private theorem hLocationsConsistent_alter
+    (locationRoots : Std.HashMap ThreadLocation (List CommentRef))
+    (loc : ThreadLocation) (ref : CommentRef)
+    (hConsistent : (∀ l, l ∈ locationRoots.keys → l.isTopLevel = true ∧ locationRoots.size = 1) ∨
+                   (∀ l, l ∈ locationRoots.keys → ¬ l.isTopLevel = true))
+    (hScope : ∀ l, l ∈ locationRoots.keys → l.isTopLevel = loc.isTopLevel) :
+    (∀ l, l ∈ (locationRoots.alter loc (insertSingletonOrAppend ref)).keys →
+        l.isTopLevel = true ∧ (locationRoots.alter loc (insertSingletonOrAppend ref)).size = 1) ∨
+    (∀ l, l ∈ (locationRoots.alter loc (insertSingletonOrAppend ref)).keys → ¬ l.isTopLevel = true) := by
+  by_cases hTop : loc.isTopLevel = true
+  · left
+    have hEqLoc : ∀ l, l ∈ locationRoots.keys → l = loc := by
+      intro l hl
+      have h1 : l.isTopLevel = true := (hScope l hl).trans hTop
+      rw [ThreadLocation.isTopLevel_eq_true_iff] at h1
+      rw [ThreadLocation.isTopLevel_eq_true_iff] at hTop
+      rw [h1, hTop]
+    have hSize : (locationRoots.alter loc (insertSingletonOrAppend ref)).size = 1 := by
+      by_cases hmem : loc ∈ locationRoots
+      · have hmemKeys : loc ∈ locationRoots.keys := Std.HashMap.mem_keys.mpr hmem
+        rw [Std.HashMap.size_alter_eq_self_of_mem hmem (isSome_insertSingletonOrAppend _ _)]
+        rcases hConsistent with hc | hc
+        · exact (hc loc hmemKeys).2
+        · exact absurd (hc loc hmemKeys) (by simp [hTop])
+      · rw [Std.HashMap.size_alter_eq_add_one hmem (isSome_insertSingletonOrAppend _ _)]
+        have hnotmem : ∀ a, ¬ a ∈ locationRoots := fun a ha =>
+          hmem (hEqLoc a (Std.HashMap.mem_keys.mpr ha) ▸ ha)
+        have hempty : locationRoots.isEmpty = true := Std.HashMap.isEmpty_iff_forall_not_mem.mpr hnotmem
+        rw [Std.HashMap.isEmpty_eq_size_eq_zero] at hempty
+        have hzero : locationRoots.size = 0 := beq_iff_eq.mp hempty
+        omega
+    intro l hl
+    rw [Std.HashMap.mem_keys, Std.HashMap.mem_alter] at hl
+    refine ⟨?_, hSize⟩
+    by_cases hbeq : loc == l
+    · have heq : l = loc := (beq_iff_eq.mp hbeq).symm
+      rw [heq]; exact hTop
+    · simp only [hbeq] at hl
+      exact (hScope l (Std.HashMap.mem_keys.mpr hl)).trans hTop
+  · right
+    intro l hl
+    rw [Std.HashMap.mem_keys, Std.HashMap.mem_alter] at hl
+    by_cases hbeq : loc == l
+    · have heq : l = loc := (beq_iff_eq.mp hbeq).symm
+      rw [heq]; exact hTop
+    · simp only [hbeq] at hl
+      rw [hScope l (Std.HashMap.mem_keys.mpr hl)]
+      exact hTop
+
+private theorem mem_getD_iff_exists_mem_toList
+    (m : Std.HashMap ThreadLocation (List CommentRef)) (k : ThreadLocation) (ref : CommentRef) :
+    ref ∈ m.getD k [] ↔ ∃ v, (k, v) ∈ m.toList ∧ ref ∈ v := by
+  constructor
+  · intro h
+    rw [Std.HashMap.getD_eq_getD_getElem?] at h
+    rcases hk : m[k]? with _ | v
+    · rw [hk] at h; simp at h
+    · rw [hk] at h
+      simp only [Option.getD_some] at h
+      exact ⟨v, Std.HashMap.mem_toList_iff_getElem?_eq_some.mpr hk, h⟩
+  · rintro ⟨v, hv, href⟩
+    have hk : m[k]? = some v := Std.HashMap.mem_toList_iff_getElem?_eq_some.mp hv
+    rw [Std.HashMap.getD_eq_getD_getElem?, hk]
+    simp [href]
+
+/-- Inserting a new ref at `loc` (via `alter`/`insertSingletonOrAppend`) preserves
+`CommentThreads.hHasNodeForComment`, as long as the tree-node map only grows (`hMono`) and the new
+ref is already registered in the new tree-node map (`hRefRegistered`). Used by
+`addCommentToThread`'s `none`-parent branch. -/
+private theorem hHasNodeForComment_alter
+    (locationRoots : Std.HashMap ThreadLocation (List CommentRef))
+    (oldTreeNodes newTreeNodes : Std.HashMap CommentRef CommentThread)
+    (loc : ThreadLocation) (ref : CommentRef)
+    (hHasNode : ∀ loc' threadRoots', (loc', threadRoots') ∈ locationRoots.toList →
+      ∀ ref', ref' ∈ threadRoots' → oldTreeNodes.contains ref')
+    (hMono : ∀ x, oldTreeNodes.contains x → newTreeNodes.contains x)
+    (hRefRegistered : newTreeNodes.contains ref) :
+    ∀ loc' threadRoots', (loc', threadRoots') ∈ (locationRoots.alter loc (insertSingletonOrAppend ref)).toList →
+      ∀ ref', ref' ∈ threadRoots' → newTreeNodes.contains ref' := by
+  intro loc' threadRoots' hpair ref' href'
+  have hg : (locationRoots.alter loc (insertSingletonOrAppend ref)).getD loc' [] = threadRoots' := by
+    rw [Std.HashMap.getD_eq_getD_getElem?, Std.HashMap.mem_toList_iff_getElem?_eq_some.mp hpair]
+    simp
+  have href'' : ref' ∈ (locationRoots.alter loc (insertSingletonOrAppend ref)).getD loc' [] := hg ▸ href'
+  rw [mem_getD_alter_insertSingletonOrAppend] at href''
+  rcases href'' with ⟨_, heq⟩ | hold
+  · rw [heq]; exact hRefRegistered
+  · obtain ⟨v, hv, hmemv⟩ := (mem_getD_iff_exists_mem_toList locationRoots loc' ref').mp hold
+    exact hMono ref' (hHasNode loc' v hv ref' hmemv)
+
+private theorem contains_mono_insert {α β} [BEq α] [Hashable α] [EquivBEq α] [LawfulHashable α]
+    (m : Std.HashMap α β) (k : α) (v : β) :
+    ∀ x, m.contains x = true → (m.insert k v).contains x = true := by
+  intro x hx
+  rw [Std.HashMap.contains_insert, hx, Bool.or_true]
+
+/-- Inserting a key/value pair whose value's `.value` field matches the key preserves
+`CommentThreads.hCommentTreeNodeRootMatchesKey`. -/
+private theorem hCommentTreeNodeRootMatchesKey_insert
+    (m : Std.HashMap CommentRef CommentThread) (k : CommentRef) (v : CommentThread)
+    (hv : v.value = k)
+    (hOld : ∀ ref (h : m.contains ref), (m.get ref h).value = ref) :
+    ∀ ref (h : (m.insert k v).contains ref), ((m.insert k v).get ref h).value = ref := by
+  intro ref h
+  have hmem : ref ∈ m.insert k v := h
+  show ((m.insert k v).get ref hmem).value = ref
+  rw [Std.HashMap.get_eq_getElem, Std.HashMap.getElem_insert]
+  split
+  · next hbeq => rw [beq_iff_eq] at hbeq; rw [← hbeq]; exact hv
+  · next hbeq =>
+    have hcontains : m.contains ref := Std.HashMap.contains_of_contains_insert h (by simpa using hbeq)
+    exact hOld ref hcontains
+
+/-- Inserting a new ref at `loc` (via `alter`/`insertSingletonOrAppend`) preserves
+`CommentThreads.hLocationRootsNodup`, as long as the ref is not already registered anywhere in
+`commentTreeNodes` (`hRefFresh`) -- combined with `hHasNode`, that rules out the ref already
+appearing among the existing thread roots. -/
+private theorem hLocationRootsNodup_alter
+    (locationRoots : Std.HashMap ThreadLocation (List CommentRef))
+    (commentTreeNodes : Std.HashMap CommentRef CommentThread)
+    (loc : ThreadLocation) (ref : CommentRef)
+    (hHasNode : ∀ loc' threadRoots', (loc', threadRoots') ∈ locationRoots.toList →
+      ∀ ref', ref' ∈ threadRoots' → commentTreeNodes.contains ref')
+    (hRefFresh : ref ∉ commentTreeNodes)
+    (hOldNodup : (locationRoots.toList.flatMap Prod.snd).Nodup) :
+    ((locationRoots.alter loc (insertSingletonOrAppend ref)).toList.flatMap Prod.snd).Nodup := by
+  have hperm := flatMap_snd_toList_alter_insertSingletonOrAppend_perm locationRoots loc ref
+  rw [hperm.nodup_iff, List.nodup_cons]
+  refine ⟨?_, hOldNodup⟩
+  intro hmem
+  rw [List.mem_flatMap] at hmem
+  obtain ⟨⟨loc', threadRoots'⟩, hpair, href⟩ := hmem
+  exact hRefFresh (Std.HashMap.mem_iff_contains.mpr (hHasNode loc' threadRoots' hpair ref href))
+
+/-- Inserting a key/value pair whose children are all registered in the resulting map preserves
+`CommentThreads.hChildrenAreRegistered`. -/
+private theorem hChildrenAreRegistered_insert
+    (m : Std.HashMap CommentRef CommentThread) (k : CommentRef) (v : CommentThread)
+    (hvChildren : ∀ child, child ∈ v.children → (m.insert k v).contains child)
+    (hOld : ∀ ref (h : m.contains ref) child, child ∈ (m.get ref h).children → m.contains child) :
+    ∀ ref (h : (m.insert k v).contains ref) child, child ∈ ((m.insert k v).get ref h).children →
+      (m.insert k v).contains child := by
+  intro ref h child hchild
+  have hmem : ref ∈ m.insert k v := h
+  have hchild' : child ∈ ((m.insert k v)[ref]'hmem).children := hchild
+  rw [Std.HashMap.getElem_insert] at hchild'
+  split at hchild'
+  · next hbeq => exact hvChildren child hchild'
+  · next hbeq =>
+    have hcontains : m.contains ref := Std.HashMap.contains_of_contains_insert h (by simpa using hbeq)
+    have hres := hOld ref hcontains child hchild'
+    rw [Std.HashMap.contains_insert, hres, Bool.or_true]
+
+/-- `NodeReachable` is monotone under any change to the tree-node map that only grows each
+registered node's `children` list (and keeps every previously-registered node registered). Used to
+transport reachability proofs from `commentThreads` across `addCommentToThread`'s tree-node
+updates. -/
+private theorem NodeReachable_mono
+    {oldNodes newNodes : Std.HashMap CommentRef CommentThread}
+    (hMono : ∀ ref (h : oldNodes.contains ref), ∃ h' : newNodes.contains ref,
+        (oldNodes.get ref h).children ⊆ (newNodes.get ref h').children)
+    {root ref : CommentRef} (hReach : CommentThreads.NodeReachable oldNodes root ref) :
+    CommentThreads.NodeReachable newNodes root ref := by
+  induction hReach with
+  | refl => exact CommentThreads.NodeReachable.refl root
+  | step h hparent hchild ih =>
+    obtain ⟨hparent', hsub⟩ := hMono _ hparent
+    exact CommentThreads.NodeReachable.step ih hparent' (hsub hchild)
+
+/-- Inserting at a key different from `ref` leaves `ref`'s stored node (hence its children)
+completely unchanged. -/
+private theorem children_subset_insert_of_ne
+    (m : Std.HashMap CommentRef CommentThread) (k ref : CommentRef) (v : CommentThread)
+    (h : m.contains ref) (hne : ¬ k = ref) :
+    ∃ h' : (m.insert k v).contains ref, (m.get ref h).children ⊆ ((m.insert k v).get ref h').children := by
+  have hmem : ref ∈ m.insert k v := by
+    rw [Std.HashMap.mem_insert]; right; exact Std.HashMap.mem_iff_contains.mpr h
+  refine ⟨hmem, ?_⟩
+  have heq : ((m.insert k v).get ref hmem) = m.get ref h := by
+    show ((m.insert k v)[ref]'hmem) = m[ref]'(Std.HashMap.mem_iff_contains.mpr h)
+    rw [Std.HashMap.getElem_insert]
+    have hbeqfalse : (k == ref) = false := by
+      rw [Bool.eq_false_iff]
+      intro hc
+      exact hne (beq_iff_eq.mp hc)
+    simp [hbeqfalse]
+  rw [heq]
+  exact fun _ hx => hx
+
+/-- After `alter loc (insertSingletonOrAppend ref)`, any pre-existing `(loc', threadsList')` pair
+survives (unchanged if `loc' ≠ loc`, with `ref` prepended if `loc' = loc`) -- in particular any
+element already in `threadsList'` is still findable in some pair's list. Used to transport
+`hAllCommentTreeNodesAreLive` witnesses across the `none`-parent branch's `locationRoots` update. -/
+private theorem locationRoots_pair_alter_mem
+    (m : Std.HashMap ThreadLocation (List CommentRef)) (loc loc' : ThreadLocation) (ref root : CommentRef)
+    (threadsList' : List CommentRef) (hpair : (loc', threadsList') ∈ m.toList) (hroot : root ∈ threadsList') :
+    ∃ threadsList'', (loc', threadsList'') ∈ (m.alter loc (insertSingletonOrAppend ref)).toList ∧ root ∈ threadsList'' := by
+  by_cases heq : loc = loc'
+  · subst heq
+    refine ⟨ref :: threadsList', ?_, List.mem_cons_of_mem _ hroot⟩
+    have hget : m[loc]? = some threadsList' := Std.HashMap.mem_toList_iff_getElem?_eq_some.mp hpair
+    have hget2 : (m.alter loc (insertSingletonOrAppend ref))[loc]? = some (ref :: threadsList') := by
+      rw [Std.HashMap.getElem?_alter]
+      simp [hget, insertSingletonOrAppend]
+    exact Std.HashMap.mem_toList_iff_getElem?_eq_some.mpr hget2
+  · refine ⟨threadsList', ?_, hroot⟩
+    have hget : m[loc']? = some threadsList' := Std.HashMap.mem_toList_iff_getElem?_eq_some.mp hpair
+    have hget2 : (m.alter loc (insertSingletonOrAppend ref))[loc']? = some threadsList' := by
+      rw [Std.HashMap.getElem?_alter]
+      have hbeqfalse : (loc == loc') = false := by
+        rw [Bool.eq_false_iff]; intro hc; exact heq (beq_iff_eq.mp hc)
+      simp [hbeqfalse, hget]
+    exact Std.HashMap.mem_toList_iff_getElem?_eq_some.mpr hget2
+
+/-- `CommentThreads.hAllCommentTreeNodesAreLive` survives adding a fresh leaf node `ref` (with tree
+node `treeNode`) to `commentTreeNodes` and registering it as a thread root at `loc` (via
+`alter`/`insertSingletonOrAppend`). Used by `addCommentToThread`'s `none`-parent branch, where the
+new comment becomes its own root. -/
+private theorem hAllCommentTreeNodesAreLive_alter
+    (commentThreads : CommentThreads) (ref : CommentRef) (treeNode : CommentThread) (loc : ThreadLocation)
+    (hRefFresh : ref ∉ commentThreads.commentTreeNodes) :
+    ∀ commentRef, commentRef ∈ (commentThreads.commentTreeNodes.insert ref treeNode).keys →
+      ∃ loc' threadsList, (loc', threadsList) ∈
+          (commentThreads.locationRoots.alter loc (insertSingletonOrAppend ref)).toList ∧
+        ∃ root ∈ threadsList,
+          CommentThreads.NodeReachable (commentThreads.commentTreeNodes.insert ref treeNode) root commentRef := by
+  let treeNodesWithThis := commentThreads.commentTreeNodes.insert ref treeNode
+  have hMono : ∀ r (h : commentThreads.commentTreeNodes.contains r),
+      ∃ h' : treeNodesWithThis.contains r,
+        (commentThreads.commentTreeNodes.get r h).children ⊆ (treeNodesWithThis.get r h').children := by
+    intro r h
+    exact children_subset_insert_of_ne commentThreads.commentTreeNodes ref r treeNode h
+      (fun heq => hRefFresh (heq ▸ Std.HashMap.mem_iff_contains.mpr h))
+  intro commentRef hmem
+  rw [Std.HashMap.mem_keys, Std.HashMap.mem_insert] at hmem
+  rcases hmem with heq | hold
+  · have heq' : ref = commentRef := beq_iff_eq.mp heq
+    subst heq'
+    have hnewget : (commentThreads.locationRoots.alter loc (insertSingletonOrAppend ref))[loc]? =
+        insertSingletonOrAppend ref commentThreads.locationRoots[loc]? := by
+      rw [Std.HashMap.getElem?_alter]; simp
+    rcases hcur : commentThreads.locationRoots[loc]? with _ | oldList
+    · refine ⟨loc, [ref], ?_, ref, List.mem_singleton_self _, CommentThreads.NodeReachable.refl _⟩
+      have hfin : (commentThreads.locationRoots.alter loc (insertSingletonOrAppend ref))[loc]? =
+          some [ref] := by rw [hnewget, hcur]; rfl
+      exact Std.HashMap.mem_toList_iff_getElem?_eq_some.mpr hfin
+    · refine ⟨loc, ref :: oldList, ?_, ref, List.mem_cons_self, CommentThreads.NodeReachable.refl _⟩
+      have hfin : (commentThreads.locationRoots.alter loc (insertSingletonOrAppend ref))[loc]? =
+          some (ref :: oldList) := by rw [hnewget, hcur]; rfl
+      exact Std.HashMap.mem_toList_iff_getElem?_eq_some.mpr hfin
+  · obtain ⟨loc', threadsList', hpair, root, hrootmem, hreach⟩ :=
+      commentThreads.hAllCommentTreeNodesAreLive commentRef (Std.HashMap.mem_keys.mpr hold)
+    obtain ⟨threadsList'', hpair'', hrootmem''⟩ :=
+      locationRoots_pair_alter_mem commentThreads.locationRoots loc loc' ref root threadsList' hpair hrootmem
+    exact ⟨loc', threadsList'', hpair'', root, hrootmem'', NodeReachable_mono hMono hreach⟩
+
+/-- `CommentThreads.hAllCommentTreeNodesAreLive` survives adding a fresh leaf node `ref` (with tree
+node `treeNode`) and threading it in as a new child of an already-registered `parentThreadRef`
+(whose stored node is updated to `updatedParentThread`, gaining `ref` as its first child).
+`locationRoots` is untouched, since a reply isn't a new thread root. Used by
+`addCommentToThread`'s `some`-parent branch. -/
+private theorem hAllCommentTreeNodesAreLive_insert_reply
+    (commentThreads : CommentThreads) (ref : CommentRef) (treeNode : CommentThread)
+    (parentThreadRef : CommentRef) (hMemTree : commentThreads.commentTreeNodes.contains parentThreadRef)
+    (updatedParentThread : CommentThread)
+    (hUpdatedChildren : updatedParentThread.children =
+      ref :: (commentThreads.commentTreeNodes.get parentThreadRef hMemTree).children)
+    (hRefFresh : ref ∉ commentThreads.commentTreeNodes) :
+    ∀ commentRef, commentRef ∈
+        ((commentThreads.commentTreeNodes.insert ref treeNode).insert parentThreadRef updatedParentThread).keys →
+      ∃ loc threadsList, (loc, threadsList) ∈ commentThreads.locationRoots.toList ∧
+        ∃ root ∈ threadsList, CommentThreads.NodeReachable
+          ((commentThreads.commentTreeNodes.insert ref treeNode).insert parentThreadRef updatedParentThread)
+          root commentRef := by
+  let treeNodesWithThis := commentThreads.commentTreeNodes.insert ref treeNode
+  have hMonoOldToFinal : ∀ r (h : commentThreads.commentTreeNodes.contains r),
+      ∃ h' : (treeNodesWithThis.insert parentThreadRef updatedParentThread).contains r,
+        (commentThreads.commentTreeNodes.get r h).children ⊆
+          ((treeNodesWithThis.insert parentThreadRef updatedParentThread).get r h').children := by
+    intro r h
+    by_cases hrefeq : r = parentThreadRef
+    · subst hrefeq
+      have hfmem : r ∈ treeNodesWithThis.insert r updatedParentThread :=
+        Std.HashMap.mem_insert_self
+      refine ⟨hfmem, ?_⟩
+      have hget : (treeNodesWithThis.insert r updatedParentThread).get r hfmem =
+          updatedParentThread := by
+        show (treeNodesWithThis.insert r updatedParentThread)[r]'hfmem = updatedParentThread
+        exact Std.HashMap.getElem_insert_self
+      rw [hget, hUpdatedChildren]
+      exact List.subset_cons_self _ _
+    · obtain ⟨h1, hsub1⟩ := children_subset_insert_of_ne commentThreads.commentTreeNodes ref r
+        treeNode h (fun heq => hRefFresh (heq ▸ Std.HashMap.mem_iff_contains.mpr h))
+      obtain ⟨h2, hsub2⟩ := children_subset_insert_of_ne treeNodesWithThis parentThreadRef r
+        updatedParentThread h1 (fun heq => hrefeq heq.symm)
+      exact ⟨h2, hsub1.trans hsub2⟩
+  intro commentRef hmem
+  rw [Std.HashMap.mem_keys, Std.HashMap.mem_insert, Std.HashMap.mem_insert] at hmem
+  rcases hmem with hpeq | hceq | hold
+  · have hpeq' : parentThreadRef = commentRef := beq_iff_eq.mp hpeq
+    subst hpeq'
+    obtain ⟨loc', threadsList', hpair, root, hrootmem, hreach⟩ :=
+      commentThreads.hAllCommentTreeNodesAreLive parentThreadRef (Std.HashMap.mem_keys.mpr hMemTree)
+    exact ⟨loc', threadsList', hpair, root, hrootmem, NodeReachable_mono hMonoOldToFinal hreach⟩
+  · have hceq' : ref = commentRef := beq_iff_eq.mp hceq
+    subst hceq'
+    obtain ⟨loc', threadsList', hpair, root, hrootmem, hreachParent⟩ :=
+      commentThreads.hAllCommentTreeNodesAreLive parentThreadRef (Std.HashMap.mem_keys.mpr hMemTree)
+    have hreachParentFinal := NodeReachable_mono hMonoOldToFinal hreachParent
+    have hfmem : parentThreadRef ∈ treeNodesWithThis.insert parentThreadRef updatedParentThread :=
+      Std.HashMap.mem_insert_self
+    have hchildmem : ref ∈ ((treeNodesWithThis.insert parentThreadRef updatedParentThread).get
+        parentThreadRef hfmem).children := by
+      have hget : (treeNodesWithThis.insert parentThreadRef updatedParentThread).get parentThreadRef hfmem =
+          updatedParentThread := by
+        show (treeNodesWithThis.insert parentThreadRef updatedParentThread)[parentThreadRef]'hfmem =
+          updatedParentThread
+        exact Std.HashMap.getElem_insert_self
+      rw [hget, hUpdatedChildren]
+      exact List.mem_cons_self
+    exact ⟨loc', threadsList', hpair, root, hrootmem,
+      CommentThreads.NodeReachable.step hreachParentFinal hfmem hchildmem⟩
+  · obtain ⟨loc', threadsList', hpair, root, hrootmem, hreach⟩ :=
+      commentThreads.hAllCommentTreeNodesAreLive commentRef (Std.HashMap.mem_keys.mpr hold)
+    exact ⟨loc', threadsList', hpair, root, hrootmem, NodeReachable_mono hMonoOldToFinal hreach⟩
+
+def addCommentToThread (commentThreads : CommentThreads) (comment : Comment) (hHasBackendId : comment.backendId.isSome)
+    (hParentValid : ∀ parentId, comment.parent = some parentId → parentId ∈ commentThreads.serverCommentIds)
+    (hParentThreadRegistered : ∀ parentId (h : parentId ∈ commentThreads.serverCommentIds),
+      comment.parent = some parentId → commentThreads.serverCommentIds.get parentId h ∈ commentThreads.commentTreeNodes)
+    (hRefFresh : comment.ref ∉ commentThreads.commentTreeNodes)
+    (hLocationScope : ∀ loc', loc' ∈ commentThreads.locationRoots.keys →
+      loc'.isTopLevel = comment.location.asThreadLocation.isTopLevel) :
+    CommentThreads :=
+  let treeNode := ⟨comment.ref, []⟩
+  let treeNodesWithThis := commentThreads.commentTreeNodes.insert comment.ref treeNode
+  let loc := comment.location.asThreadLocation
+
+  -- If the location is empty, just add this as a top-level thread
+  --
+  -- Otherwise, find the thread of the parent and add this as a child
+  match hEq : comment.parent with
+  | some parentServerId =>
+    let hMemServer := hParentValid parentServerId hEq
+    let parentThreadRef := commentThreads.serverCommentIds.get parentServerId hMemServer
+    let hMemTree := hParentThreadRegistered parentServerId hMemServer hEq
+    let parentThread := commentThreads.commentTreeNodes.get parentThreadRef hMemTree
+    let updatedParentThread := ⟨parentThread.value, comment.ref :: parentThread.children⟩
+    { commentTreeNodes := treeNodesWithThis.insert parentThreadRef updatedParentThread,
+      serverCommentIds := commentThreads.serverCommentIds.insert (comment.backendId.get hHasBackendId) comment.ref,
+      locationRoots := commentThreads.locationRoots,
+      hLocationsConsistent := commentThreads.hLocationsConsistent,
+      hHasNodeForComment := fun loc' threadRoots' hpair ref' href' =>
+        contains_mono_insert treeNodesWithThis parentThreadRef updatedParentThread ref'
+          (contains_mono_insert commentThreads.commentTreeNodes comment.ref treeNode ref'
+            (commentThreads.hHasNodeForComment loc' threadRoots' hpair ref' href')),
+      hAllCommentTreeNodesAreLive := hAllCommentTreeNodesAreLive_insert_reply commentThreads comment.ref treeNode
+        parentThreadRef hMemTree updatedParentThread rfl hRefFresh,
+      hCommentTreeNodeRootMatchesKey := hCommentTreeNodeRootMatchesKey_insert treeNodesWithThis parentThreadRef
+        updatedParentThread (commentThreads.hCommentTreeNodeRootMatchesKey parentThreadRef hMemTree)
+        (hCommentTreeNodeRootMatchesKey_insert commentThreads.commentTreeNodes comment.ref treeNode rfl
+          commentThreads.hCommentTreeNodeRootMatchesKey),
+      hLocationRootsNodup := commentThreads.hLocationRootsNodup,
+      hChildrenAreRegistered := hChildrenAreRegistered_insert treeNodesWithThis parentThreadRef updatedParentThread
+        (fun child hc => by
+          rcases List.mem_cons.mp hc with heq | hold
+          · rw [heq]
+            exact contains_mono_insert treeNodesWithThis parentThreadRef updatedParentThread comment.ref
+              Std.HashMap.contains_insert_self
+          · exact contains_mono_insert treeNodesWithThis parentThreadRef updatedParentThread child
+              (contains_mono_insert commentThreads.commentTreeNodes comment.ref treeNode child
+                (commentThreads.hChildrenAreRegistered parentThreadRef hMemTree child hold)))
+        (hChildrenAreRegistered_insert commentThreads.commentTreeNodes comment.ref treeNode
+          (fun child hc => absurd hc List.not_mem_nil)
+          commentThreads.hChildrenAreRegistered)
+    }
+  | none =>
+    { commentTreeNodes := treeNodesWithThis,
+      serverCommentIds := commentThreads.serverCommentIds.insert (comment.backendId.get hHasBackendId) comment.ref,
+      locationRoots := commentThreads.locationRoots.alter loc (insertSingletonOrAppend comment.ref),
+      hLocationsConsistent := hLocationsConsistent_alter commentThreads.locationRoots loc comment.ref
+        commentThreads.hLocationsConsistent hLocationScope,
+      hHasNodeForComment := hHasNodeForComment_alter commentThreads.locationRoots commentThreads.commentTreeNodes
+        treeNodesWithThis loc comment.ref commentThreads.hHasNodeForComment
+        (contains_mono_insert commentThreads.commentTreeNodes comment.ref treeNode)
+        Std.HashMap.contains_insert_self,
+      hAllCommentTreeNodesAreLive :=
+        hAllCommentTreeNodesAreLive_alter commentThreads comment.ref treeNode loc hRefFresh,
+      hCommentTreeNodeRootMatchesKey := hCommentTreeNodeRootMatchesKey_insert commentThreads.commentTreeNodes
+        comment.ref treeNode rfl commentThreads.hCommentTreeNodeRootMatchesKey,
+      hLocationRootsNodup := hLocationRootsNodup_alter commentThreads.locationRoots commentThreads.commentTreeNodes
+        loc comment.ref commentThreads.hHasNodeForComment hRefFresh commentThreads.hLocationRootsNodup,
+      hChildrenAreRegistered := hChildrenAreRegistered_insert commentThreads.commentTreeNodes comment.ref treeNode
+        (fun child hc => absurd hc List.not_mem_nil)
+        commentThreads.hChildrenAreRegistered
+    }

@@ -1,13 +1,13 @@
 module
 
-import Std
+public import Std
 import Init.System
 import Init.Data.List.Sort
 
-import LgtmLean.Tree
+public import LgtmLean.Tree
 
 /-- A reference that can be mapped to (mutable) comment contents -/
-structure CommentRef where
+public structure CommentRef where
   /-- A unique identifier
 
   These are only unique within a session.
@@ -15,11 +15,11 @@ structure CommentRef where
   id : String
   deriving Inhabited, Hashable, DecidableEq
 
-structure FileRef where
+public structure FileRef where
   path : String
   deriving Hashable, BEq
 
-inductive FileVersion where
+public inductive FileVersion where
   | base
   | current
   deriving Hashable, DecidableEq
@@ -28,16 +28,16 @@ inductive FileVersion where
 
 These locations are less precise than the comment locations and are just
 used for the renderer to group threads appropriately. -/
-inductive ThreadLocation where
+public inductive ThreadLocation where
 | topLevel
 | lineNumber : Nat → ThreadLocation
 deriving Hashable, Ord, DecidableEq
 
-def ThreadLocation.isTopLevel : ThreadLocation → Bool
+public def ThreadLocation.isTopLevel : ThreadLocation → Bool
 | .topLevel => true
 | .lineNumber _ => false
 
-structure CommentFileLocation where
+public structure CommentFileLocation where
   version : FileVersion
   fileRef : FileRef
   startLine : Nat
@@ -46,20 +46,20 @@ structure CommentFileLocation where
   endColumn : Nat
   deriving Hashable, BEq
 
-inductive CommentLocation where
+public inductive CommentLocation where
   | fileLocation : CommentFileLocation → CommentLocation
   | topLevel : CommentLocation
   deriving Hashable, Inhabited, BEq
 
-def CommentLocation.isTopLevel : CommentLocation → Bool
+public def CommentLocation.isTopLevel : CommentLocation → Bool
 | .topLevel => true
 | .fileLocation _ => false
 
-def CommentLocation.asThreadLocation : CommentLocation → ThreadLocation
+public def CommentLocation.asThreadLocation : CommentLocation → ThreadLocation
 | .topLevel => .topLevel
 | .fileLocation loc => .lineNumber loc.startLine
 
-structure ServerId where
+public structure ServerId where
   id : String
   deriving Inhabited, Hashable, DecidableEq
 
@@ -68,7 +68,7 @@ structure ServerId where
 This is separated out from references, as references often need to be hashed
 or compared for equality, which is expensive if the reference actually includes
 all of the comment data. -/
-structure Comment where
+public structure Comment where
   /-- The unique id assigned to this comment.
 
   For new comments this is a gensym.  For comments fetched from the server, it
@@ -98,9 +98,9 @@ structure Comment where
   content : String
   deriving Inhabited
 
-def Comment.isPersistedToServer (c : Comment) : Bool := c.backendId.isSome
+public def Comment.isPersistedToServer (c : Comment) : Bool := c.backendId.isSome
 
-abbrev CommentThread := Tree CommentRef
+public abbrev CommentThread := Tree CommentRef
 
 instance : Inhabited (Tree CommentRef) where
   default := ⟨default, []⟩
@@ -108,7 +108,7 @@ instance : Inhabited (Tree CommentRef) where
 /-- `descendant` is reachable from `root` in `nodes` by following zero or more `Tree.children`
 links. Used by `CommentThreads.hAllCommentTreeNodesAreLive` to say every stored node belongs to
 some displayed thread instead of being an orphan. -/
-inductive CommentThreads.NodeReachable (nodes : Std.HashMap CommentRef CommentThread) :
+public inductive CommentThreads.NodeReachable (nodes : Std.HashMap CommentRef CommentThread) :
     CommentRef → CommentRef → Prop
   | refl (root : CommentRef) : CommentThreads.NodeReachable nodes root root
   | step {root parent child : CommentRef} (h : CommentThreads.NodeReachable nodes root parent)
@@ -116,7 +116,7 @@ inductive CommentThreads.NodeReachable (nodes : Std.HashMap CommentRef CommentTh
       CommentThreads.NodeReachable nodes root child
 
 /-- The collected threads for a scope (file version or top-level). -/
-structure CommentThreads where
+public structure CommentThreads where
   /-- The tree node for each comment. -/
   commentTreeNodes : Std.HashMap CommentRef CommentThread
 
@@ -154,7 +154,7 @@ structure CommentThreads where
   hChildrenAreRegistered : ∀ ref (h : commentTreeNodes.contains ref) (child : CommentRef),
     child ∈ (commentTreeNodes.get ref h).children → commentTreeNodes.contains child
 
-def CommentThreads.empty : CommentThreads :=
+public def CommentThreads.empty : CommentThreads :=
   ⟨Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity,
     by simp, by simp, by simp, by simp, by simp, by simp⟩
 
@@ -162,11 +162,11 @@ def CommentThreads.empty : CommentThreads :=
 
 Note: this is based on `locationRoots` (what's actually reachable/displayable), not
 `commentTreeNodes` (which can contain tree nodes that no location references). -/
-def CommentThreads.isEmpty (threads : CommentThreads) : Bool :=
+public def CommentThreads.isEmpty (threads : CommentThreads) : Bool :=
   threads.locationRoots.toList.all (fun p => p.2.isEmpty)
 
 /-- The comment selected in the file review UI. -/
-structure SelectedComment where
+public structure SelectedComment where
   version : FileVersion
   thread : CommentThread
   comment : CommentRef
@@ -177,7 +177,7 @@ node. This is the invariant needed to guarantee that indexing into the thread's 
 done by `CommentThreads.nextCommentInThread` / `CommentThreads.previousCommentInThread`) never
 falls out of bounds: it forces the linearization to be nonempty and to actually contain
 `sel.comment`. -/
-def SelectedComment.WellFormed (threads : CommentThreads) (sel : SelectedComment) : Prop :=
+public def SelectedComment.WellFormed (threads : CommentThreads) (sel : SelectedComment) : Prop :=
   ∃ h : threads.commentTreeNodes.contains sel.thread.value,
     threads.commentTreeNodes.get sel.thread.value h = sel.thread ∧
     CommentThreads.NodeReachable threads.commentTreeNodes sel.thread.value sel.comment
@@ -191,7 +191,7 @@ theorem SelectedComment.WellFormed.commentTreeNodes_size_ne_zero {threads : Comm
   rw [← Std.HashMap.length_keys, ne_eq, List.length_eq_zero_iff]
   exact List.ne_nil_of_mem (Std.HashMap.mem_keys.mpr (Std.HashMap.contains_iff_mem.mp h))
 
-structure CommentManager where
+public structure CommentManager where
   comments : Std.HashMap CommentRef Comment
   topLevelThreads : CommentThreads
   /-- The comment currently selected while browsing the changeset's top-level (unattached)
@@ -206,10 +206,10 @@ structure CommentManager where
   `CommentRef` and reports its `.ref`) actually report back the ref it was looked up by. -/
   hCommentsKeyedByRef : ∀ ref (h : comments.contains ref), (comments.get ref h).ref = ref
 
-def CommentManager.empty : CommentManager :=
+public def CommentManager.empty : CommentManager :=
   ⟨Std.HashMap.emptyWithCapacity, CommentThreads.empty, none, by simp, by simp⟩
 
-def CommentManager.get (manager : CommentManager) (ref : CommentRef) : Comment :=
+public def CommentManager.get (manager : CommentManager) (ref : CommentRef) : Comment :=
   manager.comments[ref]!
 
 /-- `CommentManager.get` actually reports back the ref it was looked up by, as long as that ref is
@@ -223,11 +223,11 @@ theorem CommentManager.get_ref_eq (manager : CommentManager) {ref : CommentRef}
   exact manager.hCommentsKeyedByRef ref h
 
 /-- A hash of a git revision -/
-structure GitRevision where
+public structure GitRevision where
   hash : String
   deriving Hashable, DecidableEq
 
-structure RepositoryRef where
+public structure RepositoryRef where
   /-- The name of the repository -/
   name : String
   /-- The path of the repository on disk -/
@@ -236,7 +236,7 @@ structure RepositoryRef where
   baseRevision : GitRevision
   deriving Hashable, DecidableEq
 
-structure Repository where
+public structure Repository where
   /-- The name of the repository -/
   name : String
   /-- The path of the repository on disk -/
@@ -249,7 +249,7 @@ structure Repository where
   -/
   commits : List (GitRevision × String)
 
-inductive ModificationType where
+public inductive ModificationType where
 | modified
 | added
 | deleted
@@ -258,7 +258,7 @@ inductive ModificationType where
 | typechange
 deriving Hashable, DecidableEq
 
-structure ModifiedFileRef where
+public structure ModifiedFileRef where
   repositoryRef : RepositoryRef
   modificationType : ModificationType
   baseFileName : String
@@ -272,7 +272,7 @@ The mutable state for a file that can be reviewed.
 
 Note: This used to track the last position in each file but that wasn't used.
 -/
-structure ModifiedFileState where
+public structure ModifiedFileState where
   ref : ModifiedFileRef
   fileRef : FileRef
   selectedComment : Option SelectedComment
@@ -286,7 +286,7 @@ structure ModifiedFileState where
       | .base => baseThreads
       | .current => currentThreads) sel
 
-structure ModifiedFileManager where
+public structure ModifiedFileManager where
   state : Std.HashMap ModifiedFileRef ModifiedFileState
   /-- The files affected by the change in a server-defined order.  This is stored
   separately to preserve that order, which would be lost with only the hash map. -/
@@ -295,7 +295,7 @@ structure ModifiedFileManager where
   /-- Invariant: Each modified file ref has an entry in `state`. -/
   hConsistentState : ∀ modifiedFile, modifiedFile ∈ modifiedFiles ↔ state.contains modifiedFile
 
-def ModifiedFileManager.resetCommentState (fileManager : ModifiedFileManager) : ModifiedFileManager :=
+public def ModifiedFileManager.resetCommentState (fileManager : ModifiedFileManager) : ModifiedFileManager :=
   let updatedState := fileManager.state.map (fun modifiedFileRef fileState =>
     {fileState with selectedComment := none,
                     baseThreads := CommentThreads.empty,
@@ -309,10 +309,10 @@ def ModifiedFileManager.resetCommentState (fileManager : ModifiedFileManager) : 
 
 /-- This would ideally be an inductive, but different servers can provide different statuses.  We just
 take what they give us. -/
-structure ChangesetStatus where
+public structure ChangesetStatus where
   status : String
 
-structure Configuration where
+public structure Configuration where
   user : String
   changesetId : String
   repositories : List Repository
@@ -324,23 +324,23 @@ structure Configuration where
   changesetTitle : String
   changesetDescription : String
 
-structure State where
+public structure State where
   configuration : Configuration
   activeReviewedFile : Option ModifiedFileRef
   commentBeingEdited : Option CommentRef
   commentManager : CommentManager
   fileManager : ModifiedFileManager
 
-abbrev LgtmM α := StateT State (Except String) α
+public abbrev LgtmM α := StateT State (Except String) α
 
 /-- Delete all of the comments in the current review state.
 
 This is used to prepare to fetch an updated state from the server. -/
-def resetCommentState : LgtmM Unit := do
+public def resetCommentState : LgtmM Unit := do
   let s₀ ← get
   let manager₁ := s₀.fileManager.resetCommentState
   set { s₀ with commentManager := CommentManager.empty, fileManager := manager₁ }
 
 
-def addRemoteComments (comments : List Comment) : LgtmM Unit := do
+public def addRemoteComments (comments : List Comment) : LgtmM Unit := do
   pure ()

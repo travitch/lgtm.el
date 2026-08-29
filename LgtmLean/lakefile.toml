@@ -8,3 +8,7 @@ name = "LgtmLean"
 [[lean_exe]]
 name = "lgtmlean"
 root = "Main"
+
+[[lean_exe]]
+name = "extractor"
+root = "Extractor"
