@@ -33,7 +33,7 @@ public inductive ThreadLocation where
 | lineNumber : Nat → ThreadLocation
 deriving Hashable, Ord, DecidableEq
 
-public def ThreadLocation.isTopLevel : ThreadLocation → Bool
+@[expose] public def ThreadLocation.isTopLevel : ThreadLocation → Bool
 | .topLevel => true
 | .lineNumber _ => false
 
@@ -55,9 +55,15 @@ public def CommentLocation.isTopLevel : CommentLocation → Bool
 | .topLevel => true
 | .fileLocation _ => false
 
-public def CommentLocation.asThreadLocation : CommentLocation → ThreadLocation
+@[expose] public def CommentLocation.asThreadLocation : CommentLocation → ThreadLocation
 | .topLevel => .topLevel
 | .fileLocation loc => .lineNumber loc.startLine
+
+/-- Cross-module callers (e.g. `completeCommentWithContent`) can't unfold `asThreadLocation` /
+`isTopLevel` via plain `rfl`, since ordinary `def`s aren't unfolded for defeq checking outside
+their defining module; this exposes the fact as a citable lemma instead. -/
+@[simp] public theorem CommentLocation.topLevel_asThreadLocation_isTopLevel :
+    CommentLocation.topLevel.asThreadLocation.isTopLevel = true := rfl
 
 public structure ServerId where
   id : String
@@ -206,8 +212,51 @@ public structure CommentManager where
   `CommentRef` and reports its `.ref`) actually report back the ref it was looked up by. -/
   hCommentsKeyedByRef : ∀ ref (h : comments.contains ref), (comments.get ref h).ref = ref
 
+  /-- Every location key registered in `topLevelThreads` is actually a top-level location.
+  `topLevelThreads` is the pool for unattached/top-level comments only; per-file comment pools
+  (`ModifiedFileState.baseThreads` / `.currentThreads`) are the only place `.lineNumber` locations
+  belong. This is what lets `completeCommentWithContent` satisfy `addCommentToThread`'s
+  `hLocationScope` obligation when finalizing a top-level comment. -/
+  hTopLevelThreadsAllTopLevel : ∀ loc, loc ∈ topLevelThreads.locationRoots.keys → loc.isTopLevel = true
+
+  /-- Every comment registered as a tree node in `topLevelThreads` has actually been published (has
+  a server-assigned `backendId`). Combined with `CommentManager.CommentBeingEditedWellFormed`, this
+  is what lets `completeCommentWithContent` know the comment it is about to publish can't already be
+  registered in a thread, satisfying `addCommentToThread`'s `hRefFresh` obligation. -/
+  hTopLevelThreadsPublished : ∀ ref (h : topLevelThreads.commentTreeNodes.contains ref),
+    ∃ h' : comments.contains ref, (comments.get ref h').backendId.isSome
+
+  /-- Every server-tracked comment id in `topLevelThreads` actually has a registered tree node. This
+  is what lets `completeCommentWithContent` discharge `addCommentToThread`'s
+  `hParentThreadRegistered` obligation once it knows the parent id is tracked at all. -/
+  hServerCommentIdsRegistered : ∀ sid (h : topLevelThreads.serverCommentIds.contains sid),
+    topLevelThreads.commentTreeNodes.contains (topLevelThreads.serverCommentIds.get sid h)
+
 public def CommentManager.empty : CommentManager :=
-  ⟨Std.HashMap.emptyWithCapacity, CommentThreads.empty, none, by simp, by simp⟩
+  ⟨Std.HashMap.emptyWithCapacity, CommentThreads.empty, none, by simp, by simp,
+    by simp [CommentThreads.empty], by simp [CommentThreads.empty], by simp [CommentThreads.empty]⟩
+
+/-- Looking up the key just inserted into a `Std.HashMap` returns the inserted value -- the
+proof-carrying counterpart of `Std.HashMap.getElem_insert_self`. -/
+public theorem Std.HashMap.get_insert_self {α β} [BEq α] [Hashable α] [EquivBEq α] [LawfulHashable α]
+    {m : Std.HashMap α β} {k : α} {v : β} (h : (m.insert k v).contains k) :
+    (m.insert k v).get k h = v := by
+  have hmem : k ∈ m.insert k v := h
+  show (m.insert k v).get k hmem = v
+  rw [Std.HashMap.get_eq_getElem, Std.HashMap.getElem_insert]
+  simp
+
+/-- Looking up a key other than the one just inserted into a `Std.HashMap` is unaffected by the
+insert -- the proof-carrying counterpart of `Std.HashMap.getElem_insert`'s `else` branch. -/
+public theorem Std.HashMap.get_insert_of_ne {α β} [BEq α] [Hashable α] [EquivBEq α] [LawfulHashable α]
+    {m : Std.HashMap α β} {k a : α} {v : β} (hne : ¬ (k == a)) (h : (m.insert k v).contains a)
+    (hc : m.contains a) :
+    (m.insert k v).get a h = m.get a hc := by
+  have hmem : a ∈ m.insert k v := h
+  have hmem' : a ∈ m := hc
+  show (m.insert k v).get a hmem = m.get a hmem'
+  rw [Std.HashMap.get_eq_getElem, Std.HashMap.get_eq_getElem, Std.HashMap.getElem_insert]
+  simp [hne]
 
 public def CommentManager.get (manager : CommentManager) (ref : CommentRef) : Comment :=
   manager.comments[ref]!
@@ -215,12 +264,97 @@ public def CommentManager.get (manager : CommentManager) (ref : CommentRef) : Co
 /-- `CommentManager.get` actually reports back the ref it was looked up by, as long as that ref is
 covered (has an entry in `comments` at all) -- otherwise `[ref]!` would silently fall back to
 `default`. -/
-theorem CommentManager.get_ref_eq (manager : CommentManager) {ref : CommentRef}
+public theorem CommentManager.get_ref_eq (manager : CommentManager) {ref : CommentRef}
     (h : manager.comments.contains ref) : (manager.get ref).ref = ref := by
   have hmem : ref ∈ manager.comments := Std.HashMap.mem_iff_contains.mpr h
   show (manager.comments[ref]!).ref = ref
   rw [← Std.HashMap.getElem_eq_getElem! (h' := hmem), ← Std.HashMap.get_eq_getElem (h := hmem)]
   exact manager.hCommentsKeyedByRef ref h
+
+/-- `CommentManager.get` agrees with a direct, proof-carrying lookup into `comments` whenever the
+ref is covered. This is what lets callers transport facts about `manager.comments.get ref h` (as
+supplied by, e.g., `CommentManager.CommentBeingEditedWellFormed`) onto `manager.get ref`. -/
+public theorem CommentManager.get_eq_getComments (manager : CommentManager) {ref : CommentRef}
+    (h : manager.comments.contains ref) : manager.get ref = manager.comments.get ref h := by
+  have hmem : ref ∈ manager.comments := Std.HashMap.mem_iff_contains.mpr h
+  show manager.comments[ref]! = manager.comments.get ref h
+  rw [← Std.HashMap.getElem_eq_getElem! (h' := hmem)]
+  exact Std.HashMap.get_eq_getElem.symm
+
+/-- The comment currently being edited exists, hasn't been published yet, and (if it's a reply) its
+parent has already been published into a live top-level thread. This is exactly what
+`completeCommentWithContent` needs in order to know that finalizing the edited comment can't
+collide with an existing thread node, and that any parent it references is already safe to attach
+to. -/
+@[expose] public def CommentManager.CommentBeingEditedWellFormed (manager : CommentManager) (ref : CommentRef) :
+    Prop :=
+  ∃ h : manager.comments.contains ref,
+    (manager.comments.get ref h).backendId = none ∧
+    ∀ parentId, (manager.comments.get ref h).parent = some parentId →
+      parentId ∈ manager.topLevelThreads.serverCommentIds
+
+/-- If `ref` is the comment currently being edited, `manager.get ref` recovers its own `ref`, is
+unpublished, and (if it's a reply) its parent is already registered in `topLevelThreads`. -/
+public theorem CommentManager.get_of_commentBeingEditedWellFormed (manager : CommentManager) (ref : CommentRef)
+    (hWF : manager.CommentBeingEditedWellFormed ref) :
+    (manager.get ref).ref = ref ∧ (manager.get ref).backendId = none ∧
+      ∀ parentId, (manager.get ref).parent = some parentId → parentId ∈ manager.topLevelThreads.serverCommentIds := by
+  obtain ⟨hExists, hUnpub, hParentOK⟩ := hWF
+  have hget : manager.get ref = manager.comments.get ref hExists := manager.get_eq_getComments hExists
+  refine ⟨manager.get_ref_eq hExists, ?_, ?_⟩
+  · rw [hget]; exact hUnpub
+  · rw [hget]; exact hParentOK
+
+/-- Any comment registered as some thread's parent in `topLevelThreads` already has a live tree
+node -- `addCommentToThread`'s `hParentThreadRegistered` obligation, restated without the unused
+`comment.parent = some parentId` hypothesis. -/
+public theorem CommentManager.hParentThreadRegistered_mem (manager : CommentManager) :
+    ∀ parentId (h : parentId ∈ manager.topLevelThreads.serverCommentIds),
+      manager.topLevelThreads.serverCommentIds.get parentId h ∈ manager.topLevelThreads.commentTreeNodes :=
+  fun parentId h => Std.HashMap.mem_iff_contains.mpr
+    (manager.hServerCommentIdsRegistered parentId (Std.HashMap.mem_iff_contains.mp h))
+
+/-- A comment that hasn't been published yet (no `backendId`) can't already be registered as a tree
+node in `topLevelThreads`: every registered node is backed by a published comment
+(`hTopLevelThreadsPublished`). -/
+public theorem CommentManager.notMem_topLevelThreads_of_unpublished (manager : CommentManager) (ref : CommentRef)
+    (hUnpub : (manager.get ref).backendId = none) :
+    ref ∉ manager.topLevelThreads.commentTreeNodes := by
+  intro hmemTree
+  obtain ⟨hExists', hSome⟩ := manager.hTopLevelThreadsPublished ref (Std.HashMap.mem_iff_contains.mp hmemTree)
+  have hEqGet : manager.comments.get ref hExists' = manager.get ref := (manager.get_eq_getComments hExists').symm
+  rw [hEqGet, hUnpub] at hSome
+  simp at hSome
+
+/-- `topLevelThreads`'s location keys stay in scope for a comment whose location actually is
+top-level: they're all top-level themselves (`hTopLevelThreadsAllTopLevel`), which is exactly what
+a top-level comment's location reduces to. -/
+public theorem CommentManager.locationScope_of_topLevel (manager : CommentManager) {location : CommentLocation}
+    (hloc : location = CommentLocation.topLevel) :
+    ∀ loc', loc' ∈ manager.topLevelThreads.locationRoots.keys → loc'.isTopLevel = location.asThreadLocation.isTopLevel := by
+  rw [hloc, CommentLocation.topLevel_asThreadLocation_isTopLevel]
+  exact manager.hTopLevelThreadsAllTopLevel
+
+/-- Inserting a comment at the ref it claims as its own preserves `hCommentsKeyedByRef`: the
+freshly-inserted entry reports back the key it was inserted at, and every other entry is
+unaffected (delegating to the old invariant). -/
+public theorem CommentManager.hCommentsKeyedByRef_insert (manager : CommentManager) (ref : CommentRef)
+    (comment : Comment) (href : comment.ref = ref) :
+    ∀ ref' (h : (manager.comments.insert ref comment).contains ref'),
+      ((manager.comments.insert ref comment).get ref' h).ref = ref' := by
+  intro ref' h
+  by_cases heq : ref = ref'
+  · subst heq
+    rw [Std.HashMap.get_insert_self, href]
+  · have hne : ¬ (ref == ref') := by simpa [beq_iff_eq] using heq
+    have hc : manager.comments.contains ref' := by
+      have h' := h
+      rw [Std.HashMap.contains_insert, Bool.or_eq_true, beq_iff_eq] at h'
+      rcases h' with h1 | h1
+      · exact absurd h1 heq
+      · exact h1
+    rw [Std.HashMap.get_insert_of_ne hne h hc]
+    exact manager.hCommentsKeyedByRef ref' hc
 
 /-- A hash of a git revision -/
 public structure GitRevision where
@@ -324,6 +458,16 @@ public structure Configuration where
   changesetTitle : String
   changesetDescription : String
 
+  /-- A function to create a new comment (in unpublished state) on the server.
+
+  Note that the `createComment` function technically performs IO to communicate with the server.  It
+  isn't in IO because we don't really want `LgtmM` to need to be IO and complicate the proofs.  We
+  can't really guarantee what that function will or won't do and it could technically violate any
+  invariant.  Implementors should not do that.  If the `createComment` function fails, it should just
+  return `none` and issue any warnings it wants in elisp.
+  -/
+  createComment : Comment → Option ServerId
+
 public structure State where
   configuration : Configuration
   activeReviewedFile : Option ModifiedFileRef
@@ -331,16 +475,10 @@ public structure State where
   commentManager : CommentManager
   fileManager : ModifiedFileManager
 
+  /-- Whichever comment is currently being edited is well-formed: it exists, is unpublished, and any
+  parent it references is already registered in a live top-level thread. -/
+  hCommentBeingEditedWellFormed : ∀ ref, commentBeingEdited = some ref →
+    commentManager.CommentBeingEditedWellFormed ref
+
 public abbrev LgtmM α := StateT State (Except String) α
 
-/-- Delete all of the comments in the current review state.
-
-This is used to prepare to fetch an updated state from the server. -/
-public def resetCommentState : LgtmM Unit := do
-  let s₀ ← get
-  let manager₁ := s₀.fileManager.resetCommentState
-  set { s₀ with commentManager := CommentManager.empty, fileManager := manager₁ }
-
-
-public def addRemoteComments (comments : List Comment) : LgtmM Unit := do
-  pure ()

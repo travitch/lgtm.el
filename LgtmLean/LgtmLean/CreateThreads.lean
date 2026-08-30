@@ -2,6 +2,7 @@ module
 
 import Std
 
+public import LgtmLean.Basic
 import all LgtmLean.Basic
 import all LgtmLean.Tree
 
@@ -1319,7 +1320,7 @@ private theorem hAllCommentTreeNodesAreLive_insert_reply
       commentThreads.hAllCommentTreeNodesAreLive commentRef (Std.HashMap.mem_keys.mpr hold)
     exact ⟨loc', threadsList', hpair, root, hrootmem, NodeReachable_mono hMonoOldToFinal hreach⟩
 
-def addCommentToThread (commentThreads : CommentThreads) (comment : Comment) (hHasBackendId : comment.backendId.isSome)
+public def addCommentToThread (commentThreads : CommentThreads) (comment : Comment) (hHasBackendId : comment.backendId.isSome)
     (hParentValid : ∀ parentId, comment.parent = some parentId → parentId ∈ commentThreads.serverCommentIds)
     (hParentThreadRegistered : ∀ parentId (h : parentId ∈ commentThreads.serverCommentIds),
       comment.parent = some parentId → commentThreads.serverCommentIds.get parentId h ∈ commentThreads.commentTreeNodes)
@@ -1389,3 +1390,176 @@ def addCommentToThread (commentThreads : CommentThreads) (comment : Comment) (hH
         (fun child hc => absurd hc List.not_mem_nil)
         commentThreads.hChildrenAreRegistered
     }
+
+/-- If every existing location key in `commentThreads` is already top-level, and the comment being
+added is itself top-level, then every location key `addCommentToThread` produces is top-level too.
+Used by `completeCommentWithContent` to re-establish `CommentManager.hTopLevelThreadsAllTopLevel`
+after publishing a new top-level comment: the `some`-parent branch leaves `locationRoots`
+untouched, and the `none`-parent branch only ever adds `comment.location.asThreadLocation` (itself
+top-level) as a new key. -/
+public theorem addCommentToThread_locationRoots_isTopLevel
+    (commentThreads : CommentThreads) (comment : Comment) (hHasBackendId : comment.backendId.isSome)
+    (hParentValid : ∀ parentId, comment.parent = some parentId → parentId ∈ commentThreads.serverCommentIds)
+    (hParentThreadRegistered : ∀ parentId (h : parentId ∈ commentThreads.serverCommentIds),
+      comment.parent = some parentId →
+        commentThreads.serverCommentIds.get parentId h ∈ commentThreads.commentTreeNodes)
+    (hRefFresh : comment.ref ∉ commentThreads.commentTreeNodes)
+    (hLocationScope : ∀ loc', loc' ∈ commentThreads.locationRoots.keys →
+      loc'.isTopLevel = comment.location.asThreadLocation.isTopLevel)
+    (hOldAllTop : ∀ loc, loc ∈ commentThreads.locationRoots.keys → loc.isTopLevel = true)
+    (hCommentTop : comment.location.asThreadLocation.isTopLevel = true) :
+    ∀ loc', loc' ∈ (addCommentToThread commentThreads comment hHasBackendId hParentValid
+        hParentThreadRegistered hRefFresh hLocationScope).locationRoots.keys → loc'.isTopLevel = true := by
+  intro loc' hloc'
+  unfold addCommentToThread at hloc'
+  split at hloc'
+  · exact hOldAllTop loc' hloc'
+  · rw [Std.HashMap.mem_keys, mem_alter_insertSingletonOrAppend] at hloc'
+    rcases hloc' with heq | hold
+    · exact heq ▸ hCommentTop
+    · exact hOldAllTop loc' (Std.HashMap.mem_keys.mpr hold)
+
+/-- `addCommentToThread` registers exactly one new tree-node key: `comment.ref`. Used by
+`completeCommentWithContent` to re-establish `CommentManager.hTopLevelThreadsPublished` after
+publishing a new top-level comment. -/
+public theorem addCommentToThread_commentTreeNodes_contains_iff
+    (commentThreads : CommentThreads) (comment : Comment) (hHasBackendId : comment.backendId.isSome)
+    (hParentValid : ∀ parentId, comment.parent = some parentId → parentId ∈ commentThreads.serverCommentIds)
+    (hParentThreadRegistered : ∀ parentId (h : parentId ∈ commentThreads.serverCommentIds),
+      comment.parent = some parentId →
+        commentThreads.serverCommentIds.get parentId h ∈ commentThreads.commentTreeNodes)
+    (hRefFresh : comment.ref ∉ commentThreads.commentTreeNodes)
+    (hLocationScope : ∀ loc', loc' ∈ commentThreads.locationRoots.keys →
+      loc'.isTopLevel = comment.location.asThreadLocation.isTopLevel) (ref' : CommentRef) :
+    (addCommentToThread commentThreads comment hHasBackendId hParentValid hParentThreadRegistered
+        hRefFresh hLocationScope).commentTreeNodes.contains ref' ↔
+      commentThreads.commentTreeNodes.contains ref' ∨ ref' = comment.ref := by
+  unfold addCommentToThread
+  split
+  · dsimp only
+    simp only [Std.HashMap.contains_insert, Bool.or_eq_true, beq_iff_eq]
+    rename_i parentServerId hEq
+    have hMemServer := hParentValid parentServerId hEq
+    have hMemTree := hParentThreadRegistered parentServerId hMemServer hEq
+    constructor
+    · rintro (h | h | h)
+      · exact Or.inl (h ▸ Std.HashMap.mem_iff_contains.mp hMemTree)
+      · exact Or.inr h.symm
+      · exact Or.inl h
+    · rintro (h | h)
+      · exact Or.inr (Or.inr h)
+      · exact Or.inr (Or.inl h.symm)
+  · dsimp only
+    simp only [Std.HashMap.contains_insert, Bool.or_eq_true, beq_iff_eq]
+    constructor
+    · rintro (h | h)
+      · exact Or.inr h.symm
+      · exact Or.inl h
+    · rintro (h | h)
+      · exact Or.inr h
+      · exact Or.inl h.symm
+
+/-- `addCommentToThread` always registers the newly-published comment's backend id, mapped to its
+own ref, into `serverCommentIds` — identically in both branches. Used by
+`completeCommentWithContent` to re-establish `CommentManager.hServerCommentIdsRegistered`. -/
+public theorem addCommentToThread_serverCommentIds_eq
+    (commentThreads : CommentThreads) (comment : Comment) (hHasBackendId : comment.backendId.isSome)
+    (hParentValid : ∀ parentId, comment.parent = some parentId → parentId ∈ commentThreads.serverCommentIds)
+    (hParentThreadRegistered : ∀ parentId (h : parentId ∈ commentThreads.serverCommentIds),
+      comment.parent = some parentId →
+        commentThreads.serverCommentIds.get parentId h ∈ commentThreads.commentTreeNodes)
+    (hRefFresh : comment.ref ∉ commentThreads.commentTreeNodes)
+    (hLocationScope : ∀ loc', loc' ∈ commentThreads.locationRoots.keys →
+      loc'.isTopLevel = comment.location.asThreadLocation.isTopLevel) :
+    (addCommentToThread commentThreads comment hHasBackendId hParentValid hParentThreadRegistered
+        hRefFresh hLocationScope).serverCommentIds =
+      commentThreads.serverCommentIds.insert (comment.backendId.get hHasBackendId) comment.ref := by
+  unfold addCommentToThread
+  split <;> rfl
+
+/-- Publishing `comment` (fresh at `ref`, per `addCommentToThread`'s hypotheses) preserves
+`CommentManager.hTopLevelThreadsPublished`: every tree node in the resulting `topLevelThreads` is
+still backed by a published comment -- either it was already published (delegating to the old
+invariant, since inserting `comment` at the fresh `ref` doesn't disturb any other key) or it's
+`comment` itself, now published via `hHasBackendId`. -/
+public theorem CommentManager.hTopLevelThreadsPublished_insert (manager : CommentManager) (ref : CommentRef)
+    (comment : Comment) (href : comment.ref = ref) (hHasBackendId : comment.backendId.isSome)
+    (hParentValid : ∀ parentId, comment.parent = some parentId → parentId ∈ manager.topLevelThreads.serverCommentIds)
+    (hParentThreadRegistered : ∀ parentId (h : parentId ∈ manager.topLevelThreads.serverCommentIds),
+      comment.parent = some parentId →
+        manager.topLevelThreads.serverCommentIds.get parentId h ∈ manager.topLevelThreads.commentTreeNodes)
+    (hRefFresh : comment.ref ∉ manager.topLevelThreads.commentTreeNodes)
+    (hLocationScope : ∀ loc', loc' ∈ manager.topLevelThreads.locationRoots.keys →
+      loc'.isTopLevel = comment.location.asThreadLocation.isTopLevel) :
+    ∀ ref' (h : (addCommentToThread manager.topLevelThreads comment hHasBackendId hParentValid
+        hParentThreadRegistered hRefFresh hLocationScope).commentTreeNodes.contains ref'),
+      ∃ h' : (manager.comments.insert ref comment).contains ref',
+        ((manager.comments.insert ref comment).get ref' h').backendId.isSome := by
+  intro ref' h
+  rw [addCommentToThread_commentTreeNodes_contains_iff manager.topLevelThreads comment
+    hHasBackendId hParentValid hParentThreadRegistered hRefFresh hLocationScope] at h
+  rcases h with hold | hnew
+  · obtain ⟨hExists'', hSome⟩ := manager.hTopLevelThreadsPublished ref' hold
+    have hne : ¬ (ref == ref') := by
+      simp only [beq_iff_eq]
+      intro heq
+      rw [← heq] at hold
+      exact hRefFresh (href ▸ Std.HashMap.mem_iff_contains.mpr hold)
+    have hc : (manager.comments.insert ref comment).contains ref' := by
+      rw [Std.HashMap.contains_insert, Bool.or_eq_true]; exact Or.inr hExists''
+    refine ⟨hc, ?_⟩
+    rw [Std.HashMap.get_insert_of_ne hne hc hExists'']; exact hSome
+  · have hnew' : ref = ref' := href.symm.trans hnew.symm
+    subst hnew'
+    have hc : (manager.comments.insert ref comment).contains ref := Std.HashMap.contains_insert_self
+    refine ⟨hc, ?_⟩
+    rw [Std.HashMap.get_insert_self hc]
+    exact hHasBackendId
+
+/-- Publishing `comment` preserves `CommentManager.hServerCommentIdsRegistered`: every
+server-tracked id in the resulting `topLevelThreads` still has a registered tree node -- either
+it's the freshly-registered `comment.ref` itself, or it was already registered (delegating to the
+old invariant, since `addCommentToThread`'s tree-node set only grows). -/
+public theorem CommentManager.hServerCommentIdsRegistered_insert (manager : CommentManager) (comment : Comment)
+    (hHasBackendId : comment.backendId.isSome)
+    (hParentValid : ∀ parentId, comment.parent = some parentId → parentId ∈ manager.topLevelThreads.serverCommentIds)
+    (hParentThreadRegistered : ∀ parentId (h : parentId ∈ manager.topLevelThreads.serverCommentIds),
+      comment.parent = some parentId →
+        manager.topLevelThreads.serverCommentIds.get parentId h ∈ manager.topLevelThreads.commentTreeNodes)
+    (hRefFresh : comment.ref ∉ manager.topLevelThreads.commentTreeNodes)
+    (hLocationScope : ∀ loc', loc' ∈ manager.topLevelThreads.locationRoots.keys →
+      loc'.isTopLevel = comment.location.asThreadLocation.isTopLevel) :
+    ∀ sid (h : (addCommentToThread manager.topLevelThreads comment hHasBackendId hParentValid
+        hParentThreadRegistered hRefFresh hLocationScope).serverCommentIds.contains sid),
+      (addCommentToThread manager.topLevelThreads comment hHasBackendId hParentValid hParentThreadRegistered
+        hRefFresh hLocationScope).commentTreeNodes.contains
+        ((addCommentToThread manager.topLevelThreads comment hHasBackendId hParentValid hParentThreadRegistered
+          hRefFresh hLocationScope).serverCommentIds.get sid h) := by
+  let topLevelThreads₁ := addCommentToThread manager.topLevelThreads comment hHasBackendId hParentValid
+    hParentThreadRegistered hRefFresh hLocationScope
+  show ∀ sid (h : topLevelThreads₁.serverCommentIds.contains sid),
+      topLevelThreads₁.commentTreeNodes.contains (topLevelThreads₁.serverCommentIds.get sid h)
+  have hEqServerIds : topLevelThreads₁.serverCommentIds =
+      manager.topLevelThreads.serverCommentIds.insert (comment.backendId.get hHasBackendId) comment.ref :=
+    addCommentToThread_serverCommentIds_eq manager.topLevelThreads comment
+      hHasBackendId hParentValid hParentThreadRegistered hRefFresh hLocationScope
+  rw [hEqServerIds]
+  intro sid h
+  have hmem : sid ∈ manager.topLevelThreads.serverCommentIds.insert
+      (comment.backendId.get hHasBackendId) comment.ref := h
+  show topLevelThreads₁.commentTreeNodes.contains
+      ((manager.topLevelThreads.serverCommentIds.insert
+        (comment.backendId.get hHasBackendId) comment.ref).get sid hmem)
+  rw [Std.HashMap.get_eq_getElem, Std.HashMap.getElem_insert]
+  show (addCommentToThread manager.topLevelThreads comment hHasBackendId hParentValid hParentThreadRegistered
+      hRefFresh hLocationScope).commentTreeNodes.contains _
+  rw [addCommentToThread_commentTreeNodes_contains_iff manager.topLevelThreads comment
+      hHasBackendId hParentValid hParentThreadRegistered hRefFresh hLocationScope]
+  split
+  · exact Or.inr rfl
+  · rename_i hne
+    have hOld : manager.topLevelThreads.serverCommentIds.contains sid := by
+      have h' : sid ∈ manager.topLevelThreads.serverCommentIds :=
+        (Std.HashMap.mem_insert.mp hmem).resolve_left hne
+      exact Std.HashMap.mem_iff_contains.mp h'
+    exact Or.inl (manager.hServerCommentIdsRegistered sid hOld)
