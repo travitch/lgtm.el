@@ -65,6 +65,11 @@ their defining module; this exposes the fact as a citable lemma instead. -/
 @[simp] public theorem CommentLocation.topLevel_asThreadLocation_isTopLevel :
     CommentLocation.topLevel.asThreadLocation.isTopLevel = true := rfl
 
+/-- The `fileLocation` counterpart of `topLevel_asThreadLocation_isTopLevel`, for the same
+cross-module unfolding reason. -/
+@[simp] public theorem CommentLocation.fileLocation_asThreadLocation_isTopLevel (loc : CommentFileLocation) :
+    (CommentLocation.fileLocation loc).asThreadLocation.isTopLevel = false := rfl
+
 public structure ServerId where
   id : String
   deriving Inhabited, Hashable, DecidableEq
@@ -160,9 +165,17 @@ public structure CommentThreads where
   hChildrenAreRegistered : ∀ ref (h : commentTreeNodes.contains ref) (child : CommentRef),
     child ∈ (commentTreeNodes.get ref h).children → commentTreeNodes.contains child
 
+  /-- Every server-tracked comment id has a registered tree node. Applies to every `CommentThreads`
+  pool (`CommentManager.topLevelThreads` as well as each file's `ModifiedFileState.baseThreads` /
+  `.currentThreads`), which is what lets `addCommentToThread` discharge its `hParentThreadRegistered`
+  obligation for any pool via this field directly, regardless of whether the pool is the top-level
+  one or a specific file's. -/
+  hServerCommentIdsRegistered : ∀ sid (h : serverCommentIds.contains sid),
+    commentTreeNodes.contains (serverCommentIds.get sid h)
+
 public def CommentThreads.empty : CommentThreads :=
   ⟨Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity,
-    by simp, by simp, by simp, by simp, by simp, by simp⟩
+    by simp, by simp, by simp, by simp, by simp, by simp, by simp⟩
 
 /-- Whether there are any threads to show.
 
@@ -226,15 +239,9 @@ public structure CommentManager where
   hTopLevelThreadsPublished : ∀ ref (h : topLevelThreads.commentTreeNodes.contains ref),
     ∃ h' : comments.contains ref, (comments.get ref h').backendId.isSome
 
-  /-- Every server-tracked comment id in `topLevelThreads` actually has a registered tree node. This
-  is what lets `completeCommentWithContent` discharge `addCommentToThread`'s
-  `hParentThreadRegistered` obligation once it knows the parent id is tracked at all. -/
-  hServerCommentIdsRegistered : ∀ sid (h : topLevelThreads.serverCommentIds.contains sid),
-    topLevelThreads.commentTreeNodes.contains (topLevelThreads.serverCommentIds.get sid h)
-
 public def CommentManager.empty : CommentManager :=
   ⟨Std.HashMap.emptyWithCapacity, CommentThreads.empty, none, by simp, by simp,
-    by simp [CommentThreads.empty], by simp [CommentThreads.empty], by simp [CommentThreads.empty]⟩
+    by simp [CommentThreads.empty], by simp [CommentThreads.empty]⟩
 
 /-- Looking up the key just inserted into a `Std.HashMap` returns the inserted value -- the
 proof-carrying counterpart of `Std.HashMap.getElem_insert_self`. -/
@@ -281,30 +288,6 @@ public theorem CommentManager.get_eq_getComments (manager : CommentManager) {ref
   rw [← Std.HashMap.getElem_eq_getElem! (h' := hmem)]
   exact Std.HashMap.get_eq_getElem.symm
 
-/-- The comment currently being edited exists, hasn't been published yet, and (if it's a reply) its
-parent has already been published into a live top-level thread. This is exactly what
-`completeCommentWithContent` needs in order to know that finalizing the edited comment can't
-collide with an existing thread node, and that any parent it references is already safe to attach
-to. -/
-@[expose] public def CommentManager.CommentBeingEditedWellFormed (manager : CommentManager) (ref : CommentRef) :
-    Prop :=
-  ∃ h : manager.comments.contains ref,
-    (manager.comments.get ref h).backendId = none ∧
-    ∀ parentId, (manager.comments.get ref h).parent = some parentId →
-      parentId ∈ manager.topLevelThreads.serverCommentIds
-
-/-- If `ref` is the comment currently being edited, `manager.get ref` recovers its own `ref`, is
-unpublished, and (if it's a reply) its parent is already registered in `topLevelThreads`. -/
-public theorem CommentManager.get_of_commentBeingEditedWellFormed (manager : CommentManager) (ref : CommentRef)
-    (hWF : manager.CommentBeingEditedWellFormed ref) :
-    (manager.get ref).ref = ref ∧ (manager.get ref).backendId = none ∧
-      ∀ parentId, (manager.get ref).parent = some parentId → parentId ∈ manager.topLevelThreads.serverCommentIds := by
-  obtain ⟨hExists, hUnpub, hParentOK⟩ := hWF
-  have hget : manager.get ref = manager.comments.get ref hExists := manager.get_eq_getComments hExists
-  refine ⟨manager.get_ref_eq hExists, ?_, ?_⟩
-  · rw [hget]; exact hUnpub
-  · rw [hget]; exact hParentOK
-
 /-- Any comment registered as some thread's parent in `topLevelThreads` already has a live tree
 node -- `addCommentToThread`'s `hParentThreadRegistered` obligation, restated without the unused
 `comment.parent = some parentId` hypothesis. -/
@@ -312,7 +295,7 @@ public theorem CommentManager.hParentThreadRegistered_mem (manager : CommentMana
     ∀ parentId (h : parentId ∈ manager.topLevelThreads.serverCommentIds),
       manager.topLevelThreads.serverCommentIds.get parentId h ∈ manager.topLevelThreads.commentTreeNodes :=
   fun parentId h => Std.HashMap.mem_iff_contains.mpr
-    (manager.hServerCommentIdsRegistered parentId (Std.HashMap.mem_iff_contains.mp h))
+    (manager.topLevelThreads.hServerCommentIdsRegistered parentId (Std.HashMap.mem_iff_contains.mp h))
 
 /-- A comment that hasn't been published yet (no `backendId`) can't already be registered as a tree
 node in `topLevelThreads`: every registered node is backed by a published comment
@@ -420,6 +403,16 @@ public structure ModifiedFileState where
       | .base => baseThreads
       | .current => currentThreads) sel
 
+  /-- Every location key registered in `baseThreads` is actually a file-scoped (non-top-level)
+  location. `baseThreads`/`currentThreads` are the pools for this file's own comments only;
+  `CommentManager.topLevelThreads` is the only place `.topLevel` locations belong. This is what
+  lets `completeCommentWithContent` satisfy `addCommentToThread`'s `hLocationScope` obligation when
+  finalizing a file-scoped comment. -/
+  hBaseThreadsFileScoped : ∀ loc, loc ∈ baseThreads.locationRoots.keys → loc.isTopLevel = false
+
+  /-- The `currentThreads` counterpart of `hBaseThreadsFileScoped`. -/
+  hCurrentThreadsFileScoped : ∀ loc, loc ∈ currentThreads.locationRoots.keys → loc.isTopLevel = false
+
 public structure ModifiedFileManager where
   state : Std.HashMap ModifiedFileRef ModifiedFileState
   /-- The files affected by the change in a server-defined order.  This is stored
@@ -434,12 +427,81 @@ public def ModifiedFileManager.resetCommentState (fileManager : ModifiedFileMana
     {fileState with selectedComment := none,
                     baseThreads := CommentThreads.empty,
                     currentThreads := CommentThreads.empty,
-                    hSelectedCommentWellFormed := by simp})
+                    hSelectedCommentWellFormed := by simp,
+                    hBaseThreadsFileScoped := by simp [CommentThreads.empty],
+                    hCurrentThreadsFileScoped := by simp [CommentThreads.empty]})
   have hConsistent : ∀ modifiedFile, modifiedFile ∈ fileManager.modifiedFiles ↔ updatedState.contains modifiedFile := by
     intro modifiedFile
     simp only [updatedState, Std.HashMap.contains_map]
     exact fileManager.hConsistentState modifiedFile
   { fileManager with state := updatedState, hConsistentState := hConsistent }
+
+/-- After resetting comment state, every file's `baseThreads`/`currentThreads` are empty
+(`CommentThreads.empty`), so any "every registered ref is published" obligation holds of them
+vacuously -- used by `resetCommentState` to reestablish `State.hFileThreadsPublished` after
+clearing all threads. -/
+public theorem ModifiedFileManager.hFileThreadsPublished_resetCommentState (fileManager : ModifiedFileManager)
+    (comments : Std.HashMap CommentRef Comment) :
+    ∀ modifiedFileRef (h : fileManager.resetCommentState.state.contains modifiedFileRef),
+      let modifiedFileState := fileManager.resetCommentState.state.get modifiedFileRef h
+      (∀ ref (hc : modifiedFileState.baseThreads.commentTreeNodes.contains ref),
+        ∃ h' : comments.contains ref, (comments.get ref h').backendId.isSome) ∧
+      (∀ ref (hc : modifiedFileState.currentThreads.commentTreeNodes.contains ref),
+        ∃ h' : comments.contains ref, (comments.get ref h').backendId.isSome) := by
+  intro modifiedFileRef h
+  have hget : fileManager.resetCommentState.state.get modifiedFileRef h =
+      { (fileManager.state.get modifiedFileRef (by simpa [ModifiedFileManager.resetCommentState] using h)) with
+        selectedComment := none, baseThreads := CommentThreads.empty, currentThreads := CommentThreads.empty,
+        hSelectedCommentWellFormed := by simp, hBaseThreadsFileScoped := by simp [CommentThreads.empty],
+        hCurrentThreadsFileScoped := by simp [CommentThreads.empty] } := by
+    simp only [ModifiedFileManager.resetCommentState]
+    rw [Std.HashMap.get_eq_getElem, Std.HashMap.get_eq_getElem, Std.HashMap.getElem_map]
+  simp only [hget]
+  simp [CommentThreads.empty]
+
+/-- The comment currently being edited exists, hasn't been published yet, and (if it's a reply) its
+parent has already been published into a live thread in the pool matching its own location: the
+top-level pool for a top-level comment, or the matching file+version pool for a file-scoped one.
+This is exactly what `completeCommentWithContent` needs in order to know that finalizing the edited
+comment can't collide with an existing thread node, and that any parent it references is already
+safe to attach to. -/
+@[expose] public def CommentManager.CommentBeingEditedWellFormed (manager : CommentManager)
+    (fileManager : ModifiedFileManager) (ref : CommentRef) : Prop :=
+  ∃ h : manager.comments.contains ref,
+    (manager.comments.get ref h).backendId = none ∧
+    ∀ parentId, (manager.comments.get ref h).parent = some parentId →
+      match (manager.comments.get ref h).location with
+      | .topLevel => parentId ∈ manager.topLevelThreads.serverCommentIds
+      | .fileLocation loc =>
+        ∀ modifiedFileRef (modifiedFileState : ModifiedFileState),
+          (modifiedFileRef, modifiedFileState) ∈ fileManager.state.toList →
+          modifiedFileState.fileRef == loc.fileRef →
+          parentId ∈ (match loc.version with
+            | .base => modifiedFileState.baseThreads
+            | .current => modifiedFileState.currentThreads).serverCommentIds
+
+/-- If `ref` is the comment currently being edited, `manager.get ref` recovers its own `ref`, is
+unpublished, and (if it's a reply) its parent is already registered in the pool matching its
+location. -/
+public theorem CommentManager.get_of_commentBeingEditedWellFormed (manager : CommentManager)
+    (fileManager : ModifiedFileManager) (ref : CommentRef)
+    (hWF : manager.CommentBeingEditedWellFormed fileManager ref) :
+    (manager.get ref).ref = ref ∧ (manager.get ref).backendId = none ∧
+      ∀ parentId, (manager.get ref).parent = some parentId →
+        match (manager.get ref).location with
+        | .topLevel => parentId ∈ manager.topLevelThreads.serverCommentIds
+        | .fileLocation loc =>
+          ∀ modifiedFileRef (modifiedFileState : ModifiedFileState),
+            (modifiedFileRef, modifiedFileState) ∈ fileManager.state.toList →
+            modifiedFileState.fileRef == loc.fileRef →
+            parentId ∈ (match loc.version with
+              | .base => modifiedFileState.baseThreads
+              | .current => modifiedFileState.currentThreads).serverCommentIds := by
+  obtain ⟨hExists, hUnpub, hParentOK⟩ := hWF
+  have hget : manager.get ref = manager.comments.get ref hExists := manager.get_eq_getComments hExists
+  refine ⟨manager.get_ref_eq hExists, ?_, ?_⟩
+  · rw [hget]; exact hUnpub
+  · rw [hget]; exact hParentOK
 
 /-- This would ideally be an inductive, but different servers can provide different statuses.  We just
 take what they give us. -/
@@ -476,9 +538,21 @@ public structure State where
   fileManager : ModifiedFileManager
 
   /-- Whichever comment is currently being edited is well-formed: it exists, is unpublished, and any
-  parent it references is already registered in a live top-level thread. -/
+  parent it references is already registered in the pool matching its own location. -/
   hCommentBeingEditedWellFormed : ∀ ref, commentBeingEdited = some ref →
-    commentManager.CommentBeingEditedWellFormed ref
+    commentManager.CommentBeingEditedWellFormed fileManager ref
+
+  /-- Every comment registered as a tree node in any file's `baseThreads` / `currentThreads` has
+  actually been published (has a server-assigned `backendId`). The file-pool analogue of
+  `CommentManager.hTopLevelThreadsPublished`. Combined with `hCommentBeingEditedWellFormed`, this is
+  what lets `completeCommentWithContent` know a file-scoped comment it is about to publish can't
+  already be registered in that file's thread pool, satisfying `addCommentToThread`'s `hRefFresh`
+  obligation. -/
+  hFileThreadsPublished : ∀ modifiedFileRef (h : fileManager.state.contains modifiedFileRef),
+    (∀ ref (hc : (fileManager.state.get modifiedFileRef h).baseThreads.commentTreeNodes.contains ref),
+      ∃ h' : commentManager.comments.contains ref, (commentManager.comments.get ref h').backendId.isSome) ∧
+    (∀ ref (hc : (fileManager.state.get modifiedFileRef h).currentThreads.commentTreeNodes.contains ref),
+      ∃ h' : commentManager.comments.contains ref, (commentManager.comments.get ref h').backendId.isSome)
 
 public abbrev LgtmM α := StateT State (Except String) α
 
