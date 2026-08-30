@@ -177,6 +177,16 @@ public def CommentThreads.empty : CommentThreads :=
   ⟨Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity,
     by simp, by simp, by simp, by simp, by simp, by simp, by simp⟩
 
+/-- Any comment registered as some thread's parent in `threads` already has a live tree node --
+`addCommentToThread`'s `hParentThreadRegistered` obligation, restated without the unused
+`comment.parent = some parentId` hypothesis. Applies to any pool (`CommentManager.topLevelThreads`
+as well as any file's `ModifiedFileState.baseThreads` / `.currentThreads`). -/
+public theorem CommentThreads.hParentThreadRegistered_mem (threads : CommentThreads) :
+    ∀ parentId (h : parentId ∈ threads.serverCommentIds),
+      threads.serverCommentIds.get parentId h ∈ threads.commentTreeNodes :=
+  fun parentId h => Std.HashMap.mem_iff_contains.mpr
+    (threads.hServerCommentIdsRegistered parentId (Std.HashMap.mem_iff_contains.mp h))
+
 /-- Whether there are any threads to show.
 
 Note: this is based on `locationRoots` (what's actually reachable/displayable), not
@@ -288,14 +298,11 @@ public theorem CommentManager.get_eq_getComments (manager : CommentManager) {ref
   rw [← Std.HashMap.getElem_eq_getElem! (h' := hmem)]
   exact Std.HashMap.get_eq_getElem.symm
 
-/-- Any comment registered as some thread's parent in `topLevelThreads` already has a live tree
-node -- `addCommentToThread`'s `hParentThreadRegistered` obligation, restated without the unused
-`comment.parent = some parentId` hypothesis. -/
+/-- Specializes `CommentThreads.hParentThreadRegistered_mem` to `topLevelThreads`. -/
 public theorem CommentManager.hParentThreadRegistered_mem (manager : CommentManager) :
     ∀ parentId (h : parentId ∈ manager.topLevelThreads.serverCommentIds),
       manager.topLevelThreads.serverCommentIds.get parentId h ∈ manager.topLevelThreads.commentTreeNodes :=
-  fun parentId h => Std.HashMap.mem_iff_contains.mpr
-    (manager.topLevelThreads.hServerCommentIdsRegistered parentId (Std.HashMap.mem_iff_contains.mp h))
+  manager.topLevelThreads.hParentThreadRegistered_mem
 
 /-- A comment that hasn't been published yet (no `backendId`) can't already be registered as a tree
 node in `topLevelThreads`: every registered node is backed by a published comment
@@ -308,6 +315,21 @@ public theorem CommentManager.notMem_topLevelThreads_of_unpublished (manager : C
   have hEqGet : manager.comments.get ref hExists' = manager.get ref := (manager.get_eq_getComments hExists').symm
   rw [hEqGet, hUnpub] at hSome
   simp at hSome
+
+/-- If every published ref in the old `comments` map is still published in a new `comments₁` map
+(e.g. because `comments₁` only grows), `hTopLevelThreadsPublished` transfers to `comments₁` too:
+`topLevelThreads` itself is unaffected, so this is exactly what `completeCommentWithContent` needs
+to re-establish `CommentManager.hTopLevelThreadsPublished` after publishing a comment into some
+*other* pool (a file's, not the top-level one). -/
+public theorem CommentManager.hTopLevelThreadsPublished_of_preserve (manager : CommentManager)
+    {comments₁ : Std.HashMap CommentRef Comment}
+    (hPreserve : ∀ ref (h : manager.comments.contains ref), (manager.comments.get ref h).backendId.isSome →
+      ∃ h' : comments₁.contains ref, (comments₁.get ref h').backendId.isSome) :
+    ∀ ref' (h : manager.topLevelThreads.commentTreeNodes.contains ref'),
+      ∃ h' : comments₁.contains ref', (comments₁.get ref' h').backendId.isSome := by
+  intro ref' h
+  obtain ⟨hcOld, hpubOld⟩ := manager.hTopLevelThreadsPublished ref' h
+  exact hPreserve ref' hcOld hpubOld
 
 /-- `topLevelThreads`'s location keys stay in scope for a comment whose location actually is
 top-level: they're all top-level themselves (`hTopLevelThreadsAllTopLevel`), which is exactly what
@@ -338,6 +360,31 @@ public theorem CommentManager.hCommentsKeyedByRef_insert (manager : CommentManag
       · exact h1
     rw [Std.HashMap.get_insert_of_ne hne h hc]
     exact manager.hCommentsKeyedByRef ref' hc
+
+/-- Inserting a fresh, previously-unpublished comment (`ref`, `hUnpub`) into `comments` preserves
+the published status of every other ref: an already-published ref can't be `ref` itself (since
+`ref` was unpublished), so its entry is untouched by the insert. Used by
+`completeCommentWithContent` to transport `hTopLevelThreadsPublished` / `hFileThreadsPublished`
+facts across publishing the being-edited comment. -/
+public theorem CommentManager.preservePublished_insert (manager : CommentManager) {ref : CommentRef}
+    (hUnpub : (manager.get ref).backendId = none) (comment : Comment) :
+    ∀ ref' (h : manager.comments.contains ref'), (manager.comments.get ref' h).backendId.isSome →
+      ∃ h' : (manager.comments.insert ref comment).contains ref',
+        ((manager.comments.insert ref comment).get ref' h').backendId.isSome := by
+  intro ref' h hpub
+  have hne : ref' ≠ ref := by
+    intro heq
+    subst heq
+    have hgetEq : manager.comments.get ref' h = manager.get ref' := (manager.get_eq_getComments h).symm
+    rw [hgetEq, hUnpub] at hpub
+    simp at hpub
+  have hc : (manager.comments.insert ref comment).contains ref' := by
+    rw [Std.HashMap.contains_insert, Bool.or_eq_true]
+    exact Or.inr h
+  refine ⟨hc, ?_⟩
+  have hne' : ¬ (ref == ref') := by simpa [beq_iff_eq] using (Ne.symm hne)
+  rw [Std.HashMap.get_insert_of_ne hne' hc h]
+  exact hpub
 
 /-- A hash of a git revision -/
 public structure GitRevision where
@@ -413,6 +460,25 @@ public structure ModifiedFileState where
   /-- The `currentThreads` counterpart of `hBaseThreadsFileScoped`. -/
   hCurrentThreadsFileScoped : ∀ loc, loc ∈ currentThreads.locationRoots.keys → loc.isTopLevel = false
 
+/-- `baseThreads`'s location keys stay in scope for a comment whose location actually is
+file-scoped (non-top-level): they're all non-top-level themselves (`hBaseThreadsFileScoped`), which
+is exactly what a file-scoped comment's location reduces to. The `ModifiedFileState` counterpart of
+`CommentManager.locationScope_of_topLevel`. -/
+public theorem ModifiedFileState.locationScope_of_base (modifiedFileState : ModifiedFileState)
+    {location : CommentLocation} (hloc : location.asThreadLocation.isTopLevel = false) :
+    ∀ loc', loc' ∈ modifiedFileState.baseThreads.locationRoots.keys →
+      loc'.isTopLevel = location.asThreadLocation.isTopLevel := by
+  rw [hloc]
+  exact modifiedFileState.hBaseThreadsFileScoped
+
+/-- The `currentThreads` counterpart of `ModifiedFileState.locationScope_of_base`. -/
+public theorem ModifiedFileState.locationScope_of_current (modifiedFileState : ModifiedFileState)
+    {location : CommentLocation} (hloc : location.asThreadLocation.isTopLevel = false) :
+    ∀ loc', loc' ∈ modifiedFileState.currentThreads.locationRoots.keys →
+      loc'.isTopLevel = location.asThreadLocation.isTopLevel := by
+  rw [hloc]
+  exact modifiedFileState.hCurrentThreadsFileScoped
+
 public structure ModifiedFileManager where
   state : Std.HashMap ModifiedFileRef ModifiedFileState
   /-- The files affected by the change in a server-defined order.  This is stored
@@ -421,6 +487,47 @@ public structure ModifiedFileManager where
 
   /-- Invariant: Each modified file ref has an entry in `state`. -/
   hConsistentState : ∀ modifiedFile, modifiedFile ∈ modifiedFiles ↔ state.contains modifiedFile
+
+/-- Recovers proof-carrying `contains`/`get` facts from a successful `List.find?` over
+`state.toList` -- used by `completeCommentWithContent` to look up the `ModifiedFileState` for a
+comment's file location (found by matching on `.fileRef`, since the `ModifiedFileRef` key itself
+isn't known upfront). -/
+public theorem ModifiedFileManager.contains_get_of_find? (fileManager : ModifiedFileManager)
+    {fileRef : ModifiedFileRef} {modifiedFileState : ModifiedFileState}
+    {p : ModifiedFileRef × ModifiedFileState → Bool}
+    (hfound : fileManager.state.toList.find? p = some (fileRef, modifiedFileState)) :
+    ∃ h : fileManager.state.contains fileRef, fileManager.state.get fileRef h = modifiedFileState ∧
+      p (fileRef, modifiedFileState) := by
+  have hmem : (fileRef, modifiedFileState) ∈ fileManager.state.toList := List.mem_of_find?_eq_some hfound
+  have hpred := List.find?_some hfound
+  have hgetElem? : fileManager.state[fileRef]? = some modifiedFileState :=
+    (Std.HashMap.mem_toList_iff_getElem?_eq_some).mp hmem
+  have hContainsFileRef : fileManager.state.contains fileRef := by
+    rw [Std.HashMap.contains_eq_isSome_getElem?, hgetElem?]; rfl
+  refine ⟨hContainsFileRef, ?_, hpred⟩
+  obtain ⟨_, hval⟩ := Std.HashMap.getElem?_eq_some_iff.mp hgetElem?
+  exact hval
+
+/-- Inserting at an already-`contains`ed key preserves `hConsistentState`: the key set of `state`
+is unchanged (only the value at `fileRef` is replaced). Used by `completeCommentWithContent` to
+reestablish `ModifiedFileManager.hConsistentState` after updating one file's threads; shared
+verbatim by the `.base` and `.current` cases since neither depends on which of the file's thread
+pools changed. -/
+public theorem ModifiedFileManager.hConsistentState_insert (fileManager : ModifiedFileManager)
+    {fileRef : ModifiedFileRef} (hOldContains : fileManager.state.contains fileRef)
+    (newFileState : ModifiedFileState) :
+    ∀ modifiedFile, modifiedFile ∈ fileManager.modifiedFiles ↔
+      (fileManager.state.insert fileRef newFileState).contains modifiedFile := by
+  intro modifiedFile
+  rw [Std.HashMap.contains_insert, Bool.or_eq_true, beq_iff_eq]
+  constructor
+  · intro hmf
+    by_cases heq : fileRef = modifiedFile
+    · exact Or.inl heq
+    · exact Or.inr ((fileManager.hConsistentState modifiedFile).mp hmf)
+  · rintro (heq | hc)
+    · rw [← heq]; exact (fileManager.hConsistentState fileRef).mpr hOldContains
+    · exact (fileManager.hConsistentState modifiedFile).mpr hc
 
 public def ModifiedFileManager.resetCommentState (fileManager : ModifiedFileManager) : ModifiedFileManager :=
   let updatedState := fileManager.state.map (fun modifiedFileRef fileState =>
@@ -553,6 +660,150 @@ public structure State where
       ∃ h' : commentManager.comments.contains ref, (commentManager.comments.get ref h').backendId.isSome) ∧
     (∀ ref (hc : (fileManager.state.get modifiedFileRef h).currentThreads.commentTreeNodes.contains ref),
       ∃ h' : commentManager.comments.contains ref, (commentManager.comments.get ref h').backendId.isSome)
+
+/-- A comment that hasn't been published yet (no `backendId`) can't already be registered as a tree
+node in a file's `baseThreads`: every registered node there is backed by a published comment
+(`hFileThreadsPublished`). The file-pool analogue of
+`CommentManager.notMem_topLevelThreads_of_unpublished`. -/
+public theorem State.notMem_baseThreads_of_unpublished (s : State) {ref : CommentRef}
+    (hUnpub : (s.commentManager.get ref).backendId = none)
+    {fileRef : ModifiedFileRef} (h : s.fileManager.state.contains fileRef) :
+    ref ∉ (s.fileManager.state.get fileRef h).baseThreads.commentTreeNodes := by
+  intro hmemPool
+  obtain ⟨hExists', hSome⟩ := (s.hFileThreadsPublished fileRef h).1 ref (Std.HashMap.mem_iff_contains.mp hmemPool)
+  have hEqGet : s.commentManager.comments.get ref hExists' = s.commentManager.get ref :=
+    (s.commentManager.get_eq_getComments hExists').symm
+  rw [hEqGet, hUnpub] at hSome
+  simp at hSome
+
+/-- The `currentThreads` counterpart of `State.notMem_baseThreads_of_unpublished`. -/
+public theorem State.notMem_currentThreads_of_unpublished (s : State) {ref : CommentRef}
+    (hUnpub : (s.commentManager.get ref).backendId = none)
+    {fileRef : ModifiedFileRef} (h : s.fileManager.state.contains fileRef) :
+    ref ∉ (s.fileManager.state.get fileRef h).currentThreads.commentTreeNodes := by
+  intro hmemPool
+  obtain ⟨hExists', hSome⟩ := (s.hFileThreadsPublished fileRef h).2 ref (Std.HashMap.mem_iff_contains.mp hmemPool)
+  have hEqGet : s.commentManager.comments.get ref hExists' = s.commentManager.get ref :=
+    (s.commentManager.get_eq_getComments hExists').symm
+  rw [hEqGet, hUnpub] at hSome
+  simp at hSome
+
+/-- Publishing a file-scoped comment into `baseThreads` (via `addCommentToThread`, whose effect on
+`commentTreeNodes` is summarized by `hNewBaseThreadsContains`) and storing the updated file state
+back into `fileManager.state` preserves `State.hFileThreadsPublished`: every tree node in the
+touched file's pools is still backed by a published comment (`comment₂` itself is newly published,
+`hbackendId2`; everything else delegates to the old invariant via
+`CommentManager.preservePublished_insert`), and every other file's pools are untouched. The
+`.base`-version counterpart of `CommentManager.hTopLevelThreadsPublished_insert`. -/
+public theorem State.hFileThreadsPublished_insert_base (s : State)
+    {fileRef : ModifiedFileRef} {modifiedFileState : ModifiedFileState}
+    (hOldContains : s.fileManager.state.contains fileRef)
+    (hgetval : s.fileManager.state.get fileRef hOldContains = modifiedFileState)
+    {editedCommentRef : CommentRef} (hUnpub : (s.commentManager.get editedCommentRef).backendId = none)
+    {comment₂ : Comment} (href2 : comment₂.ref = editedCommentRef) {serverId : ServerId}
+    (hbackendId2 : comment₂.backendId = some serverId)
+    {newBaseThreads : CommentThreads}
+    (hNewBaseThreadsContains : ∀ ref, newBaseThreads.commentTreeNodes.contains ref ↔
+      modifiedFileState.baseThreads.commentTreeNodes.contains ref ∨ ref = comment₂.ref)
+    {newFileState : ModifiedFileState} (hNewFileStateBase : newFileState.baseThreads = newBaseThreads)
+    (hNewFileStateCurrent : newFileState.currentThreads = modifiedFileState.currentThreads)
+    {newState : Std.HashMap ModifiedFileRef ModifiedFileState}
+    (hNewState : newState = s.fileManager.state.insert fileRef newFileState)
+    {newComments : Std.HashMap CommentRef Comment}
+    (hNewComments : newComments = s.commentManager.comments.insert editedCommentRef comment₂) :
+    ∀ modifiedFileRef' (h : newState.contains modifiedFileRef'),
+      (∀ ref (hc : (newState.get modifiedFileRef' h).baseThreads.commentTreeNodes.contains ref),
+        ∃ h' : newComments.contains ref, (newComments.get ref h').backendId.isSome) ∧
+      (∀ ref (hc : (newState.get modifiedFileRef' h).currentThreads.commentTreeNodes.contains ref),
+        ∃ h' : newComments.contains ref, (newComments.get ref h').backendId.isSome) := by
+  subst hNewState hNewComments hgetval
+  have hPreserve := s.commentManager.preservePublished_insert hUnpub comment₂
+  intro modifiedFileRef' h
+  by_cases heq : fileRef = modifiedFileRef'
+  · subst heq
+    rw [Std.HashMap.get_insert_self, hNewFileStateBase, hNewFileStateCurrent]
+    refine ⟨fun ref hc => ?_, fun ref hc => ?_⟩
+    · rcases (hNewBaseThreadsContains ref).mp hc with hold | hnew
+      · obtain ⟨hcOld, hpubOld⟩ := (s.hFileThreadsPublished fileRef hOldContains).1 ref hold
+        exact hPreserve ref hcOld hpubOld
+      · have hcNew : (s.commentManager.comments.insert editedCommentRef comment₂).contains editedCommentRef :=
+          Std.HashMap.contains_insert_self
+        rw [hnew, href2]
+        refine ⟨hcNew, ?_⟩
+        rw [Std.HashMap.get_insert_self, hbackendId2]
+        rfl
+    · obtain ⟨hcOld, hpubOld⟩ := (s.hFileThreadsPublished fileRef hOldContains).2 ref hc
+      exact hPreserve ref hcOld hpubOld
+  · have hne'' : ¬ (fileRef == modifiedFileRef') := by simpa [beq_iff_eq] using heq
+    have hcOld : s.fileManager.state.contains modifiedFileRef' := by
+      have h' := h
+      rw [Std.HashMap.contains_insert, Bool.or_eq_true, beq_iff_eq] at h'
+      rcases h' with h1 | h1
+      · exact absurd h1 heq
+      · exact h1
+    rw [Std.HashMap.get_insert_of_ne hne'' h hcOld]
+    obtain ⟨hBase, hCurrent⟩ := s.hFileThreadsPublished modifiedFileRef' hcOld
+    refine ⟨fun ref hc => ?_, fun ref hc => ?_⟩
+    · obtain ⟨hc', hpub'⟩ := hBase ref hc
+      exact hPreserve ref hc' hpub'
+    · obtain ⟨hc', hpub'⟩ := hCurrent ref hc
+      exact hPreserve ref hc' hpub'
+
+/-- The `.current`-version counterpart of `State.hFileThreadsPublished_insert_base`. -/
+public theorem State.hFileThreadsPublished_insert_current (s : State)
+    {fileRef : ModifiedFileRef} {modifiedFileState : ModifiedFileState}
+    (hOldContains : s.fileManager.state.contains fileRef)
+    (hgetval : s.fileManager.state.get fileRef hOldContains = modifiedFileState)
+    {editedCommentRef : CommentRef} (hUnpub : (s.commentManager.get editedCommentRef).backendId = none)
+    {comment₂ : Comment} (href2 : comment₂.ref = editedCommentRef) {serverId : ServerId}
+    (hbackendId2 : comment₂.backendId = some serverId)
+    {newCurrentThreads : CommentThreads}
+    (hNewCurrentThreadsContains : ∀ ref, newCurrentThreads.commentTreeNodes.contains ref ↔
+      modifiedFileState.currentThreads.commentTreeNodes.contains ref ∨ ref = comment₂.ref)
+    {newFileState : ModifiedFileState}
+    (hNewFileStateBase : newFileState.baseThreads = modifiedFileState.baseThreads)
+    (hNewFileStateCurrent : newFileState.currentThreads = newCurrentThreads)
+    {newState : Std.HashMap ModifiedFileRef ModifiedFileState}
+    (hNewState : newState = s.fileManager.state.insert fileRef newFileState)
+    {newComments : Std.HashMap CommentRef Comment}
+    (hNewComments : newComments = s.commentManager.comments.insert editedCommentRef comment₂) :
+    ∀ modifiedFileRef' (h : newState.contains modifiedFileRef'),
+      (∀ ref (hc : (newState.get modifiedFileRef' h).baseThreads.commentTreeNodes.contains ref),
+        ∃ h' : newComments.contains ref, (newComments.get ref h').backendId.isSome) ∧
+      (∀ ref (hc : (newState.get modifiedFileRef' h).currentThreads.commentTreeNodes.contains ref),
+        ∃ h' : newComments.contains ref, (newComments.get ref h').backendId.isSome) := by
+  subst hNewState hNewComments hgetval
+  have hPreserve := s.commentManager.preservePublished_insert hUnpub comment₂
+  intro modifiedFileRef' h
+  by_cases heq : fileRef = modifiedFileRef'
+  · subst heq
+    rw [Std.HashMap.get_insert_self, hNewFileStateBase, hNewFileStateCurrent]
+    refine ⟨fun ref hc => ?_, fun ref hc => ?_⟩
+    · obtain ⟨hcOld, hpubOld⟩ := (s.hFileThreadsPublished fileRef hOldContains).1 ref hc
+      exact hPreserve ref hcOld hpubOld
+    · rcases (hNewCurrentThreadsContains ref).mp hc with hold | hnew
+      · obtain ⟨hcOld, hpubOld⟩ := (s.hFileThreadsPublished fileRef hOldContains).2 ref hold
+        exact hPreserve ref hcOld hpubOld
+      · have hcNew : (s.commentManager.comments.insert editedCommentRef comment₂).contains editedCommentRef :=
+          Std.HashMap.contains_insert_self
+        rw [hnew, href2]
+        refine ⟨hcNew, ?_⟩
+        rw [Std.HashMap.get_insert_self, hbackendId2]
+        rfl
+  · have hne'' : ¬ (fileRef == modifiedFileRef') := by simpa [beq_iff_eq] using heq
+    have hcOld : s.fileManager.state.contains modifiedFileRef' := by
+      have h' := h
+      rw [Std.HashMap.contains_insert, Bool.or_eq_true, beq_iff_eq] at h'
+      rcases h' with h1 | h1
+      · exact absurd h1 heq
+      · exact h1
+    rw [Std.HashMap.get_insert_of_ne hne'' h hcOld]
+    obtain ⟨hBase, hCurrent⟩ := s.hFileThreadsPublished modifiedFileRef' hcOld
+    refine ⟨fun ref hc => ?_, fun ref hc => ?_⟩
+    · obtain ⟨hc', hpub'⟩ := hBase ref hc
+      exact hPreserve ref hc' hpub'
+    · obtain ⟨hc', hpub'⟩ := hCurrent ref hc
+      exact hPreserve ref hc' hpub'
 
 public abbrev LgtmM α := StateT State (Except String) α
 
