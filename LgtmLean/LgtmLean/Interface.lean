@@ -327,7 +327,7 @@ private theorem completeCommentWithContent.preservesStateOnError (s₀ : State) 
               · left; rfl
               · left; rfl
 
-private theorem completeCommentWithcontent.failsWithNoCurrentEditedComment (s₀ : State)
+private theorem completeCommentWithContent.failsWithNoCurrentEditedComment (s₀ : State)
   (input : String)
   (result : Result (Except String Comment))
   (hNotEmptyInput : input != "")
@@ -341,3 +341,24 @@ private theorem completeCommentWithcontent.failsWithNoCurrentEditedComment (s₀
     rw [bne_iff_ne] at hNotEmptyInput
     simp [hNotEmptyInput]
   simp [completeCommentWithContent, hEmpty]
+
+private theorem completeCommentWithContent.failsIfSavingCommentToServerFails (s₀ : State)
+  (input : String)
+  (result : Result (Except String Comment))
+  (hNotEmptyInput : input != "")
+  (comment₀ : Comment)
+  (editedCommentRef : CommentRef)
+  (hCommentBeingEdited : s₀.commentBeingEdited = some editedCommentRef)
+  (hThisCommentIsBeingEdited : s₀.commentManager.get editedCommentRef = comment₀)
+  (hResultOfOp : completeCommentWithContent s₀ input = result) :
+  s₀.configuration.createComment { comment₀ with content := input } = none → ¬ result.value.isOk := by
+  intro hCreateFails
+  subst hResultOfOp
+  obtain ⟨config, activeFile, cbe, cm, fm, hCBWF, hFTP⟩ := s₀
+  dsimp only at hThisCommentIsBeingEdited hCreateFails
+  subst hCommentBeingEdited
+  subst hThisCommentIsBeingEdited
+  have hEmpty : input.isEmpty = false := by
+    rw [bne_iff_ne] at hNotEmptyInput
+    simp [hNotEmptyInput]
+  simp [completeCommentWithContent, hEmpty, hCreateFails, Except.isOk, Except.toBool]
