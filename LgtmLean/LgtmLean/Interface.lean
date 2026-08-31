@@ -295,9 +295,12 @@ public def completeCommentWithContent (s₀ : State) (newContent : String) : Res
                           hFileThreadsPublished := hFileThreadsPublished₂ }
               Result.mk (Except.ok comment₂) s₁
 
-private theorem completeCommentWithContent.rejectsEmptyContent (s₀ : State) :
-  ∃ msg result, completeCommentWithContent s₀ "" = result ∧ result.value = Except.error msg :=
-    ⟨"Comments cannot be empty", _, rfl, rfl⟩
+private theorem completeCommentWithContent.rejectsEmptyContent (s₀ : State)
+  (result : Result (Except String Comment))
+  (hResultOfOp : completeCommentWithContent s₀ "" = result):
+  ∃ msg, result.value = Except.error msg := by
+  subst hResultOfOp
+  simp [completeCommentWithContent]
 
 private theorem completeCommentWithContent.preservesStateOnError (s₀ : State) (input : String):
   ∃ result, completeCommentWithContent s₀ input = result ∧ (¬ result.value.isOk → result.updatedState = s₀) := by
