@@ -326,3 +326,18 @@ private theorem completeCommentWithContent.preservesStateOnError (s₀ : State) 
             · split
               · left; rfl
               · left; rfl
+
+private theorem completeCommentWithcontent.failsWithNoCurrentEditedComment (s₀ : State)
+  (input : String)
+  (result : Result (Except String Comment))
+  (hNotEmptyInput : input != "")
+  (hResultOfOp : completeCommentWithContent s₀ input = result)
+  (hNoActiveCommentBeingEdited : s₀.commentBeingEdited = none) :
+  ∃ msg, result.value = Except.error msg := by
+  subst hResultOfOp
+  obtain ⟨config, activeFile, cbe, cm, fm, hCBWF, hFTP⟩ := s₀
+  subst hNoActiveCommentBeingEdited
+  have hEmpty : input.isEmpty = false := by
+    rw [bne_iff_ne] at hNotEmptyInput
+    simp [hNotEmptyInput]
+  simp [completeCommentWithContent, hEmpty]
