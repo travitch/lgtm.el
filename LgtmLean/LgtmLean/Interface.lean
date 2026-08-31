@@ -362,3 +362,8 @@ private theorem completeCommentWithContent.failsIfSavingCommentToServerFails (s�
     rw [bne_iff_ne] at hNotEmptyInput
     simp [hNotEmptyInput]
   simp [completeCommentWithContent, hEmpty, hCreateFails, Except.isOk, Except.toBool]
+
+public def cancelCommentCreation (s₀ : State) : Result Unit :=
+  let s₁ := { s₀ with commentBeingEdited := none
+                      hCommentBeingEditedWellFormed := by simp }
+  Result.mk () s₁
