@@ -5,23 +5,25 @@ import Std
 public import LgtmLean.Basic
 public import LgtmLean.CreateThreads
 
+public structure Result α where
+  value : α
+  updatedState : State
 
 /-- Delete all of the comments in the current review state.
 
 This is used to prepare to fetch an updated state from the server. -/
-public def resetCommentState : LgtmM Unit := do
-  let s₀ ← getState
+public def resetCommentState (s₀ : State) : Result Unit :=
   let manager₁ := s₀.fileManager.resetCommentState
-  setState { s₀ with
-    commentBeingEdited := none,
-    commentManager := CommentManager.empty,
-    fileManager := manager₁,
-    hCommentBeingEditedWellFormed := by simp,
-    hFileThreadsPublished := s₀.fileManager.hFileThreadsPublished_resetCommentState CommentManager.empty.comments }
+  let s₁ := { s₀ with
+              commentBeingEdited := none,
+              commentManager := CommentManager.empty,
+              fileManager := manager₁,
+              hCommentBeingEditedWellFormed := by simp,
+              hFileThreadsPublished := s₀.fileManager.hFileThreadsPublished_resetCommentState CommentManager.empty.comments }
+  Result.mk () s₁
 
 
-public def addRemoteComments (comments : List Comment) : LgtmM Unit := do
-  pure ()
+public def addRemoteComments (s₀ : State) (comments : List Comment) : Result Unit := sorry
 
 /-- The core worker called to update the state when the user marks a comment as done.
 
@@ -40,18 +42,17 @@ Note that we could add a proof obligation that the content is not empty, but thi
 context outside of the context of the Lean code, so that proof obligation cannot be fulfilled.
 
 -/
-public def completeCommentWithContent (newContent : String) : LgtmM (Except String Comment) := do
+public def completeCommentWithContent (s₀ : State) (newContent : String) : Result (Except String Comment) :=
   if newContent.isEmpty then
-    pure (Except.error "Comments cannot be empty")
+    Result.mk (Except.error "Comments cannot be empty") s₀
   else
-    let s₀ ← getState
     match hBeingEdited : s₀.commentBeingEdited with
-    | none => pure (Except.error "No active comment")
+    | none => Result.mk (Except.error "No active comment") s₀
     | some editedCommentRef =>
       let comment₀ := s₀.commentManager.get editedCommentRef
       let comment₁ := { comment₀ with content := newContent }
       match s₀.configuration.createComment comment₁ with
-      | none => pure (Except.error "Failed to create the comment on the server")
+      | none => Result.mk (Except.error "Failed to create the comment on the server") s₀
       | some serverId =>
         let comment₂ : Comment := { comment₁ with backendId := serverId }
         have hbackendId2 : comment₂.backendId = some serverId := rfl
@@ -135,15 +136,15 @@ public def completeCommentWithContent (newContent : String) : LgtmM (Except Stri
               hCommentsKeyedByRef := hCommentsKeyedByRef₁,
               hTopLevelThreadsAllTopLevel := hTopLevelThreadsAllTopLevel₁,
               hTopLevelThreadsPublished := hTopLevelThreadsPublished₁ }
-          setState { s₀ with
-            commentBeingEdited := none,
-            commentManager := commentManager₁,
-            hCommentBeingEditedWellFormed := by simp,
-            hFileThreadsPublished := hFileThreadsPublished₁ }
-          pure (Except.ok comment₂)
+          let s₁ := { s₀ with
+                      commentBeingEdited := none,
+                      commentManager := commentManager₁,
+                      hCommentBeingEditedWellFormed := by simp,
+                      hFileThreadsPublished := hFileThreadsPublished₁ }
+          Result.mk (Except.ok comment₂) s₁
         | .fileLocation loc =>
           match hfound : s₀.fileManager.state.toList.find? (λ (_, modifiedFileState) => modifiedFileState.fileRef == loc.fileRef) with
-          | none => pure (Except.error "Unexpected file")
+          | none => Result.mk (Except.error "Unexpected file") s₀
           | some (fileRef, modifiedFileState) =>
             have hFound := s₀.fileManager.contains_get_of_find? hfound
             have hOldContainsFileRef := hFound.1
@@ -236,13 +237,13 @@ public def completeCommentWithContent (newContent : String) : LgtmM (Except Stri
                 { s₀.fileManager with
                   state := newState,
                   hConsistentState := hConsistentState₁ }
-              setState { s₀ with
-                commentBeingEdited := none,
-                commentManager := commentManager₁,
-                fileManager := fileManager₁,
-                hCommentBeingEditedWellFormed := by simp,
-                hFileThreadsPublished := hFileThreadsPublished₂ }
-              pure (Except.ok comment₂)
+              let s₁ := { s₀ with
+                          commentBeingEdited := none,
+                          commentManager := commentManager₁,
+                          fileManager := fileManager₁,
+                          hCommentBeingEditedWellFormed := by simp,
+                          hFileThreadsPublished := hFileThreadsPublished₂ }
+              Result.mk (Except.ok comment₂) s₁
             | .current =>
               have hparentCurrent : ∀ parentId, comment₂.parent = some parentId →
                   parentId ∈ modifiedFileState.currentThreads.serverCommentIds := by
@@ -286,10 +287,18 @@ public def completeCommentWithContent (newContent : String) : LgtmM (Except Stri
                 { s₀.fileManager with
                   state := newState,
                   hConsistentState := hConsistentState₁ }
-              setState { s₀ with
-                commentBeingEdited := none,
-                commentManager := commentManager₁,
-                fileManager := fileManager₁,
-                hCommentBeingEditedWellFormed := by simp,
-                hFileThreadsPublished := hFileThreadsPublished₂ }
-              pure (Except.ok comment₂)
+              let s₁ := { s₀ with
+                          commentBeingEdited := none,
+                          commentManager := commentManager₁,
+                          fileManager := fileManager₁,
+                          hCommentBeingEditedWellFormed := by simp,
+                          hFileThreadsPublished := hFileThreadsPublished₂ }
+              Result.mk (Except.ok comment₂) s₁
+
+private theorem completeCommentWithContent.rejectsEmptyContent (s₀ : State) :
+  ∃ msg result, completeCommentWithContent s₀ "" = result ∧ result.value = Except.error msg :=
+    ⟨"Comments cannot be empty", _, rfl, rfl⟩
+
+private theorem completeCommentWithContent.preservesStateWithEmptyContent (s₀ : State) :
+  ∃ result, completeCommentWithContent s₀ "" = result ∧ result.updatedState = s₀ :=
+    ⟨_, rfl, rfl⟩

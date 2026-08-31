@@ -804,13 +804,3 @@ public theorem State.hFileThreadsPublished_insert_current (s : State)
       exact hPreserve ref hc' hpub'
     · obtain ⟨hc', hpub'⟩ := hCurrent ref hc
       exact hPreserve ref hc' hpub'
-
-public abbrev LgtmM α := ReaderT (IO.Ref State) IO α
-
-public def getState : LgtmM State := do
-  let r ← read
-  ST.Ref.get r
-
-public def setState (s₁ : State) : LgtmM Unit := do
-  let r ← read
-  ST.Ref.set r s₁
