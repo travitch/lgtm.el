@@ -48,8 +48,7 @@ public def completeCommentWithContent (s₀ : State) (newContent : String) : Res
   else
     match hBeingEdited : s₀.commentBeingEdited with
     | none => Result.mk (Except.error "No active comment") s₀
-    | some editedCommentRef =>
-      let comment₀ := s₀.commentManager.get editedCommentRef
+    | some comment₀ =>
       let comment₁ := { comment₀ with content := newContent }
       match s₀.configuration.createComment comment₁ with
       | none => Result.mk (Except.error "Failed to create the comment on the server") s₀
@@ -58,24 +57,23 @@ public def completeCommentWithContent (s₀ : State) (newContent : String) : Res
         have hbackendId2 : comment₂.backendId = some serverId := rfl
         have hHasBackendId : comment₂.backendId.isSome := by rw [hbackendId2]; rfl
 
-        have hDerived := s₀.commentManager.get_of_commentBeingEditedWellFormed s₀.fileManager editedCommentRef
-          (s₀.hCommentBeingEditedWellFormed editedCommentRef hBeingEdited)
-        have href0 : comment₀.ref = editedCommentRef := hDerived.1
-        have hbid0 : comment₀.backendId = none := hDerived.2.1
+        have hDerived := s₀.commentManager.get_of_commentBeingEditedWellFormed s₀.fileManager comment₀
+          (s₀.hCommentBeingEditedWellFormed comment₀ hBeingEdited)
+        have hFresh0 : ¬ s₀.commentManager.comments.contains comment₀.ref := hDerived.1
         have hparent0 := hDerived.2.2
 
-        have href2 : comment₂.ref = editedCommentRef := href0
+        have href2 : comment₂.ref = comment₀.ref := rfl
 
-        let comments₁ := s₀.commentManager.comments.insert editedCommentRef comment₂
+        let comments₁ := s₀.commentManager.comments.insert comment₀.ref comment₂
 
         have hCommentsKeyedByRef₁ : ∀ ref (h : comments₁.contains ref), (comments₁.get ref h).ref = ref :=
-          s₀.commentManager.hCommentsKeyedByRef_insert editedCommentRef comment₂ href2
+          s₀.commentManager.hCommentsKeyedByRef_insert comment₀.ref comment₂ href2
 
         -- Inserting the (freshly-published) being-edited comment into `comments` can't disturb any
         -- other ref's published status: it either was already there and is untouched, or it *is*
-        -- `editedCommentRef`, which was unpublished (`hbid0`) and so can't have been the ref some
-        -- other invariant already certified as published.
-        have hPreservePublished := s₀.commentManager.preservePublished_insert hbid0 comment₂
+        -- `comment₀.ref`, which was fresh (unregistered) and so can't have been the ref some other
+        -- invariant already certified as published.
+        have hPreservePublished := s₀.commentManager.preservePublished_insert hFresh0 comment₂
 
         have hFileThreadsPublished₁ : ∀ modifiedFileRef (h : s₀.fileManager.state.contains modifiedFileRef),
             (∀ ref (hc : (s₀.fileManager.state.get modifiedFileRef h).baseThreads.commentTreeNodes.contains ref),
@@ -107,7 +105,7 @@ public def completeCommentWithContent (s₀ : State) (newContent : String) : Res
 
           have hRefFresh : ¬ comment₂.ref ∈ s₀.commentManager.topLevelThreads.commentTreeNodes := by
             rw [href2]
-            exact s₀.commentManager.notMem_topLevelThreads_of_unpublished editedCommentRef hbid0
+            exact s₀.commentManager.notMem_topLevelThreads_of_unpublished comment₀.ref hFresh0
 
           have hLocationScope : ∀ loc', loc' ∈ s₀.commentManager.topLevelThreads.locationRoots.keys →
               loc'.isTopLevel = comment₂.location.asThreadLocation.isTopLevel :=
@@ -125,7 +123,7 @@ public def completeCommentWithContent (s₀ : State) (newContent : String) : Res
 
           have hTopLevelThreadsPublished₁ : ∀ ref' (h : topLevelThreads₁.commentTreeNodes.contains ref'),
               ∃ h' : comments₁.contains ref', (comments₁.get ref' h').backendId.isSome :=
-            s₀.commentManager.hTopLevelThreadsPublished_insert editedCommentRef comment₂ href2
+            s₀.commentManager.hTopLevelThreadsPublished_insert comment₀.ref comment₂ href2
               hHasBackendId hparent2 hParentThreadRegistered hRefFresh hLocationScope
 
           let commentManager₁ : CommentManager :=
@@ -171,11 +169,11 @@ public def completeCommentWithContent (s₀ : State) (newContent : String) : Res
 
             have hRefFreshBase : comment₂.ref ∉ modifiedFileState.baseThreads.commentTreeNodes := by
               rw [href2, ← hgetval]
-              exact s₀.notMem_baseThreads_of_unpublished hbid0 hOldContainsFileRef
+              exact s₀.notMem_baseThreads_of_unpublished hFresh0 hOldContainsFileRef
 
             have hRefFreshCurrent : comment₂.ref ∉ modifiedFileState.currentThreads.commentTreeNodes := by
               rw [href2, ← hgetval]
-              exact s₀.notMem_currentThreads_of_unpublished hbid0 hOldContainsFileRef
+              exact s₀.notMem_currentThreads_of_unpublished hFresh0 hOldContainsFileRef
 
             have hLocationScopeBase := modifiedFileState.locationScope_of_base hcommentTop
             have hLocationScopeCurrent := modifiedFileState.locationScope_of_current hcommentTop
@@ -228,7 +226,7 @@ public def completeCommentWithContent (s₀ : State) (newContent : String) : Res
 
               let newState := s₀.fileManager.state.insert fileRef newFileState
               have hFileThreadsPublished₂ := s₀.hFileThreadsPublished_insert_base (newFileState := newFileState)
-                (newState := newState) (newComments := comments₁) hOldContainsFileRef hgetval hbid0
+                (newState := newState) (newComments := comments₁) hOldContainsFileRef hgetval hFresh0
                 href2 hbackendId2 hNewBaseThreadsContains rfl rfl rfl rfl
 
               have hConsistentState₁ := s₀.fileManager.hConsistentState_insert hOldContainsFileRef newFileState
@@ -278,7 +276,7 @@ public def completeCommentWithContent (s₀ : State) (newContent : String) : Res
 
               let newState := s₀.fileManager.state.insert fileRef newFileState
               have hFileThreadsPublished₂ := s₀.hFileThreadsPublished_insert_current (newFileState := newFileState)
-                (newState := newState) (newComments := comments₁) hOldContainsFileRef hgetval hbid0
+                (newState := newState) (newComments := comments₁) hOldContainsFileRef hgetval hFresh0
                 href2 hbackendId2 hNewCurrentThreadsContains rfl rfl rfl rfl
 
               have hConsistentState₁ := s₀.fileManager.hConsistentState_insert hOldContainsFileRef newFileState
@@ -311,9 +309,9 @@ private theorem completeCommentWithContent.preservesStateOnError (s₀ : State) 
   · right; simp [completeCommentWithContent, hEmpty]
   · cases cbe with
     | none => right; simp [completeCommentWithContent, hEmpty]
-    | some editedCommentRef =>
+    | some comment₀ =>
       match hCC : config.createComment
-          { cm.get editedCommentRef with content := input } with
+          { comment₀ with content := input } with
       | none => right; simp [completeCommentWithContent, hEmpty, hCC]
       | some serverId =>
         simp only [completeCommentWithContent, hEmpty, hCC]
@@ -347,17 +345,14 @@ private theorem completeCommentWithContent.failsIfSavingCommentToServerFails (s�
   (result : Result (Except String Comment))
   (hNotEmptyInput : input != "")
   (comment₀ : Comment)
-  (editedCommentRef : CommentRef)
-  (hCommentBeingEdited : s₀.commentBeingEdited = some editedCommentRef)
-  (hThisCommentIsBeingEdited : s₀.commentManager.get editedCommentRef = comment₀)
+  (hCommentBeingEdited : s₀.commentBeingEdited = some comment₀)
   (hResultOfOp : completeCommentWithContent s₀ input = result) :
   s₀.configuration.createComment { comment₀ with content := input } = none → ¬ result.value.isOk := by
   intro hCreateFails
   subst hResultOfOp
   obtain ⟨config, activeFile, cbe, cm, fm, hCBWF, hFTP⟩ := s₀
-  dsimp only at hThisCommentIsBeingEdited hCreateFails
+  dsimp only at hCreateFails
   subst hCommentBeingEdited
-  subst hThisCommentIsBeingEdited
   have hEmpty : input.isEmpty = false := by
     rw [bne_iff_ne] at hNotEmptyInput
     simp [hNotEmptyInput]
