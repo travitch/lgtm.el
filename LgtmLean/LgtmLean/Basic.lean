@@ -246,7 +246,7 @@ public structure CommentManager where
   a server-assigned `backendId`). Combined with `CommentManager.CommentBeingEditedWellFormed`, this
   is what lets `completeCommentWithContent` know the comment it is about to publish can't already be
   registered in a thread, satisfying `addCommentToThread`'s `hRefFresh` obligation. -/
-  hTopLevelThreadsPublished : ∀ ref (h : topLevelThreads.commentTreeNodes.contains ref),
+  hTopLevelThreadsPublished : ∀ ref (_h : topLevelThreads.commentTreeNodes.contains ref),
     ∃ h' : comments.contains ref, (comments.get ref h').backendId.isSome
 
 public def CommentManager.empty : CommentManager :=
@@ -325,7 +325,7 @@ public theorem CommentManager.hTopLevelThreadsPublished_of_preserve (manager : C
     {comments₁ : Std.HashMap CommentRef Comment}
     (hPreserve : ∀ ref (h : manager.comments.contains ref), (manager.comments.get ref h).backendId.isSome →
       ∃ h' : comments₁.contains ref, (comments₁.get ref h').backendId.isSome) :
-    ∀ ref' (h : manager.topLevelThreads.commentTreeNodes.contains ref'),
+    ∀ ref' (_h : manager.topLevelThreads.commentTreeNodes.contains ref'),
       ∃ h' : comments₁.contains ref', (comments₁.get ref' h').backendId.isSome := by
   intro ref' h
   obtain ⟨hcOld, hpubOld⟩ := manager.hTopLevelThreadsPublished ref' h
@@ -551,9 +551,9 @@ public theorem ModifiedFileManager.hFileThreadsPublished_resetCommentState (file
     (comments : Std.HashMap CommentRef Comment) :
     ∀ modifiedFileRef (h : fileManager.resetCommentState.state.contains modifiedFileRef),
       let modifiedFileState := fileManager.resetCommentState.state.get modifiedFileRef h
-      (∀ ref (hc : modifiedFileState.baseThreads.commentTreeNodes.contains ref),
+      (∀ ref (_hc : modifiedFileState.baseThreads.commentTreeNodes.contains ref),
         ∃ h' : comments.contains ref, (comments.get ref h').backendId.isSome) ∧
-      (∀ ref (hc : modifiedFileState.currentThreads.commentTreeNodes.contains ref),
+      (∀ ref (_hc : modifiedFileState.currentThreads.commentTreeNodes.contains ref),
         ∃ h' : comments.contains ref, (comments.get ref h').backendId.isSome) := by
   intro modifiedFileRef h
   have hget : fileManager.resetCommentState.state.get modifiedFileRef h =
@@ -656,9 +656,9 @@ public structure State where
   already be registered in that file's thread pool, satisfying `addCommentToThread`'s `hRefFresh`
   obligation. -/
   hFileThreadsPublished : ∀ modifiedFileRef (h : fileManager.state.contains modifiedFileRef),
-    (∀ ref (hc : (fileManager.state.get modifiedFileRef h).baseThreads.commentTreeNodes.contains ref),
+    (∀ ref (_hc : (fileManager.state.get modifiedFileRef h).baseThreads.commentTreeNodes.contains ref),
       ∃ h' : commentManager.comments.contains ref, (commentManager.comments.get ref h').backendId.isSome) ∧
-    (∀ ref (hc : (fileManager.state.get modifiedFileRef h).currentThreads.commentTreeNodes.contains ref),
+    (∀ ref (_hc : (fileManager.state.get modifiedFileRef h).currentThreads.commentTreeNodes.contains ref),
       ∃ h' : commentManager.comments.contains ref, (commentManager.comments.get ref h').backendId.isSome)
 
 /-- A comment that hasn't been published yet (no `backendId`) can't already be registered as a tree
@@ -712,9 +712,9 @@ public theorem State.hFileThreadsPublished_insert_base (s : State)
     {newComments : Std.HashMap CommentRef Comment}
     (hNewComments : newComments = s.commentManager.comments.insert editedCommentRef comment₂) :
     ∀ modifiedFileRef' (h : newState.contains modifiedFileRef'),
-      (∀ ref (hc : (newState.get modifiedFileRef' h).baseThreads.commentTreeNodes.contains ref),
+      (∀ ref (_hc : (newState.get modifiedFileRef' h).baseThreads.commentTreeNodes.contains ref),
         ∃ h' : newComments.contains ref, (newComments.get ref h').backendId.isSome) ∧
-      (∀ ref (hc : (newState.get modifiedFileRef' h).currentThreads.commentTreeNodes.contains ref),
+      (∀ ref (_hc : (newState.get modifiedFileRef' h).currentThreads.commentTreeNodes.contains ref),
         ∃ h' : newComments.contains ref, (newComments.get ref h').backendId.isSome) := by
   subst hNewState hNewComments hgetval
   have hPreserve := s.commentManager.preservePublished_insert hUnpub comment₂
@@ -768,9 +768,9 @@ public theorem State.hFileThreadsPublished_insert_current (s : State)
     {newComments : Std.HashMap CommentRef Comment}
     (hNewComments : newComments = s.commentManager.comments.insert editedCommentRef comment₂) :
     ∀ modifiedFileRef' (h : newState.contains modifiedFileRef'),
-      (∀ ref (hc : (newState.get modifiedFileRef' h).baseThreads.commentTreeNodes.contains ref),
+      (∀ ref (_hc : (newState.get modifiedFileRef' h).baseThreads.commentTreeNodes.contains ref),
         ∃ h' : newComments.contains ref, (newComments.get ref h').backendId.isSome) ∧
-      (∀ ref (hc : (newState.get modifiedFileRef' h).currentThreads.commentTreeNodes.contains ref),
+      (∀ ref (_hc : (newState.get modifiedFileRef' h).currentThreads.commentTreeNodes.contains ref),
         ∃ h' : newComments.contains ref, (newComments.get ref h').backendId.isSome) := by
   subst hNewState hNewComments hgetval
   have hPreserve := s.commentManager.preservePublished_insert hUnpub comment₂

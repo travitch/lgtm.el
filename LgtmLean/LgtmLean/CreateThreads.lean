@@ -1583,7 +1583,7 @@ public theorem CommentManager.hTopLevelThreadsPublished_insert (manager : Commen
     (hRefFresh : comment.ref ∉ manager.topLevelThreads.commentTreeNodes)
     (hLocationScope : ∀ loc', loc' ∈ manager.topLevelThreads.locationRoots.keys →
       loc'.isTopLevel = comment.location.asThreadLocation.isTopLevel) :
-    ∀ ref' (h : (addCommentToThread manager.topLevelThreads comment hHasBackendId hParentValid
+    ∀ ref' (_h : (addCommentToThread manager.topLevelThreads comment hHasBackendId hParentValid
         hParentThreadRegistered hRefFresh hLocationScope).commentTreeNodes.contains ref'),
       ∃ h' : (manager.comments.insert ref comment).contains ref',
         ((manager.comments.insert ref comment).get ref' h').backendId.isSome := by
