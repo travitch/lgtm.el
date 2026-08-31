@@ -299,6 +299,27 @@ private theorem completeCommentWithContent.rejectsEmptyContent (s₀ : State) :
   ∃ msg result, completeCommentWithContent s₀ "" = result ∧ result.value = Except.error msg :=
     ⟨"Comments cannot be empty", _, rfl, rfl⟩
 
-private theorem completeCommentWithContent.preservesStateWithEmptyContent (s₀ : State) :
-  ∃ result, completeCommentWithContent s₀ "" = result ∧ result.updatedState = s₀ :=
-    ⟨_, rfl, rfl⟩
+private theorem completeCommentWithContent.preservesStateOnError (s₀ : State) (input : String):
+  ∃ result, completeCommentWithContent s₀ input = result ∧ (¬ result.value.isOk → result.updatedState = s₀) := by
+  obtain ⟨config, activeFile, cbe, cm, fm, hCBWF, hFTP⟩ := s₀
+  refine ⟨_, rfl, ?_⟩
+  refine Or.resolve_left ?_
+  by_cases hEmpty : input.isEmpty
+  · right; simp [completeCommentWithContent, hEmpty]
+  · cases cbe with
+    | none => right; simp [completeCommentWithContent, hEmpty]
+    | some editedCommentRef =>
+      match hCC : config.createComment
+          { cm.get editedCommentRef with content := input } with
+      | none => right; simp [completeCommentWithContent, hEmpty, hCC]
+      | some serverId =>
+        simp only [completeCommentWithContent, hEmpty, hCC]
+        split
+        · left; simp_all
+        · split
+          · left; rfl
+          · split
+            · right; rfl
+            · split
+              · left; rfl
+              · left; rfl
