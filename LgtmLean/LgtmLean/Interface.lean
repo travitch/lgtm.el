@@ -362,3 +362,10 @@ public def cancelCommentCreation (s₀ : State) : Result Unit :=
   let s₁ := { s₀ with commentBeingEdited := none
                       hCommentBeingEditedWellFormed := by simp }
   Result.mk () s₁
+
+private theorem cancelCommentCreation.ensuresNoCommentBeingEdited (s₀ : State)
+  (result : Result Unit)
+  (hResultOfOp : cancelCommentCreation s₀ = result) :
+  result.updatedState.commentBeingEdited = none := by
+  subst hResultOfOp
+  simp [cancelCommentCreation]
