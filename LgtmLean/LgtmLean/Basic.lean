@@ -37,9 +37,42 @@ deriving Hashable, Ord, DecidableEq
 | .topLevel => true
 | .lineNumber _ => false
 
+
+/-- A hash of a git revision -/
+public structure GitRevision where
+  hash : String
+  deriving Hashable, DecidableEq
+
+public structure RepositoryRef where
+  /-- The name of the repository -/
+  name : String
+  /-- The path of the repository on disk -/
+  path : System.FilePath
+  /-- The revision that the changeset will be applied to in the repository -/
+  baseRevision : GitRevision
+  deriving Hashable, DecidableEq
+
+public inductive ModificationType where
+| modified
+| added
+| deleted
+| renamed
+| copied
+| typechange
+deriving Hashable, DecidableEq
+
+public structure ModifiedFileRef where
+  repositoryRef : RepositoryRef
+  modificationType : ModificationType
+  baseFileName : String
+  baseFileHash : GitRevision
+  currentFileName : String
+  currentFileHash : GitRevision
+  deriving Hashable, DecidableEq
+
 public structure CommentFileLocation where
   version : FileVersion
-  fileRef : FileRef
+  fileRef : ModifiedFileRef
   startLine : Nat
   startColumn : Nat
   endLine : Nat
@@ -69,6 +102,14 @@ their defining module; this exposes the fact as a citable lemma instead. -/
 cross-module unfolding reason. -/
 @[simp] public theorem CommentLocation.fileLocation_asThreadLocation_isTopLevel (loc : CommentFileLocation) :
     (CommentLocation.fileLocation loc).asThreadLocation.isTopLevel = false := rfl
+
+private theorem CommentLocation.topLevel_isTopLevel_aux :
+    CommentLocation.topLevel.isTopLevel = true := rfl
+
+/-- The direct (non-`asThreadLocation`) counterpart of `topLevel_asThreadLocation_isTopLevel`, for the
+same cross-module unfolding reason. -/
+@[simp] public theorem CommentLocation.topLevel_isTopLevel :
+    CommentLocation.topLevel.isTopLevel = true := topLevel_isTopLevel_aux
 
 public structure ServerId where
   id : String
@@ -379,20 +420,6 @@ public theorem CommentManager.preservePublished_insert (manager : CommentManager
   rw [Std.HashMap.get_insert_of_ne hne' hc h]
   exact hpub
 
-/-- A hash of a git revision -/
-public structure GitRevision where
-  hash : String
-  deriving Hashable, DecidableEq
-
-public structure RepositoryRef where
-  /-- The name of the repository -/
-  name : String
-  /-- The path of the repository on disk -/
-  path : System.FilePath
-  /-- The revision that the changeset will be applied to in the repository -/
-  baseRevision : GitRevision
-  deriving Hashable, DecidableEq
-
 public structure Repository where
   /-- The name of the repository -/
   name : String
@@ -405,24 +432,6 @@ public structure Repository where
   The strings are the commit messages corresponding to each revision.
   -/
   commits : List (GitRevision × String)
-
-public inductive ModificationType where
-| modified
-| added
-| deleted
-| renamed
-| copied
-| typechange
-deriving Hashable, DecidableEq
-
-public structure ModifiedFileRef where
-  repositoryRef : RepositoryRef
-  modificationType : ModificationType
-  baseFileName : String
-  baseFileHash : GitRevision
-  currentFileName : String
-  currentFileHash : GitRevision
-  deriving Hashable, DecidableEq
 
 /--
 The mutable state for a file that can be reviewed.
@@ -576,7 +585,7 @@ to. -/
       | .fileLocation loc =>
         ∀ modifiedFileRef (modifiedFileState : ModifiedFileState),
           (modifiedFileRef, modifiedFileState) ∈ fileManager.state.toList →
-          modifiedFileState.fileRef == loc.fileRef →
+          modifiedFileState.ref == loc.fileRef →
           parentId ∈ (match loc.version with
             | .base => modifiedFileState.baseThreads
             | .current => modifiedFileState.currentThreads).serverCommentIds
@@ -595,7 +604,7 @@ public theorem CommentManager.get_of_commentBeingEditedWellFormed (manager : Com
         | .fileLocation loc =>
           ∀ modifiedFileRef (modifiedFileState : ModifiedFileState),
             (modifiedFileRef, modifiedFileState) ∈ fileManager.state.toList →
-            modifiedFileState.fileRef == loc.fileRef →
+            modifiedFileState.ref == loc.fileRef →
             parentId ∈ (match loc.version with
               | .base => modifiedFileState.baseThreads
               | .current => modifiedFileState.currentThreads).serverCommentIds := hWF
@@ -626,6 +635,8 @@ public structure Configuration where
   return `none` and issue any warnings it wants in elisp.
   -/
   createComment : Comment → Option ServerId
+
+  getRemoteConversations : ModifiedFileManager → Option (List Comment)
 
 public structure State where
   configuration : Configuration

@@ -6,25 +6,25 @@ public import LgtmLean.Basic
 import all LgtmLean.Basic
 import all LgtmLean.Tree
 
-private def commentsAllInSameFileOrAllTopLevel (comments : List Comment) : Prop :=
+public def commentsAllInSameFileOrAllTopLevel (comments : List Comment) : Prop :=
   (∀ c, c ∈ comments → c.location.isTopLevel) ∨
   (∀ c, c ∈ comments → ∃ loc, c.location = .fileLocation loc ∧ loc.version = .base) ∨
   (∀ c, c ∈ comments → ∃ loc, c.location = .fileLocation loc ∧ loc.version = .current)
 
-private def allCommentsHaveBackendId (comments : List Comment) : Prop := ∀ c, c ∈ comments → c.backendId.isSome
+public def allCommentsHaveBackendId (comments : List Comment) : Prop := ∀ c, c ∈ comments → c.backendId.isSome
 
 /-- Every parent referenced by a comment in the batch is itself the backend id of some comment in
 the batch.  This is needed to look the parent up in `serverCommentIds` while assembling threads. -/
-private def allParentsInComments (comments : List Comment) : Prop :=
+public def allParentsInComments (comments : List Comment) : Prop :=
   ∀ c, c ∈ comments → ∀ parentId, c.parent = some parentId → ∃ c', c' ∈ comments ∧ c'.backendId = some parentId
 
 /-- Every comment in the batch has a distinct `ref`, so no `CommentRef` is ever pushed twice into
 `locationRoots`. -/
-private def commentRefsNodup (comments : List Comment) : Prop := (comments.map Comment.ref).Nodup
+public def commentRefsNodup (comments : List Comment) : Prop := (comments.map Comment.ref).Nodup
 
 /-- A reply's parent was created strictly before it. This rules out cycles in the batch's `parent`
 links, which is needed to show every comment's tree node is reachable from some root. -/
-private def parentsCreatedBefore (comments : List Comment) : Prop :=
+public def parentsCreatedBefore (comments : List Comment) : Prop :=
   ∀ c, c ∈ comments → ∀ parentId, c.parent = some parentId →
     ∀ c', c' ∈ comments → c'.backendId = some parentId → c'.createdTimestamp < c.createdTimestamp
 
@@ -1000,7 +1000,7 @@ serverCommentIds map.  Comments are added to the tree separately (but even then 
 id since we only add them to the tree after we get the id from the server).
 
  -/
-def assembleCommentTrees (comments : List Comment)
+public def assembleCommentTrees (comments : List Comment)
                          (hSameLocation : commentsAllInSameFileOrAllTopLevel comments)
                          (hCommentsHaveBackendIds : allCommentsHaveBackendId comments)
                          (hParentsInComments : allParentsInComments comments)

@@ -12,7 +12,7 @@ public structure Result α where
 /-- Delete all of the comments in the current review state.
 
 This is used to prepare to fetch an updated state from the server. -/
-public def resetCommentState (s₀ : State) : Result Unit :=
+def resetCommentState (s₀ : State) : Result Unit :=
   let manager₁ := s₀.fileManager.resetCommentState
   let s₁ := { s₀ with
               commentBeingEdited := none,
@@ -22,8 +22,78 @@ public def resetCommentState (s₀ : State) : Result Unit :=
               hFileThreadsPublished := s₀.fileManager.hFileThreadsPublished_resetCommentState CommentManager.empty.comments }
   Result.mk () s₁
 
+private structure CommentBootstrapState where
+  topLevelComments : List Comment
+  hTopLevelCommentsAreTopLevel : ∀ c, c ∈ topLevelComments → c.location.isTopLevel
+  baseComments : Std.HashMap ModifiedFileRef (List Comment)
+  hBaseCommentsHaveBaseVersion : ∀ entry, entry ∈ baseComments.toList → (∀ c, c ∈ Prod.snd entry → ∃ loc, c.location = .fileLocation loc ∧ loc.version = .base)
+  currentComments : Std.HashMap ModifiedFileRef (List Comment)
+  hCurrentCommentsHaveCurrentVersion : ∀ entry, entry ∈ currentComments.toList → (∀ c, c ∈ Prod.snd entry → ∃ loc, c.location = .fileLocation loc ∧ loc.version = .current)
 
-public def addRemoteComments (s₀ : State) (comments : List Comment) : Result Unit := sorry
+private def insertSingletonOrAppend (value : α) (current : Option (List α)) : Option (List α) :=
+  match current with
+  | none => some [value]
+  | some values => some (value :: values)
+
+private def groupComments.go : List Comment → CommentBootstrapState → CommentBootstrapState
+| [], bootstrapState => bootstrapState
+| c :: cs, bootstrapState =>
+  match hloc : c.location with
+  | .topLevel =>
+    groupComments.go cs { bootstrapState with
+      topLevelComments := c :: bootstrapState.topLevelComments
+      hTopLevelCommentsAreTopLevel := by
+        intro c' hc'
+        rw [List.mem_cons] at hc'
+        rcases hc' with rfl | hc'
+        · simp [hloc]
+        · exact bootstrapState.hTopLevelCommentsAreTopLevel c' hc' }
+  | .fileLocation loc =>
+    match hver : loc.version with
+    | .base =>
+      groupComments.go cs { bootstrapState with
+        baseComments := bootstrapState.baseComments.alter loc.fileRef (insertSingletonOrAppend c)
+        hBaseCommentsHaveBaseVersion := by
+          rintro ⟨k, v⟩ hentry c' hc'
+          rw [Std.HashMap.mem_toList_iff_getElem?_eq_some, Std.HashMap.getElem?_alter] at hentry
+          split at hentry
+          · unfold insertSingletonOrAppend at hentry
+            split at hentry <;> cases hentry <;> rw [List.mem_cons] at hc' <;> rcases hc' with rfl | hc'
+            · exact ⟨loc, hloc, hver⟩
+            · nomatch hc'
+            · exact ⟨loc, hloc, hver⟩
+            · exact bootstrapState.hBaseCommentsHaveBaseVersion (loc.fileRef, _)
+                (by rw [Std.HashMap.mem_toList_iff_getElem?_eq_some]; assumption) c' hc'
+          · exact bootstrapState.hBaseCommentsHaveBaseVersion (k, v)
+              (by rw [Std.HashMap.mem_toList_iff_getElem?_eq_some]; exact hentry) c' hc' }
+    | .current =>
+      groupComments.go cs { bootstrapState with
+        currentComments := bootstrapState.currentComments.alter loc.fileRef (insertSingletonOrAppend c)
+        hCurrentCommentsHaveCurrentVersion := by
+          rintro ⟨k, v⟩ hentry c' hc'
+          rw [Std.HashMap.mem_toList_iff_getElem?_eq_some, Std.HashMap.getElem?_alter] at hentry
+          split at hentry
+          · unfold insertSingletonOrAppend at hentry
+            split at hentry <;> cases hentry <;> rw [List.mem_cons] at hc' <;> rcases hc' with rfl | hc'
+            · exact ⟨loc, hloc, hver⟩
+            · nomatch hc'
+            · exact ⟨loc, hloc, hver⟩
+            · exact bootstrapState.hCurrentCommentsHaveCurrentVersion (loc.fileRef, _)
+                (by rw [Std.HashMap.mem_toList_iff_getElem?_eq_some]; assumption) c' hc'
+          · exact bootstrapState.hCurrentCommentsHaveCurrentVersion (k, v)
+              (by rw [Std.HashMap.mem_toList_iff_getElem?_eq_some]; exact hentry) c' hc' }
+
+private def groupComments (comments : List Comment) : CommentBootstrapState :=
+  groupComments.go comments (CommentBootstrapState.mk [] (by simp) Std.HashMap.emptyWithCapacity (by simp)
+    Std.HashMap.emptyWithCapacity (by simp))
+
+public def addRemoteComments (s₀ : State) (comments : List Comment) : Result Unit :=
+  match s₀.configuration.getRemoteConversations s₀.fileManager with
+  | none => Result.mk () s₀
+  | some comments =>
+    let s₁ := (resetCommentState s₀).updatedState
+    let bootstrapState := groupComments comments
+    sorry
 
 /-- The core worker called to update the state when the user marks a comment as done.
 
@@ -141,7 +211,8 @@ public def completeCommentWithContent (s₀ : State) (newContent : String) : Res
                       hFileThreadsPublished := hFileThreadsPublished₁ }
           Result.mk (Except.ok comment₂) s₁
         | .fileLocation loc =>
-          match hfound : s₀.fileManager.state.toList.find? (λ (_, modifiedFileState) => modifiedFileState.fileRef == loc.fileRef) with
+          -- FIXME: Change this from a find to a lookup of the modifiedFileState.ref instead
+          match hfound : s₀.fileManager.state.toList.find? (λ (_, modifiedFileState) => modifiedFileState.ref == loc.fileRef) with
           | none => Result.mk (Except.error "Unexpected file") s₀
           | some (fileRef, modifiedFileState) =>
             have hFound := s₀.fileManager.contains_get_of_find? hfound
