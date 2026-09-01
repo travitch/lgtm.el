@@ -35,6 +35,30 @@ private def insertSingletonOrAppend (value : α) (current : Option (List α)) : 
   | none => some [value]
   | some values => some (value :: values)
 
+/-- Inserting a comment located at `loc` (of version `version`) into the bucket keyed by
+`loc.fileRef` preserves the invariant that every comment in the bucket has version `version`,
+given that it held before the insertion. Shared by the `.base` and `.current` cases of
+`groupComments.go`, which differ only in which field of `CommentBootstrapState` and which
+`FileVersion` they instantiate this with. -/
+private theorem alter_preserves_versionInvariant
+    {version : FileVersion} {m : Std.HashMap ModifiedFileRef (List Comment)}
+    (hInv : ∀ entry, entry ∈ m.toList →
+      ∀ c, c ∈ Prod.snd entry → ∃ loc, c.location = .fileLocation loc ∧ loc.version = version)
+    {c : Comment} {loc : CommentFileLocation}
+    (hloc : c.location = .fileLocation loc) (hver : loc.version = version) :
+    ∀ entry, entry ∈ (m.alter loc.fileRef (insertSingletonOrAppend c)).toList →
+      ∀ c', c' ∈ Prod.snd entry → ∃ loc', c'.location = .fileLocation loc' ∧ loc'.version = version := by
+  rintro ⟨k, v⟩ hentry c' hc'
+  rw [Std.HashMap.mem_toList_iff_getElem?_eq_some, Std.HashMap.getElem?_alter] at hentry
+  split at hentry
+  · unfold insertSingletonOrAppend at hentry
+    split at hentry <;> cases hentry <;> rw [List.mem_cons] at hc' <;> rcases hc' with rfl | hc'
+    · exact ⟨loc, hloc, hver⟩
+    · nomatch hc'
+    · exact ⟨loc, hloc, hver⟩
+    · exact hInv (loc.fileRef, _) (by rw [Std.HashMap.mem_toList_iff_getElem?_eq_some]; assumption) c' hc'
+  · exact hInv (k, v) (by rw [Std.HashMap.mem_toList_iff_getElem?_eq_some]; exact hentry) c' hc'
+
 private def groupComments.go : List Comment → CommentBootstrapState → CommentBootstrapState
 | [], bootstrapState => bootstrapState
 | c :: cs, bootstrapState =>
@@ -53,35 +77,13 @@ private def groupComments.go : List Comment → CommentBootstrapState → Commen
     | .base =>
       groupComments.go cs { bootstrapState with
         baseComments := bootstrapState.baseComments.alter loc.fileRef (insertSingletonOrAppend c)
-        hBaseCommentsHaveBaseVersion := by
-          rintro ⟨k, v⟩ hentry c' hc'
-          rw [Std.HashMap.mem_toList_iff_getElem?_eq_some, Std.HashMap.getElem?_alter] at hentry
-          split at hentry
-          · unfold insertSingletonOrAppend at hentry
-            split at hentry <;> cases hentry <;> rw [List.mem_cons] at hc' <;> rcases hc' with rfl | hc'
-            · exact ⟨loc, hloc, hver⟩
-            · nomatch hc'
-            · exact ⟨loc, hloc, hver⟩
-            · exact bootstrapState.hBaseCommentsHaveBaseVersion (loc.fileRef, _)
-                (by rw [Std.HashMap.mem_toList_iff_getElem?_eq_some]; assumption) c' hc'
-          · exact bootstrapState.hBaseCommentsHaveBaseVersion (k, v)
-              (by rw [Std.HashMap.mem_toList_iff_getElem?_eq_some]; exact hentry) c' hc' }
+        hBaseCommentsHaveBaseVersion :=
+          alter_preserves_versionInvariant bootstrapState.hBaseCommentsHaveBaseVersion hloc hver }
     | .current =>
       groupComments.go cs { bootstrapState with
         currentComments := bootstrapState.currentComments.alter loc.fileRef (insertSingletonOrAppend c)
-        hCurrentCommentsHaveCurrentVersion := by
-          rintro ⟨k, v⟩ hentry c' hc'
-          rw [Std.HashMap.mem_toList_iff_getElem?_eq_some, Std.HashMap.getElem?_alter] at hentry
-          split at hentry
-          · unfold insertSingletonOrAppend at hentry
-            split at hentry <;> cases hentry <;> rw [List.mem_cons] at hc' <;> rcases hc' with rfl | hc'
-            · exact ⟨loc, hloc, hver⟩
-            · nomatch hc'
-            · exact ⟨loc, hloc, hver⟩
-            · exact bootstrapState.hCurrentCommentsHaveCurrentVersion (loc.fileRef, _)
-                (by rw [Std.HashMap.mem_toList_iff_getElem?_eq_some]; assumption) c' hc'
-          · exact bootstrapState.hCurrentCommentsHaveCurrentVersion (k, v)
-              (by rw [Std.HashMap.mem_toList_iff_getElem?_eq_some]; exact hentry) c' hc' }
+        hCurrentCommentsHaveCurrentVersion :=
+          alter_preserves_versionInvariant bootstrapState.hCurrentCommentsHaveCurrentVersion hloc hver }
 
 private def groupComments (comments : List Comment) : CommentBootstrapState :=
   groupComments.go comments (CommentBootstrapState.mk [] (by simp) Std.HashMap.emptyWithCapacity (by simp)
