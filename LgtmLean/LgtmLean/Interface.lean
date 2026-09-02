@@ -511,18 +511,19 @@ public def addRemoteComments (s₀ : State) : Result (Except String Unit) :=
         allParentsInComments bootstrapState.topLevelComments ∧
         commentRefsNodup bootstrapState.topLevelComments ∧
         parentsCreatedBefore bootstrapState.topLevelComments then
+      let noCommentFileManager := s₀.fileManager.resetCommentState
       if hBase : ∀ entry, entry ∈ bootstrapState.baseComments.toList →
-          s₀.fileManager.resetCommentState.state.contains entry.1 ∧ allCommentsHaveBackendId entry.2 ∧
+          noCommentFileManager.state.contains entry.1 ∧ allCommentsHaveBackendId entry.2 ∧
           allParentsInComments entry.2 ∧ commentRefsNodup entry.2 ∧ parentsCreatedBefore entry.2 then
         if hCurrent : ∀ entry, entry ∈ bootstrapState.currentComments.toList →
-            s₀.fileManager.resetCommentState.state.contains entry.1 ∧ allCommentsHaveBackendId entry.2 ∧
+            noCommentFileManager.state.contains entry.1 ∧ allCommentsHaveBackendId entry.2 ∧
             allParentsInComments entry.2 ∧ commentRefsNodup entry.2 ∧ parentsCreatedBefore entry.2 then
           let ⟨hBackendTop, hParentsTop, hNodupTop, hBeforeTop⟩ := hTop
           let hAllBackend := bootstrapState.allComments_haveBackendId hBackendTop
             (fun entry hentry => (hBase entry hentry).2.1) (fun entry hentry => (hCurrent entry hentry).2.1)
-          let initBS : FileThreadsBootstrapState s₀.fileManager.resetCommentState.state
+          let initBS : FileThreadsBootstrapState noCommentFileManager.state
               (commentsByRef bootstrapState.allComments) :=
-            { state := s₀.fileManager.resetCommentState.state,
+            { state := noCommentFileManager.state,
               hSameContains := fun _ => rfl,
               hPublished := s₀.fileManager.hFileThreadsPublished_resetCommentState
                 (commentsByRef bootstrapState.allComments) }
