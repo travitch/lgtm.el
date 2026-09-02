@@ -198,56 +198,283 @@ private instance parentsCreatedBefore.decidable (comments : List Comment) :
     Decidable (parentsCreatedBefore comments) := by
   unfold parentsCreatedBefore; infer_instance
 
-/-- Bulk-loads a fresh batch of comments from the server, replacing whatever comment state was
-there before.
+/-- `(m.insert k v).contains k'` doesn't depend on `v` when `k` was already present: inserting at an
+already-tracked key can't add or remove any other key (or `k` itself). Used by
+`FileThreadsBootstrapState.applyBase` / `.applyCurrent` to show each per-file update leaves
+`ModifiedFileManager.state`'s key set (hence `hConsistentState`) untouched. -/
+private theorem contains_insert_of_contains {α β} [BEq α] [Hashable α] [EquivBEq α] [LawfulHashable α]
+    {m : Std.HashMap α β} {k : α} (hk : m.contains k) (v : β) (k' : α) :
+    (m.insert k v).contains k' = m.contains k' := by
+  rw [Std.HashMap.contains_insert]
+  by_cases heq : (k == k') = true
+  · simp only [heq, Bool.true_or]
+    exact ((Std.HashMap.contains_congr heq).symm.trans hk).symm
+  · rw [Bool.not_eq_true] at heq
+    rw [heq, Bool.false_or]
 
-This only threads the batch's top-level (unattached) comments into `commentManager.topLevelThreads`
-so far; per-file (`.base` / `.current`) comments are grouped by `groupComments` but not yet threaded
-into `fileManager`'s per-file `baseThreads` / `currentThreads` -- that's tracked as follow-up work.
+/-- Accumulates per-file `baseThreads` / `currentThreads` updates while bulk-loading comments from
+the server: `state` starts as `fileManager.resetCommentState.state` (every file's threads empty)
+and is updated one file at a time by `applyBase` / `.applyCurrent`. `hSameContains` says the update
+never changes which files are tracked (only an already-tracked file's `ModifiedFileState` can be
+replaced), which is what lets the final `ModifiedFileManager.hConsistentState` be recovered from the
+original `fileManager.resetCommentState`'s. `hPublished` is the `State.hFileThreadsPublished`
+invariant relative to the final, fixed `comments₁` map. -/
+private structure FileThreadsBootstrapState (origState : Std.HashMap ModifiedFileRef ModifiedFileState)
+    (comments₁ : Std.HashMap CommentRef Comment) where
+  state : Std.HashMap ModifiedFileRef ModifiedFileState
+  hSameContains : ∀ mf, state.contains mf = origState.contains mf
+  hPublished : ∀ fileRef (h : state.contains fileRef),
+    (∀ ref (_hc : (state.get fileRef h).baseThreads.commentTreeNodes.contains ref),
+      ∃ h' : comments₁.contains ref, (comments₁.get ref h').backendId.isSome) ∧
+    (∀ ref (_hc : (state.get fileRef h).currentThreads.commentTreeNodes.contains ref),
+      ∃ h' : comments₁.contains ref, (comments₁.get ref h').backendId.isSome)
+
+/-- Threads one file's batch of base-version comments into that file's `baseThreads`, leaving
+`currentThreads` (and every other file) untouched. `hSubset` packages what the caller already knows
+about how `cs` relates to the final `comments₁` map (via `commentsByRef`), decoupling this
+per-file step from the global bookkeeping needed to establish it. -/
+private def FileThreadsBootstrapState.applyBase
+    {origState : Std.HashMap ModifiedFileRef ModifiedFileState} {comments₁ : Std.HashMap CommentRef Comment}
+    (bs : FileThreadsBootstrapState origState comments₁)
+    (fileRef : ModifiedFileRef) (cs : List Comment)
+    (hFound : origState.contains fileRef)
+    (hSameLoc : commentsAllInSameFileOrAllTopLevel cs)
+    (hFileLocated : ∀ c, c ∈ cs → ∃ loc, c.location = CommentLocation.fileLocation loc)
+    (hBackend : allCommentsHaveBackendId cs) (hParents : allParentsInComments cs)
+    (hNodup : commentRefsNodup cs) (hBefore : parentsCreatedBefore cs)
+    (hSubset : ∀ c, c ∈ cs → ∃ h' : comments₁.contains c.ref, (comments₁.get c.ref h').backendId.isSome) :
+    FileThreadsBootstrapState origState comments₁ :=
+  have hOldState : bs.state.contains fileRef := by rw [bs.hSameContains]; exact hFound
+  let oldFileState := bs.state.get fileRef hOldState
+  let newBaseThreads := assembleCommentTrees cs hSameLoc hBackend hParents hNodup hBefore
+  let newFileState : ModifiedFileState :=
+    { oldFileState with
+      selectedComment := none,
+      baseThreads := newBaseThreads,
+      hSelectedCommentWellFormed := by simp,
+      hBaseThreadsFileScoped := assembleCommentTrees_locationRoots_not_isTopLevel cs hSameLoc hFileLocated hBackend
+        hParents hNodup hBefore }
+  { state := bs.state.insert fileRef newFileState,
+    hSameContains := fun mf => by
+      rw [contains_insert_of_contains hOldState, bs.hSameContains],
+    hPublished := fun fileRef' h => by
+      by_cases heq : fileRef = fileRef'
+      · subst heq
+        rw [Std.HashMap.get_insert_self]
+        refine ⟨fun ref hc => ?_, fun ref hc => ?_⟩
+        · obtain ⟨c, hcmem, hcref⟩ := (assembleCommentTrees_commentTreeNodes_contains_iff cs hSameLoc hBackend
+            hParents hNodup hBefore ref).mp hc
+          exact hcref ▸ hSubset c hcmem
+        · exact (bs.hPublished fileRef hOldState).2 ref hc
+      · have hne : ¬ (fileRef == fileRef') := fun h => heq (beq_iff_eq.mp h)
+        have hc' : bs.state.contains fileRef' := by
+          have h2 := h
+          rw [Std.HashMap.contains_insert, Bool.or_eq_true, beq_iff_eq] at h2
+          rcases h2 with h1 | h1
+          · exact absurd h1 heq
+          · exact h1
+        rw [Std.HashMap.get_insert_of_ne hne h hc']
+        exact bs.hPublished fileRef' hc' }
+
+/-- The `.current`-version counterpart of `FileThreadsBootstrapState.applyBase`. -/
+private def FileThreadsBootstrapState.applyCurrent
+    {origState : Std.HashMap ModifiedFileRef ModifiedFileState} {comments₁ : Std.HashMap CommentRef Comment}
+    (bs : FileThreadsBootstrapState origState comments₁)
+    (fileRef : ModifiedFileRef) (cs : List Comment)
+    (hFound : origState.contains fileRef)
+    (hSameLoc : commentsAllInSameFileOrAllTopLevel cs)
+    (hFileLocated : ∀ c, c ∈ cs → ∃ loc, c.location = CommentLocation.fileLocation loc)
+    (hBackend : allCommentsHaveBackendId cs) (hParents : allParentsInComments cs)
+    (hNodup : commentRefsNodup cs) (hBefore : parentsCreatedBefore cs)
+    (hSubset : ∀ c, c ∈ cs → ∃ h' : comments₁.contains c.ref, (comments₁.get c.ref h').backendId.isSome) :
+    FileThreadsBootstrapState origState comments₁ :=
+  have hOldState : bs.state.contains fileRef := by rw [bs.hSameContains]; exact hFound
+  let oldFileState := bs.state.get fileRef hOldState
+  let newCurrentThreads := assembleCommentTrees cs hSameLoc hBackend hParents hNodup hBefore
+  let newFileState : ModifiedFileState :=
+    { oldFileState with
+      selectedComment := none,
+      currentThreads := newCurrentThreads,
+      hSelectedCommentWellFormed := by simp,
+      hCurrentThreadsFileScoped := assembleCommentTrees_locationRoots_not_isTopLevel cs hSameLoc hFileLocated hBackend
+        hParents hNodup hBefore }
+  { state := bs.state.insert fileRef newFileState,
+    hSameContains := fun mf => by
+      rw [contains_insert_of_contains hOldState, bs.hSameContains],
+    hPublished := fun fileRef' h => by
+      by_cases heq : fileRef = fileRef'
+      · subst heq
+        rw [Std.HashMap.get_insert_self]
+        refine ⟨fun ref hc => ?_, fun ref hc => ?_⟩
+        · exact (bs.hPublished fileRef hOldState).1 ref hc
+        · obtain ⟨c, hcmem, hcref⟩ := (assembleCommentTrees_commentTreeNodes_contains_iff cs hSameLoc hBackend
+            hParents hNodup hBefore ref).mp hc
+          exact hcref ▸ hSubset c hcmem
+      · have hne : ¬ (fileRef == fileRef') := fun h => heq (beq_iff_eq.mp h)
+        have hc' : bs.state.contains fileRef' := by
+          have h2 := h
+          rw [Std.HashMap.contains_insert, Bool.or_eq_true, beq_iff_eq] at h2
+          rcases h2 with h1 | h1
+          · exact absurd h1 heq
+          · exact h1
+        rw [Std.HashMap.get_insert_of_ne hne h hc']
+        exact bs.hPublished fileRef' hc' }
+
+/-- Folds `FileThreadsBootstrapState.applyBase` over every `(fileRef, comments)` entry of a file
+bucket (e.g. `bootstrapState.baseComments.toList`), threading the per-entry validity facts through
+via `List.mem_cons_of_mem`/`List.mem_cons_self` at each step (mirroring `commentsByRef.go`'s
+threading style). -/
+private def applyBaseThreads.go (comments₁ : Std.HashMap CommentRef Comment)
+    (origState : Std.HashMap ModifiedFileRef ModifiedFileState) :
+    (l : List (ModifiedFileRef × List Comment)) →
+    (∀ entry, entry ∈ l →
+      origState.contains entry.1 ∧ commentsAllInSameFileOrAllTopLevel entry.2 ∧
+      (∀ c, c ∈ entry.2 → ∃ loc, c.location = CommentLocation.fileLocation loc) ∧
+      allCommentsHaveBackendId entry.2 ∧ allParentsInComments entry.2 ∧ commentRefsNodup entry.2 ∧
+      parentsCreatedBefore entry.2 ∧
+      (∀ c, c ∈ entry.2 → ∃ h' : comments₁.contains c.ref, (comments₁.get c.ref h').backendId.isSome)) →
+    FileThreadsBootstrapState origState comments₁ → FileThreadsBootstrapState origState comments₁
+| [], _, bs => bs
+| entry :: rest, hAll, bs =>
+  applyBaseThreads.go comments₁ origState rest (fun e he => hAll e (List.mem_cons_of_mem _ he))
+    (let ⟨hFound, hSameLoc, hFileLoc, hBackend, hParents, hNodup, hBefore, hSubset⟩ := hAll entry List.mem_cons_self
+     bs.applyBase entry.1 entry.2 hFound hSameLoc hFileLoc hBackend hParents hNodup hBefore hSubset)
+
+/-- The `.current`-version counterpart of `applyBaseThreads.go`. -/
+private def applyCurrentThreads.go (comments₁ : Std.HashMap CommentRef Comment)
+    (origState : Std.HashMap ModifiedFileRef ModifiedFileState) :
+    (l : List (ModifiedFileRef × List Comment)) →
+    (∀ entry, entry ∈ l →
+      origState.contains entry.1 ∧ commentsAllInSameFileOrAllTopLevel entry.2 ∧
+      (∀ c, c ∈ entry.2 → ∃ loc, c.location = CommentLocation.fileLocation loc) ∧
+      allCommentsHaveBackendId entry.2 ∧ allParentsInComments entry.2 ∧ commentRefsNodup entry.2 ∧
+      parentsCreatedBefore entry.2 ∧
+      (∀ c, c ∈ entry.2 → ∃ h' : comments₁.contains c.ref, (comments₁.get c.ref h').backendId.isSome)) →
+    FileThreadsBootstrapState origState comments₁ → FileThreadsBootstrapState origState comments₁
+| [], _, bs => bs
+| entry :: rest, hAll, bs =>
+  applyCurrentThreads.go comments₁ origState rest (fun e he => hAll e (List.mem_cons_of_mem _ he))
+    (let ⟨hFound, hSameLoc, hFileLoc, hBackend, hParents, hNodup, hBefore, hSubset⟩ := hAll entry List.mem_cons_self
+     bs.applyCurrent entry.1 entry.2 hFound hSameLoc hFileLoc hBackend hParents hNodup hBefore hSubset)
+
+/-- Bulk-loads a fresh batch of comments from the server, replacing whatever comment state was
+there before: the batch's top-level (unattached) comments are threaded into
+`commentManager.topLevelThreads`, and its per-file (`.base` / `.current`) comments (as grouped by
+`groupComments`) are threaded into each tracked file's `baseThreads` / `currentThreads`.
 
 Fails (leaving the state unchanged) if the server's batch doesn't satisfy the structural invariants
-`assembleCommentTrees` needs (every comment has a backend id, every referenced parent is in the
-batch, refs are unique, and parents predate their replies) -- these can't be guaranteed by
+`assembleCommentTrees` needs -- per bucket (the top-level batch, and each file's `.base` / `.current`
+batch separately), every comment must have a backend id, every referenced parent must be in the same
+bucket, refs must be unique, and parents must predate their replies -- or if a file-scoped comment
+names a file that isn't tracked by `fileManager`. None of this can be guaranteed by
 `getRemoteConversations`'s type, since the batch comes from outside the Lean model. -/
 public def addRemoteComments (s₀ : State) : Result (Except String Unit) :=
   match s₀.configuration.getRemoteConversations s₀.fileManager with
   | none => Result.mk (Except.ok ()) s₀
   | some comments =>
     let bootstrapState := groupComments comments
-    if h : allCommentsHaveBackendId bootstrapState.topLevelComments ∧
+    if hTop : allCommentsHaveBackendId bootstrapState.topLevelComments ∧
         allParentsInComments bootstrapState.topLevelComments ∧
         commentRefsNodup bootstrapState.topLevelComments ∧
         parentsCreatedBefore bootstrapState.topLevelComments then
-      let ⟨hBackend, hParents, hNodup, hBefore⟩ := h
-      let hSameLocation : commentsAllInSameFileOrAllTopLevel bootstrapState.topLevelComments :=
-        Or.inl bootstrapState.hTopLevelCommentsAreTopLevel
-      let topLevelThreads := assembleCommentTrees bootstrapState.topLevelComments hSameLocation hBackend hParents
-        hNodup hBefore
-      let commentManager₁ : CommentManager :=
-        { comments := commentsByRef bootstrapState.topLevelComments,
-          topLevelThreads := topLevelThreads,
-          selectedComment := none,
-          hSelectedCommentWellFormed := by simp,
-          hCommentsKeyedByRef := commentsByRef_hCommentsKeyedByRef bootstrapState.topLevelComments,
-          hTopLevelThreadsAllTopLevel := assembleCommentTrees_locationRoots_isTopLevel
-            bootstrapState.topLevelComments hSameLocation bootstrapState.hTopLevelCommentsAreTopLevel hBackend
-            hParents hNodup hBefore,
-          hTopLevelThreadsPublished := fun ref h' => by
-            obtain ⟨c, hc, hcref⟩ := (assembleCommentTrees_commentTreeNodes_contains_iff
-              bootstrapState.topLevelComments hSameLocation hBackend hParents hNodup hBefore ref).mp h'
-            exact ⟨hcref ▸ commentsByRef_contains_of_mem bootstrapState.topLevelComments c hc,
-              commentsByRef_hPublished bootstrapState.topLevelComments hBackend ref _⟩ }
-      let s₁ : State :=
-        { s₀ with
-          commentBeingEdited := none,
-          commentManager := commentManager₁,
-          fileManager := s₀.fileManager.resetCommentState,
-          hCommentBeingEditedWellFormed := by simp,
-          hFileThreadsPublished :=
-            s₀.fileManager.hFileThreadsPublished_resetCommentState commentManager₁.comments }
-      Result.mk (Except.ok ()) s₁
-    else
-      Result.mk (Except.error "Received malformed comment data from the server") s₀
+      let origState := s₀.fileManager.resetCommentState.state
+      if hBase : ∀ entry, entry ∈ bootstrapState.baseComments.toList →
+          origState.contains entry.1 ∧ allCommentsHaveBackendId entry.2 ∧ allParentsInComments entry.2 ∧
+          commentRefsNodup entry.2 ∧ parentsCreatedBefore entry.2 then
+        if hCurrent : ∀ entry, entry ∈ bootstrapState.currentComments.toList →
+            origState.contains entry.1 ∧ allCommentsHaveBackendId entry.2 ∧ allParentsInComments entry.2 ∧
+            commentRefsNodup entry.2 ∧ parentsCreatedBefore entry.2 then
+          let ⟨hBackendTop, hParentsTop, hNodupTop, hBeforeTop⟩ := hTop
+          let allComments := bootstrapState.topLevelComments ++
+            bootstrapState.baseComments.toList.flatMap Prod.snd ++
+            bootstrapState.currentComments.toList.flatMap Prod.snd
+          let comments₁ := commentsByRef allComments
+          have hAllBackendGlobal : ∀ c, c ∈ allComments → c.backendId.isSome := by
+            intro c hc
+            simp only [allComments, List.mem_append, List.mem_flatMap] at hc
+            rcases hc with (hc | ⟨entry, hentry, hc⟩) | ⟨entry, hentry, hc⟩
+            · exact hBackendTop c hc
+            · exact (hBase entry hentry).2.1 c hc
+            · exact (hCurrent entry hentry).2.1 c hc
+          have hSubsetOf : ∀ (cs : List Comment), (∀ (c : Comment), c ∈ cs → c ∈ allComments) →
+              ∀ (c : Comment), c ∈ cs → ∃ h' : comments₁.contains c.ref, (comments₁.get c.ref h').backendId.isSome :=
+            fun cs hsub c hc =>
+              ⟨commentsByRef_contains_of_mem allComments c (hsub c hc),
+                commentsByRef_hPublished allComments hAllBackendGlobal c.ref _⟩
+          let hAllBase : ∀ entry, entry ∈ bootstrapState.baseComments.toList →
+              origState.contains entry.1 ∧ commentsAllInSameFileOrAllTopLevel entry.2 ∧
+              (∀ c, c ∈ entry.2 → ∃ loc, c.location = CommentLocation.fileLocation loc) ∧
+              allCommentsHaveBackendId entry.2 ∧ allParentsInComments entry.2 ∧ commentRefsNodup entry.2 ∧
+              parentsCreatedBefore entry.2 ∧
+              (∀ c, c ∈ entry.2 → ∃ h' : comments₁.contains c.ref, (comments₁.get c.ref h').backendId.isSome) :=
+            fun entry hentry =>
+              ⟨(hBase entry hentry).1,
+                Or.inr (Or.inl (bootstrapState.hBaseCommentsHaveBaseVersion entry hentry)),
+                fun c hc => (bootstrapState.hBaseCommentsHaveBaseVersion entry hentry c hc).imp (fun _ h => h.1),
+                (hBase entry hentry).2.1, (hBase entry hentry).2.2.1, (hBase entry hentry).2.2.2.1,
+                (hBase entry hentry).2.2.2.2,
+                hSubsetOf entry.2 (fun c hc => by
+                  simp only [allComments, List.mem_append, List.mem_flatMap]
+                  exact Or.inl (Or.inr ⟨entry, hentry, hc⟩)) ⟩
+          let hAllCurrent : ∀ entry, entry ∈ bootstrapState.currentComments.toList →
+              origState.contains entry.1 ∧ commentsAllInSameFileOrAllTopLevel entry.2 ∧
+              (∀ c, c ∈ entry.2 → ∃ loc, c.location = CommentLocation.fileLocation loc) ∧
+              allCommentsHaveBackendId entry.2 ∧ allParentsInComments entry.2 ∧ commentRefsNodup entry.2 ∧
+              parentsCreatedBefore entry.2 ∧
+              (∀ c, c ∈ entry.2 → ∃ h' : comments₁.contains c.ref, (comments₁.get c.ref h').backendId.isSome) :=
+            fun entry hentry =>
+              ⟨(hCurrent entry hentry).1,
+                Or.inr (Or.inr (bootstrapState.hCurrentCommentsHaveCurrentVersion entry hentry)),
+                fun c hc => (bootstrapState.hCurrentCommentsHaveCurrentVersion entry hentry c hc).imp
+                  (fun _ h => h.1),
+                (hCurrent entry hentry).2.1, (hCurrent entry hentry).2.2.1, (hCurrent entry hentry).2.2.2.1,
+                (hCurrent entry hentry).2.2.2.2,
+                hSubsetOf entry.2 (fun c hc => by
+                  simp only [allComments, List.mem_append, List.mem_flatMap]
+                  exact Or.inr ⟨entry, hentry, hc⟩) ⟩
+          let initBS : FileThreadsBootstrapState origState comments₁ :=
+            { state := origState,
+              hSameContains := fun _ => rfl,
+              hPublished := s₀.fileManager.hFileThreadsPublished_resetCommentState comments₁ }
+          let bs1 := applyBaseThreads.go comments₁ origState bootstrapState.baseComments.toList hAllBase initBS
+          let bs2 := applyCurrentThreads.go comments₁ origState bootstrapState.currentComments.toList hAllCurrent bs1
+          let fileManager₁ : ModifiedFileManager :=
+            { state := bs2.state,
+              modifiedFiles := s₀.fileManager.modifiedFiles,
+              hConsistentState := fun mf => by
+                rw [bs2.hSameContains]
+                exact s₀.fileManager.resetCommentState.hConsistentState mf }
+          let hSameLocationTop : commentsAllInSameFileOrAllTopLevel bootstrapState.topLevelComments :=
+            Or.inl bootstrapState.hTopLevelCommentsAreTopLevel
+          let topLevelThreads := assembleCommentTrees bootstrapState.topLevelComments hSameLocationTop hBackendTop
+            hParentsTop hNodupTop hBeforeTop
+          let commentManager₁ : CommentManager :=
+            { comments := comments₁,
+              topLevelThreads := topLevelThreads,
+              selectedComment := none,
+              hSelectedCommentWellFormed := by simp,
+              hCommentsKeyedByRef := commentsByRef_hCommentsKeyedByRef allComments,
+              hTopLevelThreadsAllTopLevel := assembleCommentTrees_locationRoots_isTopLevel
+                bootstrapState.topLevelComments hSameLocationTop bootstrapState.hTopLevelCommentsAreTopLevel
+                hBackendTop hParentsTop hNodupTop hBeforeTop,
+              hTopLevelThreadsPublished := fun ref h' => by
+                obtain ⟨c, hc, hcref⟩ := (assembleCommentTrees_commentTreeNodes_contains_iff
+                  bootstrapState.topLevelComments hSameLocationTop hBackendTop hParentsTop hNodupTop hBeforeTop
+                  ref).mp h'
+                refine hcref ▸ hSubsetOf bootstrapState.topLevelComments (fun c' hc' => ?_) c hc
+                simp only [allComments, List.mem_append]
+                exact Or.inl (Or.inl hc') }
+          let s₁ : State :=
+            { s₀ with
+              commentBeingEdited := none,
+              commentManager := commentManager₁,
+              fileManager := fileManager₁,
+              hCommentBeingEditedWellFormed := by simp,
+              hFileThreadsPublished := bs2.hPublished }
+          Result.mk (Except.ok ()) s₁
+        else Result.mk (Except.error "Received malformed comment data from the server") s₀
+      else Result.mk (Except.error "Received malformed comment data from the server") s₀
+    else Result.mk (Except.error "Received malformed comment data from the server") s₀
 
 /-- The core worker called to update the state when the user marks a comment as done.
 

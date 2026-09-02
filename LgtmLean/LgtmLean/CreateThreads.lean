@@ -1081,6 +1081,29 @@ public theorem assembleCommentTrees_locationRoots_isTopLevel
   rw [hloceq]
   rfl
 
+/-- The file-scoped counterpart of `assembleCommentTrees_locationRoots_isTopLevel`: if every comment
+in the batch is file-located (regardless of `.version`), every `ThreadLocation` key registered in
+the resulting `CommentThreads.locationRoots` is non-top-level. Needed by `addRemoteComments` to
+reestablish `ModifiedFileState.hBaseThreadsFileScoped` / `hCurrentThreadsFileScoped` after
+bulk-loading a file's comments from the server. -/
+public theorem assembleCommentTrees_locationRoots_not_isTopLevel
+    (comments : List Comment) (hSameLocation : commentsAllInSameFileOrAllTopLevel comments)
+    (hAllFileLocated : ∀ c, c ∈ comments → ∃ loc, c.location = CommentLocation.fileLocation loc)
+    (hCommentsHaveBackendIds : allCommentsHaveBackendId comments)
+    (hParentsInComments : allParentsInComments comments)
+    (hRefsNodup : commentRefsNodup comments)
+    (hParentsCreatedBefore : parentsCreatedBefore comments) :
+    ∀ loc, loc ∈ (assembleCommentTrees comments hSameLocation hCommentsHaveBackendIds hParentsInComments
+        hRefsNodup hParentsCreatedBefore).locationRoots.keys → loc.isTopLevel = false := by
+  intro loc hloc
+  unfold assembleCommentTrees at hloc
+  obtain ⟨c, hc, _, hcloc⟩ := bootstrapCommentTrees_locationRoots_mem_of_mem comments
+    hCommentsHaveBackendIds hParentsInComments loc (Std.HashMap.mem_keys.mp hloc)
+  obtain ⟨loc', hloc'⟩ := hAllFileLocated c hc
+  rw [hloc'] at hcloc
+  rw [← hcloc]
+  rfl
+
 /-- A ref is registered as a tree node in `assembleCommentTrees`'s output iff some comment in the
 batch has that ref -- the public counterpart of `bootstrapCommentTrees_commentTreeNodes_contains_iff`.
 Needed by `addRemoteComments` to reestablish `CommentManager.hTopLevelThreadsPublished` after
