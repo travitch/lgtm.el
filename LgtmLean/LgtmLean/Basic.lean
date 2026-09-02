@@ -670,6 +670,30 @@ public structure State where
     (∀ ref (_hc : (fileManager.state.get modifiedFileRef h).currentThreads.commentTreeNodes.contains ref),
       ∃ h' : commentManager.comments.contains ref, (commentManager.comments.get ref h').backendId.isSome)
 
+/-- The `State.hFileThreadsPublished` counterpart of `CommentManager.hTopLevelThreadsPublished_of_preserve`:
+if every published ref in the old `comments` map is still published in a new `comments₁` map, the
+"every file's registered threads are published" invariant transfers to `comments₁` too, since no
+file's `baseThreads`/`currentThreads` are touched. This is what `completeCommentWithContent` needs
+to re-establish `State.hFileThreadsPublished` after publishing the being-edited comment (into
+whichever pool actually changed). -/
+public theorem State.hFileThreadsPublished_of_preserve (s : State)
+    {comments₁ : Std.HashMap CommentRef Comment}
+    (hPreserve : ∀ ref (h : s.commentManager.comments.contains ref),
+      (s.commentManager.comments.get ref h).backendId.isSome →
+      ∃ h' : comments₁.contains ref, (comments₁.get ref h').backendId.isSome) :
+    ∀ modifiedFileRef (h : s.fileManager.state.contains modifiedFileRef),
+      (∀ ref (_hc : (s.fileManager.state.get modifiedFileRef h).baseThreads.commentTreeNodes.contains ref),
+        ∃ h' : comments₁.contains ref, (comments₁.get ref h').backendId.isSome) ∧
+      (∀ ref (_hc : (s.fileManager.state.get modifiedFileRef h).currentThreads.commentTreeNodes.contains ref),
+        ∃ h' : comments₁.contains ref, (comments₁.get ref h').backendId.isSome) := by
+  intro modifiedFileRef h
+  obtain ⟨hBase, hCurrent⟩ := s.hFileThreadsPublished modifiedFileRef h
+  refine ⟨fun ref hc => ?_, fun ref hc => ?_⟩
+  · obtain ⟨h', hpub'⟩ := hBase ref hc
+    exact hPreserve ref h' hpub'
+  · obtain ⟨h', hpub'⟩ := hCurrent ref hc
+    exact hPreserve ref h' hpub'
+
 /-- A comment that isn't even registered in `comments` can't already be registered as a tree node in
 a file's `baseThreads`: every registered node there is backed by an entry in `comments`
 (`hFileThreadsPublished`). The file-pool analogue of

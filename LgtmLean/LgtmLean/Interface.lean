@@ -544,6 +544,196 @@ public def addRemoteComments (s₀ : State) : Result (Except String Unit) :=
       else Result.mk (Except.error "Received malformed comment data from the server") s₀
     else Result.mk (Except.error "Received malformed comment data from the server") s₀
 
+/-- Finalizes publishing a top-level being-edited comment: threads `comment₂` into
+`s₀.commentManager.topLevelThreads` and assembles the resulting `State`. `comments₁` (the new
+`CommentManager.comments`) is recomputed from `comment₀`/`comment₂`/`href2` rather than taken as a
+parameter, since it must stay *definitionally* `s₀.commentManager.comments.insert comment₀.ref
+comment₂` for the proofs below to typecheck -- an opaque parameter would lose that. -/
+private def completeCommentWithContent.finalizeTopLevel (s₀ : State) (comment₀ comment₂ : Comment)
+    (hloc : comment₂.location = CommentLocation.topLevel) (hHasBackendId : comment₂.backendId.isSome)
+    (href2 : comment₂.ref = comment₀.ref) (hFresh0 : ¬ s₀.commentManager.comments.contains comment₀.ref)
+    (hparent2 : ∀ parentId, comment₂.parent = some parentId →
+      parentId ∈ s₀.commentManager.topLevelThreads.serverCommentIds)
+    (hFileThreadsPublished₁ : ∀ modifiedFileRef (h : s₀.fileManager.state.contains modifiedFileRef),
+      (∀ ref (_hc : (s₀.fileManager.state.get modifiedFileRef h).baseThreads.commentTreeNodes.contains ref),
+        ∃ h' : (s₀.commentManager.comments.insert comment₀.ref comment₂).contains ref,
+          ((s₀.commentManager.comments.insert comment₀.ref comment₂).get ref h').backendId.isSome) ∧
+      (∀ ref (_hc : (s₀.fileManager.state.get modifiedFileRef h).currentThreads.commentTreeNodes.contains ref),
+        ∃ h' : (s₀.commentManager.comments.insert comment₀.ref comment₂).contains ref,
+          ((s₀.commentManager.comments.insert comment₀.ref comment₂).get ref h').backendId.isSome)) :
+    State :=
+  let comments₁ := s₀.commentManager.comments.insert comment₀.ref comment₂
+  have hCommentsKeyedByRef₁ : ∀ ref (h : comments₁.contains ref), (comments₁.get ref h).ref = ref :=
+    s₀.commentManager.hCommentsKeyedByRef_insert comment₀.ref comment₂ href2
+  have hParentThreadRegistered : ∀ parentId (h : parentId ∈ s₀.commentManager.topLevelThreads.serverCommentIds),
+      comment₂.parent = some parentId →
+        s₀.commentManager.topLevelThreads.serverCommentIds.get parentId h ∈
+          s₀.commentManager.topLevelThreads.commentTreeNodes :=
+    fun parentId h _ => s₀.commentManager.hParentThreadRegistered_mem parentId h
+  have hRefFresh : ¬ comment₂.ref ∈ s₀.commentManager.topLevelThreads.commentTreeNodes := by
+    rw [href2]
+    exact s₀.commentManager.notMem_topLevelThreads_of_unpublished comment₀.ref hFresh0
+  have hLocationScope : ∀ loc', loc' ∈ s₀.commentManager.topLevelThreads.locationRoots.keys →
+      loc'.isTopLevel = comment₂.location.asThreadLocation.isTopLevel :=
+    s₀.commentManager.locationScope_of_topLevel hloc
+  let topLevelThreads₁ := addCommentToThread s₀.commentManager.topLevelThreads comment₂
+    hHasBackendId hparent2 hParentThreadRegistered hRefFresh hLocationScope
+  have hTopLevelThreadsAllTopLevel₁ : ∀ loc', loc' ∈ topLevelThreads₁.locationRoots.keys →
+      loc'.isTopLevel = true :=
+    addCommentToThread_locationRoots_isTopLevel s₀.commentManager.topLevelThreads comment₂
+      hHasBackendId hparent2 hParentThreadRegistered hRefFresh hLocationScope true
+      s₀.commentManager.hTopLevelThreadsAllTopLevel
+      (hloc ▸ CommentLocation.topLevel_asThreadLocation_isTopLevel)
+  have hTopLevelThreadsPublished₁ : ∀ ref' (h : topLevelThreads₁.commentTreeNodes.contains ref'),
+      ∃ h' : comments₁.contains ref', (comments₁.get ref' h').backendId.isSome :=
+    s₀.commentManager.hTopLevelThreadsPublished_insert comment₀.ref comment₂ href2
+      hHasBackendId hparent2 hParentThreadRegistered hRefFresh hLocationScope
+  let commentManager₁ : CommentManager :=
+    { comments := comments₁,
+      topLevelThreads := topLevelThreads₁,
+      selectedComment := none,
+      hSelectedCommentWellFormed := by simp,
+      hCommentsKeyedByRef := hCommentsKeyedByRef₁,
+      hTopLevelThreadsAllTopLevel := hTopLevelThreadsAllTopLevel₁,
+      hTopLevelThreadsPublished := hTopLevelThreadsPublished₁ }
+  { s₀ with
+    commentBeingEdited := none,
+    commentManager := commentManager₁,
+    hCommentBeingEditedWellFormed := by simp,
+    hFileThreadsPublished := hFileThreadsPublished₁ }
+
+/-- Finalizes publishing a file-scoped being-edited comment into a specific file's `baseThreads`,
+leaving `currentThreads` untouched, and assembles the resulting `State`. `comments₁` is recomputed
+rather than taken as a parameter, for the same reason as in `finalizeTopLevel`. -/
+private def completeCommentWithContent.finalizeBase (s₀ : State) (comment₀ comment₂ : Comment)
+    {serverId : ServerId} (fileRef : ModifiedFileRef) (modifiedFileState : ModifiedFileState)
+    (hOldContainsFileRef : s₀.fileManager.state.contains fileRef)
+    (hgetval : s₀.fileManager.state.get fileRef hOldContainsFileRef = modifiedFileState)
+    (hHasBackendId : comment₂.backendId.isSome) (href2 : comment₂.ref = comment₀.ref)
+    (hbackendId2 : comment₂.backendId = some serverId)
+    (hFresh0 : ¬ s₀.commentManager.comments.contains comment₀.ref)
+    (hparentBase : ∀ parentId, comment₂.parent = some parentId →
+      parentId ∈ modifiedFileState.baseThreads.serverCommentIds)
+    (hcommentTop : comment₂.location.asThreadLocation.isTopLevel = false)
+    (hTopLevelThreadsPublished₁ : ∀ ref' (_h : s₀.commentManager.topLevelThreads.commentTreeNodes.contains ref'),
+      ∃ h' : (s₀.commentManager.comments.insert comment₀.ref comment₂).contains ref',
+        ((s₀.commentManager.comments.insert comment₀.ref comment₂).get ref' h').backendId.isSome) :
+    State :=
+  let comments₁ := s₀.commentManager.comments.insert comment₀.ref comment₂
+  have hCommentsKeyedByRef₁ : ∀ ref (h : comments₁.contains ref), (comments₁.get ref h).ref = ref :=
+    s₀.commentManager.hCommentsKeyedByRef_insert comment₀.ref comment₂ href2
+  have hRefFreshBase : comment₂.ref ∉ modifiedFileState.baseThreads.commentTreeNodes := by
+    rw [href2, ← hgetval]
+    exact s₀.notMem_baseThreads_of_unpublished hFresh0 hOldContainsFileRef
+  have hLocationScopeBase := modifiedFileState.locationScope_of_base hcommentTop
+  have hParentThreadRegisteredBase :
+      ∀ parentId (h : parentId ∈ modifiedFileState.baseThreads.serverCommentIds),
+        comment₂.parent = some parentId →
+          modifiedFileState.baseThreads.serverCommentIds.get parentId h ∈
+            modifiedFileState.baseThreads.commentTreeNodes :=
+    fun parentId h _ => modifiedFileState.baseThreads.hParentThreadRegistered_mem parentId h
+  let newBaseThreads := addCommentToThread modifiedFileState.baseThreads comment₂
+    hHasBackendId hparentBase hParentThreadRegisteredBase hRefFreshBase hLocationScopeBase
+  have hBaseThreadsFileScoped₁ : ∀ loc', loc' ∈ newBaseThreads.locationRoots.keys → loc'.isTopLevel = false :=
+    addCommentToThread_locationRoots_isTopLevel modifiedFileState.baseThreads comment₂
+      hHasBackendId hparentBase hParentThreadRegisteredBase hRefFreshBase hLocationScopeBase false
+      modifiedFileState.hBaseThreadsFileScoped hcommentTop
+  let newFileState : ModifiedFileState :=
+    { modifiedFileState with
+      baseThreads := newBaseThreads,
+      selectedComment := none,
+      hSelectedCommentWellFormed := by simp,
+      hBaseThreadsFileScoped := hBaseThreadsFileScoped₁ }
+  let commentManager₁ : CommentManager :=
+    { s₀.commentManager with
+      comments := comments₁,
+      hCommentsKeyedByRef := hCommentsKeyedByRef₁,
+      hTopLevelThreadsPublished := hTopLevelThreadsPublished₁ }
+  have hNewBaseThreadsContains : ∀ ref, newBaseThreads.commentTreeNodes.contains ref ↔
+      modifiedFileState.baseThreads.commentTreeNodes.contains ref ∨ ref = comment₂.ref :=
+    addCommentToThread_commentTreeNodes_contains_iff modifiedFileState.baseThreads comment₂
+      hHasBackendId hparentBase hParentThreadRegisteredBase hRefFreshBase hLocationScopeBase
+  let newState := s₀.fileManager.state.insert fileRef newFileState
+  have hFileThreadsPublished₂ := s₀.hFileThreadsPublished_insert_base (newFileState := newFileState)
+    (newState := newState) (newComments := comments₁) hOldContainsFileRef hgetval hFresh0
+    href2 hbackendId2 hNewBaseThreadsContains rfl rfl rfl rfl
+  have hConsistentState₁ := s₀.fileManager.hConsistentState_insert hOldContainsFileRef newFileState
+  let fileManager₁ : ModifiedFileManager :=
+    { s₀.fileManager with
+      state := newState,
+      hConsistentState := hConsistentState₁ }
+  { s₀ with
+    commentBeingEdited := none,
+    commentManager := commentManager₁,
+    fileManager := fileManager₁,
+    hCommentBeingEditedWellFormed := by simp,
+    hFileThreadsPublished := hFileThreadsPublished₂ }
+
+/-- The `.current`-version counterpart of `completeCommentWithContent.finalizeBase`. -/
+private def completeCommentWithContent.finalizeCurrent (s₀ : State) (comment₀ comment₂ : Comment)
+    {serverId : ServerId} (fileRef : ModifiedFileRef) (modifiedFileState : ModifiedFileState)
+    (hOldContainsFileRef : s₀.fileManager.state.contains fileRef)
+    (hgetval : s₀.fileManager.state.get fileRef hOldContainsFileRef = modifiedFileState)
+    (hHasBackendId : comment₂.backendId.isSome) (href2 : comment₂.ref = comment₀.ref)
+    (hbackendId2 : comment₂.backendId = some serverId)
+    (hFresh0 : ¬ s₀.commentManager.comments.contains comment₀.ref)
+    (hparentCurrent : ∀ parentId, comment₂.parent = some parentId →
+      parentId ∈ modifiedFileState.currentThreads.serverCommentIds)
+    (hcommentTop : comment₂.location.asThreadLocation.isTopLevel = false)
+    (hTopLevelThreadsPublished₁ : ∀ ref' (_h : s₀.commentManager.topLevelThreads.commentTreeNodes.contains ref'),
+      ∃ h' : (s₀.commentManager.comments.insert comment₀.ref comment₂).contains ref',
+        ((s₀.commentManager.comments.insert comment₀.ref comment₂).get ref' h').backendId.isSome) :
+    State :=
+  let comments₁ := s₀.commentManager.comments.insert comment₀.ref comment₂
+  have hCommentsKeyedByRef₁ : ∀ ref (h : comments₁.contains ref), (comments₁.get ref h).ref = ref :=
+    s₀.commentManager.hCommentsKeyedByRef_insert comment₀.ref comment₂ href2
+  have hRefFreshCurrent : comment₂.ref ∉ modifiedFileState.currentThreads.commentTreeNodes := by
+    rw [href2, ← hgetval]
+    exact s₀.notMem_currentThreads_of_unpublished hFresh0 hOldContainsFileRef
+  have hLocationScopeCurrent := modifiedFileState.locationScope_of_current hcommentTop
+  have hParentThreadRegisteredCurrent :
+      ∀ parentId (h : parentId ∈ modifiedFileState.currentThreads.serverCommentIds),
+        comment₂.parent = some parentId →
+          modifiedFileState.currentThreads.serverCommentIds.get parentId h ∈
+            modifiedFileState.currentThreads.commentTreeNodes :=
+    fun parentId h _ => modifiedFileState.currentThreads.hParentThreadRegistered_mem parentId h
+  let newCurrentThreads := addCommentToThread modifiedFileState.currentThreads comment₂
+    hHasBackendId hparentCurrent hParentThreadRegisteredCurrent hRefFreshCurrent hLocationScopeCurrent
+  have hCurrentThreadsFileScoped₁ : ∀ loc', loc' ∈ newCurrentThreads.locationRoots.keys → loc'.isTopLevel = false :=
+    addCommentToThread_locationRoots_isTopLevel modifiedFileState.currentThreads comment₂
+      hHasBackendId hparentCurrent hParentThreadRegisteredCurrent hRefFreshCurrent hLocationScopeCurrent false
+      modifiedFileState.hCurrentThreadsFileScoped hcommentTop
+  let newFileState : ModifiedFileState :=
+    { modifiedFileState with
+      currentThreads := newCurrentThreads,
+      selectedComment := none,
+      hSelectedCommentWellFormed := by simp,
+      hCurrentThreadsFileScoped := hCurrentThreadsFileScoped₁ }
+  let commentManager₁ : CommentManager :=
+    { s₀.commentManager with
+      comments := comments₁,
+      hCommentsKeyedByRef := hCommentsKeyedByRef₁,
+      hTopLevelThreadsPublished := hTopLevelThreadsPublished₁ }
+  have hNewCurrentThreadsContains : ∀ ref, newCurrentThreads.commentTreeNodes.contains ref ↔
+      modifiedFileState.currentThreads.commentTreeNodes.contains ref ∨ ref = comment₂.ref :=
+    addCommentToThread_commentTreeNodes_contains_iff modifiedFileState.currentThreads comment₂
+      hHasBackendId hparentCurrent hParentThreadRegisteredCurrent hRefFreshCurrent hLocationScopeCurrent
+  let newState := s₀.fileManager.state.insert fileRef newFileState
+  have hFileThreadsPublished₂ := s₀.hFileThreadsPublished_insert_current (newFileState := newFileState)
+    (newState := newState) (newComments := comments₁) hOldContainsFileRef hgetval hFresh0
+    href2 hbackendId2 hNewCurrentThreadsContains rfl rfl rfl rfl
+  have hConsistentState₁ := s₀.fileManager.hConsistentState_insert hOldContainsFileRef newFileState
+  let fileManager₁ : ModifiedFileManager :=
+    { s₀.fileManager with
+      state := newState,
+      hConsistentState := hConsistentState₁ }
+  { s₀ with
+    commentBeingEdited := none,
+    commentManager := commentManager₁,
+    fileManager := fileManager₁,
+    hCommentBeingEditedWellFormed := by simp,
+    hFileThreadsPublished := hFileThreadsPublished₂ }
+
 /-- The core worker called to update the state when the user marks a comment as done.
 
 Returns the finalized comment so that the interactive wrapper can make relevant UI updates (e.g.,
@@ -583,29 +773,13 @@ public def completeCommentWithContent (s₀ : State) (newContent : String) : Res
 
         have href2 : comment₂.ref = comment₀.ref := rfl
 
-        let comments₁ := s₀.commentManager.comments.insert comment₀.ref comment₂
-
-        have hCommentsKeyedByRef₁ : ∀ ref (h : comments₁.contains ref), (comments₁.get ref h).ref = ref :=
-          s₀.commentManager.hCommentsKeyedByRef_insert comment₀.ref comment₂ href2
-
         -- Inserting the (freshly-published) being-edited comment into `comments` can't disturb any
         -- other ref's published status: it either was already there and is untouched, or it *is*
         -- `comment₀.ref`, which was fresh (unregistered) and so can't have been the ref some other
         -- invariant already certified as published.
         have hPreservePublished := s₀.commentManager.preservePublished_insert hFresh0 comment₂
 
-        have hFileThreadsPublished₁ : ∀ modifiedFileRef (h : s₀.fileManager.state.contains modifiedFileRef),
-            (∀ ref (hc : (s₀.fileManager.state.get modifiedFileRef h).baseThreads.commentTreeNodes.contains ref),
-              ∃ h' : comments₁.contains ref, (comments₁.get ref h').backendId.isSome) ∧
-            (∀ ref (hc : (s₀.fileManager.state.get modifiedFileRef h).currentThreads.commentTreeNodes.contains ref),
-              ∃ h' : comments₁.contains ref, (comments₁.get ref h').backendId.isSome) := by
-          intro modifiedFileRef h
-          obtain ⟨hBase, hCurrent⟩ := s₀.hFileThreadsPublished modifiedFileRef h
-          refine ⟨fun ref hc => ?_, fun ref hc => ?_⟩
-          · obtain ⟨h', hpub'⟩ := hBase ref hc
-            exact hPreservePublished ref h' hpub'
-          · obtain ⟨h', hpub'⟩ := hCurrent ref hc
-            exact hPreservePublished ref h' hpub'
+        have hFileThreadsPublished₁ := s₀.hFileThreadsPublished_of_preserve hPreservePublished
 
         match hloc : comment₀.location with
         | .topLevel =>
@@ -615,50 +789,8 @@ public def completeCommentWithContent (s₀ : State) (newContent : String) : Res
             have hres := hparent0 parentId hp
             rw [hloc] at hres
             exact hres
-
-          have hParentThreadRegistered : ∀ parentId (h : parentId ∈ s₀.commentManager.topLevelThreads.serverCommentIds),
-              comment₂.parent = some parentId →
-                s₀.commentManager.topLevelThreads.serverCommentIds.get parentId h ∈
-                  s₀.commentManager.topLevelThreads.commentTreeNodes :=
-            fun parentId h _ => s₀.commentManager.hParentThreadRegistered_mem parentId h
-
-          have hRefFresh : ¬ comment₂.ref ∈ s₀.commentManager.topLevelThreads.commentTreeNodes := by
-            rw [href2]
-            exact s₀.commentManager.notMem_topLevelThreads_of_unpublished comment₀.ref hFresh0
-
-          have hLocationScope : ∀ loc', loc' ∈ s₀.commentManager.topLevelThreads.locationRoots.keys →
-              loc'.isTopLevel = comment₂.location.asThreadLocation.isTopLevel :=
-            s₀.commentManager.locationScope_of_topLevel hloc
-
-          let topLevelThreads₁ := addCommentToThread s₀.commentManager.topLevelThreads comment₂
-            hHasBackendId hparent2 hParentThreadRegistered hRefFresh hLocationScope
-
-          have hTopLevelThreadsAllTopLevel₁ : ∀ loc', loc' ∈ topLevelThreads₁.locationRoots.keys →
-              loc'.isTopLevel = true :=
-            addCommentToThread_locationRoots_isTopLevel s₀.commentManager.topLevelThreads comment₂
-              hHasBackendId hparent2 hParentThreadRegistered hRefFresh hLocationScope true
-              s₀.commentManager.hTopLevelThreadsAllTopLevel
-              (hloc ▸ CommentLocation.topLevel_asThreadLocation_isTopLevel)
-
-          have hTopLevelThreadsPublished₁ : ∀ ref' (h : topLevelThreads₁.commentTreeNodes.contains ref'),
-              ∃ h' : comments₁.contains ref', (comments₁.get ref' h').backendId.isSome :=
-            s₀.commentManager.hTopLevelThreadsPublished_insert comment₀.ref comment₂ href2
-              hHasBackendId hparent2 hParentThreadRegistered hRefFresh hLocationScope
-
-          let commentManager₁ : CommentManager :=
-            { comments := comments₁,
-              topLevelThreads := topLevelThreads₁,
-              selectedComment := none,
-              hSelectedCommentWellFormed := by simp,
-              hCommentsKeyedByRef := hCommentsKeyedByRef₁,
-              hTopLevelThreadsAllTopLevel := hTopLevelThreadsAllTopLevel₁,
-              hTopLevelThreadsPublished := hTopLevelThreadsPublished₁ }
-          let s₁ := { s₀ with
-                      commentBeingEdited := none,
-                      commentManager := commentManager₁,
-                      hCommentBeingEditedWellFormed := by simp,
-                      hFileThreadsPublished := hFileThreadsPublished₁ }
-          Result.mk (Except.ok comment₂) s₁
+          Result.mk (Except.ok comment₂) (completeCommentWithContent.finalizeTopLevel s₀ comment₀ comment₂
+            hloc hHasBackendId href2 hFresh0 hparent2 hFileThreadsPublished₁)
         | .fileLocation loc =>
           -- FIXME: Change this from a find to a lookup of the modifiedFileState.ref instead
           match hfound : s₀.fileManager.state.toList.find? (λ (_, modifiedFileState) => modifiedFileState.ref == loc.fileRef) with
@@ -669,8 +801,6 @@ public def completeCommentWithContent (s₀ : State) (newContent : String) : Res
             have hgetval := hFound.2.1
             have hpred := hFound.2.2
             have hmem : (fileRef, modifiedFileState) ∈ s₀.fileManager.state.toList := List.mem_of_find?_eq_some hfound
-
-            have hOldPublishedFile := hgetval ▸ s₀.hFileThreadsPublished fileRef hOldContainsFileRef
 
             -- `topLevelThreads` is untouched by a file-scoped comment; only `comments` grows.
             have hTopLevelThreadsPublished₁ := s₀.commentManager.hTopLevelThreadsPublished_of_preserve hPreservePublished
@@ -687,131 +817,21 @@ public def completeCommentWithContent (s₀ : State) (newContent : String) : Res
             have hcommentTop : comment₂.location.asThreadLocation.isTopLevel = false :=
               hloc ▸ CommentLocation.fileLocation_asThreadLocation_isTopLevel loc
 
-            have hRefFreshBase : comment₂.ref ∉ modifiedFileState.baseThreads.commentTreeNodes := by
-              rw [href2, ← hgetval]
-              exact s₀.notMem_baseThreads_of_unpublished hFresh0 hOldContainsFileRef
-
-            have hRefFreshCurrent : comment₂.ref ∉ modifiedFileState.currentThreads.commentTreeNodes := by
-              rw [href2, ← hgetval]
-              exact s₀.notMem_currentThreads_of_unpublished hFresh0 hOldContainsFileRef
-
-            have hLocationScopeBase := modifiedFileState.locationScope_of_base hcommentTop
-            have hLocationScopeCurrent := modifiedFileState.locationScope_of_current hcommentTop
-
-            have hParentThreadRegisteredBase :
-                ∀ parentId (h : parentId ∈ modifiedFileState.baseThreads.serverCommentIds),
-                  comment₂.parent = some parentId →
-                    modifiedFileState.baseThreads.serverCommentIds.get parentId h ∈
-                      modifiedFileState.baseThreads.commentTreeNodes :=
-              fun parentId h _ => modifiedFileState.baseThreads.hParentThreadRegistered_mem parentId h
-
-            have hParentThreadRegisteredCurrent :
-                ∀ parentId (h : parentId ∈ modifiedFileState.currentThreads.serverCommentIds),
-                  comment₂.parent = some parentId →
-                    modifiedFileState.currentThreads.serverCommentIds.get parentId h ∈
-                      modifiedFileState.currentThreads.commentTreeNodes :=
-              fun parentId h _ => modifiedFileState.currentThreads.hParentThreadRegistered_mem parentId h
-
             match hver : loc.version with
             | .base =>
               have hparentBase : ∀ parentId, comment₂.parent = some parentId →
                   parentId ∈ modifiedFileState.baseThreads.serverCommentIds := by
                 rw [hver] at hparentFile; exact hparentFile
-
-              let newBaseThreads := addCommentToThread modifiedFileState.baseThreads comment₂
-                hHasBackendId hparentBase hParentThreadRegisteredBase hRefFreshBase hLocationScopeBase
-
-              have hBaseThreadsFileScoped₁ : ∀ loc', loc' ∈ newBaseThreads.locationRoots.keys → loc'.isTopLevel = false :=
-                addCommentToThread_locationRoots_isTopLevel modifiedFileState.baseThreads comment₂
-                  hHasBackendId hparentBase hParentThreadRegisteredBase hRefFreshBase hLocationScopeBase false
-                  modifiedFileState.hBaseThreadsFileScoped hcommentTop
-
-              let newFileState : ModifiedFileState :=
-                { modifiedFileState with
-                  baseThreads := newBaseThreads,
-                  selectedComment := none,
-                  hSelectedCommentWellFormed := by simp,
-                  hBaseThreadsFileScoped := hBaseThreadsFileScoped₁ }
-
-              let commentManager₁ : CommentManager :=
-                { s₀.commentManager with
-                  comments := comments₁,
-                  hCommentsKeyedByRef := hCommentsKeyedByRef₁,
-                  hTopLevelThreadsPublished := hTopLevelThreadsPublished₁ }
-
-              have hNewBaseThreadsContains : ∀ ref, newBaseThreads.commentTreeNodes.contains ref ↔
-                  modifiedFileState.baseThreads.commentTreeNodes.contains ref ∨ ref = comment₂.ref :=
-                addCommentToThread_commentTreeNodes_contains_iff modifiedFileState.baseThreads comment₂
-                  hHasBackendId hparentBase hParentThreadRegisteredBase hRefFreshBase hLocationScopeBase
-
-              let newState := s₀.fileManager.state.insert fileRef newFileState
-              have hFileThreadsPublished₂ := s₀.hFileThreadsPublished_insert_base (newFileState := newFileState)
-                (newState := newState) (newComments := comments₁) hOldContainsFileRef hgetval hFresh0
-                href2 hbackendId2 hNewBaseThreadsContains rfl rfl rfl rfl
-
-              have hConsistentState₁ := s₀.fileManager.hConsistentState_insert hOldContainsFileRef newFileState
-
-              let fileManager₁ : ModifiedFileManager :=
-                { s₀.fileManager with
-                  state := newState,
-                  hConsistentState := hConsistentState₁ }
-              let s₁ := { s₀ with
-                          commentBeingEdited := none,
-                          commentManager := commentManager₁,
-                          fileManager := fileManager₁,
-                          hCommentBeingEditedWellFormed := by simp,
-                          hFileThreadsPublished := hFileThreadsPublished₂ }
-              Result.mk (Except.ok comment₂) s₁
+              Result.mk (Except.ok comment₂) (completeCommentWithContent.finalizeBase s₀ comment₀ comment₂ fileRef
+                modifiedFileState hOldContainsFileRef hgetval hHasBackendId href2 hbackendId2 hFresh0 hparentBase
+                hcommentTop hTopLevelThreadsPublished₁)
             | .current =>
               have hparentCurrent : ∀ parentId, comment₂.parent = some parentId →
                   parentId ∈ modifiedFileState.currentThreads.serverCommentIds := by
                 rw [hver] at hparentFile; exact hparentFile
-
-              let newCurrentThreads := addCommentToThread modifiedFileState.currentThreads comment₂
-                hHasBackendId hparentCurrent hParentThreadRegisteredCurrent hRefFreshCurrent hLocationScopeCurrent
-
-              have hCurrentThreadsFileScoped₁ : ∀ loc', loc' ∈ newCurrentThreads.locationRoots.keys →
-                  loc'.isTopLevel = false :=
-                addCommentToThread_locationRoots_isTopLevel modifiedFileState.currentThreads comment₂
-                  hHasBackendId hparentCurrent hParentThreadRegisteredCurrent hRefFreshCurrent hLocationScopeCurrent false
-                  modifiedFileState.hCurrentThreadsFileScoped hcommentTop
-
-              let newFileState : ModifiedFileState :=
-                { modifiedFileState with
-                  currentThreads := newCurrentThreads,
-                  selectedComment := none,
-                  hSelectedCommentWellFormed := by simp,
-                  hCurrentThreadsFileScoped := hCurrentThreadsFileScoped₁ }
-
-              let commentManager₁ : CommentManager :=
-                { s₀.commentManager with
-                  comments := comments₁,
-                  hCommentsKeyedByRef := hCommentsKeyedByRef₁,
-                  hTopLevelThreadsPublished := hTopLevelThreadsPublished₁ }
-
-              have hNewCurrentThreadsContains : ∀ ref, newCurrentThreads.commentTreeNodes.contains ref ↔
-                  modifiedFileState.currentThreads.commentTreeNodes.contains ref ∨ ref = comment₂.ref :=
-                addCommentToThread_commentTreeNodes_contains_iff modifiedFileState.currentThreads comment₂
-                  hHasBackendId hparentCurrent hParentThreadRegisteredCurrent hRefFreshCurrent hLocationScopeCurrent
-
-              let newState := s₀.fileManager.state.insert fileRef newFileState
-              have hFileThreadsPublished₂ := s₀.hFileThreadsPublished_insert_current (newFileState := newFileState)
-                (newState := newState) (newComments := comments₁) hOldContainsFileRef hgetval hFresh0
-                href2 hbackendId2 hNewCurrentThreadsContains rfl rfl rfl rfl
-
-              have hConsistentState₁ := s₀.fileManager.hConsistentState_insert hOldContainsFileRef newFileState
-
-              let fileManager₁ : ModifiedFileManager :=
-                { s₀.fileManager with
-                  state := newState,
-                  hConsistentState := hConsistentState₁ }
-              let s₁ := { s₀ with
-                          commentBeingEdited := none,
-                          commentManager := commentManager₁,
-                          fileManager := fileManager₁,
-                          hCommentBeingEditedWellFormed := by simp,
-                          hFileThreadsPublished := hFileThreadsPublished₂ }
-              Result.mk (Except.ok comment₂) s₁
+              Result.mk (Except.ok comment₂) (completeCommentWithContent.finalizeCurrent s₀ comment₀ comment₂ fileRef
+                modifiedFileState hOldContainsFileRef hgetval hHasBackendId href2 hbackendId2 hFresh0 hparentCurrent
+                hcommentTop hTopLevelThreadsPublished₁)
 
 private theorem completeCommentWithContent.rejectsEmptyContent (s₀ : State)
   (result : Result (Except String Comment))
