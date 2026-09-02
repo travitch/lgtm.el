@@ -4,6 +4,7 @@ import Std
 
 public import LgtmLean.Basic
 public import LgtmLean.CreateThreads
+import all LgtmLean.CreateThreads
 
 public structure Result α where
   value : α
@@ -89,13 +90,164 @@ private def groupComments (comments : List Comment) : CommentBootstrapState :=
   groupComments.go comments (CommentBootstrapState.mk [] (by simp) Std.HashMap.emptyWithCapacity (by simp)
     Std.HashMap.emptyWithCapacity (by simp))
 
-public def addRemoteComments (s₀ : State) (comments : List Comment) : Result Unit :=
+private def commentsByRef.go : List Comment → Std.HashMap CommentRef Comment → Std.HashMap CommentRef Comment
+| [], m => m
+| c :: cs, m => commentsByRef.go cs (m.insert c.ref c)
+
+private theorem commentsByRef.go_hCommentsKeyedByRef (comments : List Comment) (m : Std.HashMap CommentRef Comment)
+    (hInv : ∀ ref (h : m.contains ref), (m.get ref h).ref = ref) :
+    ∀ ref (h : (commentsByRef.go comments m).contains ref), ((commentsByRef.go comments m).get ref h).ref = ref := by
+  induction comments generalizing m with
+  | nil => exact hInv
+  | cons c cs ih =>
+    apply ih
+    intro ref h
+    by_cases heq : c.ref = ref
+    · subst heq; rw [Std.HashMap.get_insert_self]
+    · have hne : ¬ (c.ref == ref) := by simpa [beq_iff_eq] using heq
+      have hc : m.contains ref := by
+        have h' := h
+        rw [Std.HashMap.contains_insert, Bool.or_eq_true, beq_iff_eq] at h'
+        rcases h' with h1 | h1
+        · exact absurd h1 heq
+        · exact h1
+      rw [Std.HashMap.get_insert_of_ne hne h hc]
+      exact hInv ref hc
+
+private theorem commentsByRef.go_hPublished (comments : List Comment) (m : Std.HashMap CommentRef Comment)
+    (hAll : ∀ c, c ∈ comments → c.backendId.isSome)
+    (hInv : ∀ ref (h : m.contains ref), (m.get ref h).backendId.isSome) :
+    ∀ ref (h : (commentsByRef.go comments m).contains ref),
+      ((commentsByRef.go comments m).get ref h).backendId.isSome := by
+  induction comments generalizing m with
+  | nil => exact hInv
+  | cons c cs ih =>
+    apply ih
+    · intro c' hc'; exact hAll c' (List.mem_cons_of_mem _ hc')
+    · intro ref h
+      by_cases heq : c.ref = ref
+      · subst heq; rw [Std.HashMap.get_insert_self]; exact hAll c List.mem_cons_self
+      · have hne : ¬ (c.ref == ref) := by simpa [beq_iff_eq] using heq
+        have hc : m.contains ref := by
+          have h' := h
+          rw [Std.HashMap.contains_insert, Bool.or_eq_true, beq_iff_eq] at h'
+          rcases h' with h1 | h1
+          · exact absurd h1 heq
+          · exact h1
+        rw [Std.HashMap.get_insert_of_ne hne h hc]
+        exact hInv ref hc
+
+private theorem commentsByRef.go_contains_mono (comments : List Comment) (m : Std.HashMap CommentRef Comment)
+    (ref : CommentRef) (h : m.contains ref) : (commentsByRef.go comments m).contains ref := by
+  induction comments generalizing m with
+  | nil => exact h
+  | cons c cs ih =>
+    apply ih
+    rw [Std.HashMap.contains_insert, Bool.or_eq_true]
+    exact Or.inr h
+
+private theorem commentsByRef.go_contains_of_mem (comments : List Comment) (m : Std.HashMap CommentRef Comment)
+    (c : Comment) (hc : c ∈ comments) : (commentsByRef.go comments m).contains c.ref := by
+  induction comments generalizing m with
+  | nil => cases hc
+  | cons c' cs ih =>
+    rw [List.mem_cons] at hc
+    rcases hc with rfl | hc
+    · apply commentsByRef.go_contains_mono cs (m.insert c.ref c) c.ref
+      rw [Std.HashMap.contains_insert, Bool.or_eq_true, beq_iff_eq]
+      exact Or.inl rfl
+    · exact ih (m.insert c'.ref c') hc
+
+/-- Builds the `CommentManager.comments` map for a batch of comments received from the server,
+keyed by `.ref`. -/
+private def commentsByRef (comments : List Comment) : Std.HashMap CommentRef Comment :=
+  commentsByRef.go comments Std.HashMap.emptyWithCapacity
+
+private theorem commentsByRef_hCommentsKeyedByRef (comments : List Comment) :
+    ∀ ref (h : (commentsByRef comments).contains ref), ((commentsByRef comments).get ref h).ref = ref :=
+  commentsByRef.go_hCommentsKeyedByRef comments Std.HashMap.emptyWithCapacity (by simp)
+
+private theorem commentsByRef_hPublished (comments : List Comment)
+    (hAll : ∀ c, c ∈ comments → c.backendId.isSome) :
+    ∀ ref (h : (commentsByRef comments).contains ref), ((commentsByRef comments).get ref h).backendId.isSome :=
+  commentsByRef.go_hPublished comments Std.HashMap.emptyWithCapacity hAll (by simp)
+
+private theorem commentsByRef_contains_of_mem (comments : List Comment) (c : Comment) (hc : c ∈ comments) :
+    (commentsByRef comments).contains c.ref :=
+  commentsByRef.go_contains_of_mem comments Std.HashMap.emptyWithCapacity c hc
+
+/-- `addRemoteComments` validates a server-provided comment batch against these predicates before
+assembling threads from it, via `if h : ... then ... else ...`. Instance search won't unfold a
+plain `def` on its own (and these `def`s can't be marked `@[expose]`/unfolded from a `public`
+declaration without extra bridge lemmas), so each predicate needs its own `Decidable` instance
+spelled out here; keeping them `private` (rather than adding them to `CreateThreads.lean`) sidesteps
+that entirely, since a private declaration gets full local transparency. -/
+private instance allCommentsHaveBackendId.decidable (comments : List Comment) :
+    Decidable (allCommentsHaveBackendId comments) := by
+  unfold allCommentsHaveBackendId; infer_instance
+
+private instance allParentsInComments.decidable (comments : List Comment) :
+    Decidable (allParentsInComments comments) := by
+  unfold allParentsInComments; infer_instance
+
+private instance commentRefsNodup.decidable (comments : List Comment) :
+    Decidable (commentRefsNodup comments) := by
+  unfold commentRefsNodup; infer_instance
+
+private instance parentsCreatedBefore.decidable (comments : List Comment) :
+    Decidable (parentsCreatedBefore comments) := by
+  unfold parentsCreatedBefore; infer_instance
+
+/-- Bulk-loads a fresh batch of comments from the server, replacing whatever comment state was
+there before.
+
+This only threads the batch's top-level (unattached) comments into `commentManager.topLevelThreads`
+so far; per-file (`.base` / `.current`) comments are grouped by `groupComments` but not yet threaded
+into `fileManager`'s per-file `baseThreads` / `currentThreads` -- that's tracked as follow-up work.
+
+Fails (leaving the state unchanged) if the server's batch doesn't satisfy the structural invariants
+`assembleCommentTrees` needs (every comment has a backend id, every referenced parent is in the
+batch, refs are unique, and parents predate their replies) -- these can't be guaranteed by
+`getRemoteConversations`'s type, since the batch comes from outside the Lean model. -/
+public def addRemoteComments (s₀ : State) : Result (Except String Unit) :=
   match s₀.configuration.getRemoteConversations s₀.fileManager with
-  | none => Result.mk () s₀
+  | none => Result.mk (Except.ok ()) s₀
   | some comments =>
-    let s₁ := (resetCommentState s₀).updatedState
     let bootstrapState := groupComments comments
-    sorry
+    if h : allCommentsHaveBackendId bootstrapState.topLevelComments ∧
+        allParentsInComments bootstrapState.topLevelComments ∧
+        commentRefsNodup bootstrapState.topLevelComments ∧
+        parentsCreatedBefore bootstrapState.topLevelComments then
+      let ⟨hBackend, hParents, hNodup, hBefore⟩ := h
+      let hSameLocation : commentsAllInSameFileOrAllTopLevel bootstrapState.topLevelComments :=
+        Or.inl bootstrapState.hTopLevelCommentsAreTopLevel
+      let topLevelThreads := assembleCommentTrees bootstrapState.topLevelComments hSameLocation hBackend hParents
+        hNodup hBefore
+      let commentManager₁ : CommentManager :=
+        { comments := commentsByRef bootstrapState.topLevelComments,
+          topLevelThreads := topLevelThreads,
+          selectedComment := none,
+          hSelectedCommentWellFormed := by simp,
+          hCommentsKeyedByRef := commentsByRef_hCommentsKeyedByRef bootstrapState.topLevelComments,
+          hTopLevelThreadsAllTopLevel := assembleCommentTrees_locationRoots_isTopLevel
+            bootstrapState.topLevelComments hSameLocation bootstrapState.hTopLevelCommentsAreTopLevel hBackend
+            hParents hNodup hBefore,
+          hTopLevelThreadsPublished := fun ref h' => by
+            obtain ⟨c, hc, hcref⟩ := (assembleCommentTrees_commentTreeNodes_contains_iff
+              bootstrapState.topLevelComments hSameLocation hBackend hParents hNodup hBefore ref).mp h'
+            exact ⟨hcref ▸ commentsByRef_contains_of_mem bootstrapState.topLevelComments c hc,
+              commentsByRef_hPublished bootstrapState.topLevelComments hBackend ref _⟩ }
+      let s₁ : State :=
+        { s₀ with
+          commentBeingEdited := none,
+          commentManager := commentManager₁,
+          fileManager := s₀.fileManager.resetCommentState,
+          hCommentBeingEditedWellFormed := by simp,
+          hFileThreadsPublished :=
+            s₀.fileManager.hFileThreadsPublished_resetCommentState commentManager₁.comments }
+      Result.mk (Except.ok ()) s₁
+    else
+      Result.mk (Except.error "Received malformed comment data from the server") s₀
 
 /-- The core worker called to update the state when the user marks a comment as done.
 

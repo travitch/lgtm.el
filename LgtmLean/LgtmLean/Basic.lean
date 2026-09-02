@@ -111,6 +111,14 @@ same cross-module unfolding reason. -/
 @[simp] public theorem CommentLocation.topLevel_isTopLevel :
     CommentLocation.topLevel.isTopLevel = true := topLevel_isTopLevel_aux
 
+private theorem CommentLocation.fileLocation_isTopLevel_aux (loc : CommentFileLocation) :
+    (CommentLocation.fileLocation loc).isTopLevel = false := rfl
+
+/-- The `fileLocation` counterpart of `topLevel_isTopLevel`, for the same cross-module unfolding
+reason. -/
+@[simp] public theorem CommentLocation.fileLocation_isTopLevel (loc : CommentFileLocation) :
+    (CommentLocation.fileLocation loc).isTopLevel = false := fileLocation_isTopLevel_aux loc
+
 public structure ServerId where
   id : String
   deriving Inhabited, Hashable, DecidableEq

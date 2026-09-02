@@ -28,6 +28,17 @@ public def parentsCreatedBefore (comments : List Comment) : Prop :=
   ∀ c, c ∈ comments → ∀ parentId, c.parent = some parentId →
     ∀ c', c' ∈ comments → c'.backendId = some parentId → c'.createdTimestamp < c.createdTimestamp
 
+/-- The non-automatically-decidable piece of `commentsAllInSameFileOrAllTopLevel`: the existential
+quantifies over all of `CommentFileLocation`, which is infinite, but it's actually just a case
+split on `c.location` in disguise (the `∃ loc` is pinned down by the equation). -/
+public instance existsFileLocationVersion.decidable (c : Comment) (v : FileVersion) :
+    Decidable (∃ loc, c.location = .fileLocation loc ∧ loc.version = v) :=
+  match hloc : c.location with
+  | .topLevel => .isFalse (fun ⟨_, h, _⟩ => by cases h)
+  | .fileLocation loc =>
+    if hv : loc.version = v then .isTrue ⟨loc, rfl, hv⟩
+    else .isFalse (fun ⟨loc', h, hv'⟩ => by cases h; exact hv hv')
+
 private structure CommentTreeBootstrapState where
   commentTreeNodes : Std.HashMap CommentRef CommentThread
   serverCommentIds : Std.HashMap ServerId CommentRef
@@ -1037,6 +1048,54 @@ public def assembleCommentTrees (comments : List Comment)
     hServerCommentIdsRegistered :=
       bootstrapCommentTrees_serverCommentIdsRegistered comments hCommentsHaveBackendIds hParentsInComments
     }
+
+/-- The batch-assembly counterpart of `addCommentToThread_locationRoots_isTopLevel`: if every
+comment in the batch is top-level, every `ThreadLocation` key registered in the resulting
+`CommentThreads.locationRoots` is top-level too. `hSameLocation` is taken as a separate opaque
+hypothesis (rather than requiring the literal term `Or.inl hAllTopLevel`) so that callers can
+supply whichever proof they already have of it. Needed by `addRemoteComments` to reestablish
+`CommentManager.hTopLevelThreadsAllTopLevel` after bulk-loading comments from the server. -/
+public theorem assembleCommentTrees_locationRoots_isTopLevel
+    (comments : List Comment) (hSameLocation : commentsAllInSameFileOrAllTopLevel comments)
+    (hAllTopLevel : ∀ c, c ∈ comments → c.location.isTopLevel)
+    (hCommentsHaveBackendIds : allCommentsHaveBackendId comments)
+    (hParentsInComments : allParentsInComments comments)
+    (hRefsNodup : commentRefsNodup comments)
+    (hParentsCreatedBefore : parentsCreatedBefore comments) :
+    ∀ loc, loc ∈ (assembleCommentTrees comments hSameLocation hCommentsHaveBackendIds hParentsInComments
+        hRefsNodup hParentsCreatedBefore).locationRoots.keys → loc.isTopLevel = true := by
+  intro loc hloc
+  unfold assembleCommentTrees at hloc
+  obtain ⟨c, hc, _, hcloc⟩ := bootstrapCommentTrees_locationRoots_mem_of_mem comments
+    hCommentsHaveBackendIds hParentsInComments loc (Std.HashMap.mem_keys.mp hloc)
+  have hctop : c.location = CommentLocation.topLevel := by
+    cases hloc' : c.location with
+    | topLevel => rfl
+    | fileLocation loc' =>
+      exfalso
+      have h := hAllTopLevel c hc
+      rw [hloc', CommentLocation.fileLocation_isTopLevel] at h
+      exact absurd h (by decide)
+  rw [hctop] at hcloc
+  have hloceq : loc = ThreadLocation.topLevel := hcloc.symm.trans rfl
+  rw [hloceq]
+  rfl
+
+/-- A ref is registered as a tree node in `assembleCommentTrees`'s output iff some comment in the
+batch has that ref -- the public counterpart of `bootstrapCommentTrees_commentTreeNodes_contains_iff`.
+Needed by `addRemoteComments` to reestablish `CommentManager.hTopLevelThreadsPublished` after
+bulk-loading comments from the server. -/
+public theorem assembleCommentTrees_commentTreeNodes_contains_iff
+    (comments : List Comment) (hSameLocation : commentsAllInSameFileOrAllTopLevel comments)
+    (hCommentsHaveBackendIds : allCommentsHaveBackendId comments)
+    (hParentsInComments : allParentsInComments comments)
+    (hRefsNodup : commentRefsNodup comments)
+    (hParentsCreatedBefore : parentsCreatedBefore comments) (ref : CommentRef) :
+    (assembleCommentTrees comments hSameLocation hCommentsHaveBackendIds hParentsInComments
+        hRefsNodup hParentsCreatedBefore).commentTreeNodes.contains ref ↔
+      ∃ c, c ∈ comments ∧ c.ref = ref := by
+  unfold assembleCommentTrees
+  exact bootstrapCommentTrees_commentTreeNodes_contains_iff comments hCommentsHaveBackendIds hParentsInComments ref
 
 private theorem isSome_insertSingletonOrAppend (value : α) (current : Option (List α)) :
     (insertSingletonOrAppend value current).isSome = true := by
