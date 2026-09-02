@@ -358,16 +358,10 @@ private def applyCurrentThreads.go (comments₁ : Std.HashMap CommentRef Comment
      bs.applyCurrent entry.1 entry.2 hFound hSameLoc hFileLoc hBackend hParents hNodup hBefore hSubset)
 
 /-- Bulk-loads a fresh batch of comments from the server, replacing whatever comment state was
-there before: the batch's top-level (unattached) comments are threaded into
-`commentManager.topLevelThreads`, and its per-file (`.base` / `.current`) comments (as grouped by
-`groupComments`) are threaded into each tracked file's `baseThreads` / `currentThreads`.
+there before.
 
 Fails (leaving the state unchanged) if the server's batch doesn't satisfy the structural invariants
-`assembleCommentTrees` needs -- per bucket (the top-level batch, and each file's `.base` / `.current`
-batch separately), every comment must have a backend id, every referenced parent must be in the same
-bucket, refs must be unique, and parents must predate their replies -- or if a file-scoped comment
-names a file that isn't tracked by `fileManager`. None of this can be guaranteed by
-`getRemoteConversations`'s type, since the batch comes from outside the Lean model. -/
+that we expect (see `assembleCommentTrees`). -/
 public def addRemoteComments (s₀ : State) : Result (Except String Unit) :=
   match s₀.configuration.getRemoteConversations s₀.fileManager with
   | none => Result.mk (Except.ok ()) s₀
