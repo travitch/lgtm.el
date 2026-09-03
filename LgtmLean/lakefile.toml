@@ -1,9 +1,12 @@
 name = "LgtmLean"
 version = "0.1.0"
-defaultTargets = ["lgtmlean"]
+defaultTargets = ["lgtmlean", "extractor"]
 
 [[lean_lib]]
 name = "LgtmLean"
+
+[[lean_lib]]
+name = "Extractor"
 
 [[lean_exe]]
 name = "lgtmlean"
