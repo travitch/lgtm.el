@@ -33,7 +33,8 @@ public inductive ThreadLocation where
 | lineNumber : Nat → ThreadLocation
 deriving Hashable, Ord, DecidableEq
 
-@[expose] public def ThreadLocation.isTopLevel : ThreadLocation → Bool
+@[expose] public def ThreadLocation.isTopLevel (loc : ThreadLocation) : Bool :=
+match loc with
 | .topLevel => true
 | .lineNumber _ => false
 
