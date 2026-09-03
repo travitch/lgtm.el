@@ -5,6 +5,7 @@ The fields do not include Prop-typed entries. -/
 public structure LStructureDefinition where
   name : String
   fields : List String
+  deriving Repr
 
 /-- A literal with a direct Lisp-representable form. -/
 public inductive LLit where

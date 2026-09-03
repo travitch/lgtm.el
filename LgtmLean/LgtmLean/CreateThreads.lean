@@ -39,12 +39,12 @@ public instance existsFileLocationVersion.decidable (c : Comment) (v : FileVersi
     if hv : loc.version = v then .isTrue ⟨loc, rfl, hv⟩
     else .isFalse (fun ⟨loc', h, hv'⟩ => by cases h; exact hv hv')
 
-private structure CommentTreeBootstrapState where
+public structure CommentTreeBootstrapState where
   commentTreeNodes : Std.HashMap CommentRef CommentThread
   serverCommentIds : Std.HashMap ServerId CommentRef
   locationRoots : Std.HashMap ThreadLocation (List CommentRef)
 
-private def emptyBootstrapState : CommentTreeBootstrapState := ⟨Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity⟩
+public def emptyBootstrapState : CommentTreeBootstrapState := ⟨Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity⟩
 
 private def insertSingletonOrAppend (value : α) (current : Option (List α)) : Option (List α) :=
   match current with

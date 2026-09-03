@@ -23,7 +23,7 @@ def resetCommentState (s₀ : State) : Result Unit :=
               hFileThreadsPublished := s₀.fileManager.hFileThreadsPublished_resetCommentState CommentManager.empty.comments }
   Result.mk () s₁
 
-private structure CommentBootstrapState where
+public structure CommentBootstrapState where
   topLevelComments : List Comment
   hTopLevelCommentsAreTopLevel : ∀ c, c ∈ topLevelComments → c.location.isTopLevel
   baseComments : Std.HashMap ModifiedFileRef (List Comment)
@@ -219,7 +219,7 @@ never changes which files are tracked (only an already-tracked file's `ModifiedF
 replaced), which is what lets the final `ModifiedFileManager.hConsistentState` be recovered from the
 original `fileManager.resetCommentState`'s. `hPublished` is the `State.hFileThreadsPublished`
 invariant relative to the final, fixed `comments₁` map. -/
-private structure FileThreadsBootstrapState (origState : Std.HashMap ModifiedFileRef ModifiedFileState)
+public structure FileThreadsBootstrapState (origState : Std.HashMap ModifiedFileRef ModifiedFileState)
     (comments₁ : Std.HashMap CommentRef Comment) where
   state : Std.HashMap ModifiedFileRef ModifiedFileState
   hSameContains : ∀ mf, state.contains mf = origState.contains mf

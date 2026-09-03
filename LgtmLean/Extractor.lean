@@ -29,6 +29,13 @@ def isFunctionDecl : ConstantInfo → Bool
   | .defnInfo _ => true
   | _ => false
 
+/-- Whether `name` is a structure definition -- an inductive registered with Lean's structure
+machinery (so it has exactly one constructor and projection functions for its fields) -- as
+opposed to a plain enum/inductive, function, theorem, or other kind of declaration. -/
+def isStructureDecl (env : Environment) (name : Name) : ConstantInfo → Bool
+  | .inductInfo _ => Lean.isStructure env name
+  | _ => false
+
 /-- Whether `name` is a declaration the compiler generated on our behalf (structure/inductive
 machinery, equation lemmas, proof-irrelevant subterms, etc.) rather than something a person wrote.
 
@@ -440,6 +447,22 @@ def isPropReturningDecl (name : Name) : Meta.MetaM Bool := do
   catch _ =>
     return false
 
+/-- Translate a single top-level `LgtmLean` structure into its `LStructureDefinition`
+representation. Reads the fields directly off the structure's constructor (whose type is
+`∀ params, field₁ → field₂ → .. → S params`), skipping the leading `numParams` binders -- the
+structure's own type parameters, e.g. `α` in `Tree α` -- and any Prop-sorted field, since an
+invariant/proof field has no run-time representation. -/
+def translateStructure (name : Name) : Meta.MetaM LStructureDefinition := do
+  let env ← getEnv
+  let ctor := Lean.getStructureCtor env name
+  Meta.forallTelescope ctor.type fun xs _ => do
+    let mut fields : List String := []
+    for x in xs[ctor.numParams:] do
+      let ld ← x.fvarId!.getDecl
+      unless ← isErasableType ld.type do
+        fields := fields ++ [toString ld.userName]
+    pure { name := toString name, fields }
+
 def main : IO Unit := do
   Lean.initSearchPath (← Lean.findSysroot)
   let env ← Lean.importModules #[{ module := `LgtmLean }] {} (trustLevel := 1024)
@@ -449,9 +472,22 @@ def main : IO Unit := do
     else
       none
   let sorted := names.map toString |>.mergeSort (· ≤ ·)
+  let structNames := env.constants.toList.filterMap fun (name, info) =>
+    if isStructureDecl env name info && isLgtmLeanDecl env name && !isCompilerGenerated env name then
+      some name
+    else
+      none
+  let sortedStructs := structNames.map toString |>.mergeSort (· ≤ ·)
   let coreCtx : Core.Context := { fileName := "extractor", fileMap := default }
   let coreState : Core.State := { env := env }
   let (_, _) ← ((do
+      for nameStr in sortedStructs do
+        let some name := (structNames.find? (toString · == nameStr)) | pure ()
+        try
+          let s ← translateStructure name
+          IO.println (Std.Format.pretty (repr s))
+        catch ex =>
+          IO.println s!"-- failed to translate {name}: {(← ex.toMessageData.format).pretty}"
       for nameStr in sorted do
         let some name := (names.find? (toString · == nameStr)) | pure ()
         unless ← isPropReturningDecl name do
