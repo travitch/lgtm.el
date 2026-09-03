@@ -84,11 +84,13 @@ public inductive CommentLocation where
   | topLevel : CommentLocation
   deriving Hashable, Inhabited, BEq
 
-public def CommentLocation.isTopLevel : CommentLocation → Bool
+public def CommentLocation.isTopLevel (loc : CommentLocation) : Bool :=
+match loc with
 | .topLevel => true
 | .fileLocation _ => false
 
-@[expose] public def CommentLocation.asThreadLocation : CommentLocation → ThreadLocation
+@[expose] public def CommentLocation.asThreadLocation (loc : CommentLocation) : ThreadLocation :=
+match loc with
 | .topLevel => .topLevel
 | .fileLocation loc => .lineNumber loc.startLine
 

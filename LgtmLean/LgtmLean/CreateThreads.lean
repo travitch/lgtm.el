@@ -152,16 +152,17 @@ private theorem mem_alter_insertSingletonOrAppend
     simp only [beq_iff_eq] at hk
     simp [hk]
 
-private def registerServerCommentIds :
-    (comments : List Comment) →
-    (hCommentsHaveBackendIds : allCommentsHaveBackendId comments) →
-    (s : CommentTreeBootstrapState) →
-    CommentTreeBootstrapState
-  | [], _, s => s
-  | comment :: rest, hAll, s =>
+private def registerServerCommentIds
+    (comments : List Comment)
+    (hCommentsHaveBackendIds : allCommentsHaveBackendId comments)
+    (s : CommentTreeBootstrapState)
+    : CommentTreeBootstrapState :=
+match comments with
+| [] => s
+| comment :: rest =>
     let treeNode : CommentThread := ⟨comment.ref, []⟩
-    let serverId := comment.backendId.get (hAll comment List.mem_cons_self)
-    registerServerCommentIds rest (fun c hc => hAll c (List.mem_cons_of_mem comment hc))
+    let serverId := comment.backendId.get (hCommentsHaveBackendIds comment List.mem_cons_self)
+    registerServerCommentIds rest (fun c hc => hCommentsHaveBackendIds c (List.mem_cons_of_mem comment hc))
       { s with commentTreeNodes := s.commentTreeNodes.insert comment.ref treeNode,
                serverCommentIds := s.serverCommentIds.insert serverId comment.ref }
 
@@ -322,14 +323,15 @@ private theorem registerServerCommentIds_children_empty
 
 /-- Attach every reply comment to its parent's tree node, and collect the root comments into
 `locationRoots`. -/
-private def linkReplies (serverCommentIds : Std.HashMap ServerId CommentRef) :
-    (comments : List Comment) →
-    (hParentsHaveNode : ∀ c, c ∈ comments → ∀ parentId, c.parent = some parentId → parentId ∈ serverCommentIds) →
-    (s : CommentTreeBootstrapState) →
-    (hInv : ∀ sid (h : sid ∈ serverCommentIds), serverCommentIds.get sid h ∈ s.commentTreeNodes) →
-    CommentTreeBootstrapState
-  | [], _, s, _ => s
-  | comment :: rest, hParentsHaveNode, s, hInv =>
+private def linkReplies (serverCommentIds : Std.HashMap ServerId CommentRef)
+    (comments : List Comment)
+    (hParentsHaveNode : ∀ c, c ∈ comments → ∀ parentId, c.parent = some parentId → parentId ∈ serverCommentIds)
+    (s : CommentTreeBootstrapState)
+    (hInv : ∀ sid (h : sid ∈ serverCommentIds), serverCommentIds.get sid h ∈ s.commentTreeNodes)
+    : CommentTreeBootstrapState :=
+match comments with
+| [] => s
+| comment :: rest =>
     match h2 : comment.parent with
     | none =>
       let s' := { s with locationRoots :=

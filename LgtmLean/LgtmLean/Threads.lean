@@ -63,10 +63,10 @@ def CommentThreads.previousThread (threads : CommentThreads) (manager : CommentM
 `fuel` levels deep. `fuel := threads.commentTreeNodes.size` in `CommentThread.linearize` is enough
 to reach every node of a genuine (cycle-free) thread, since such a thread's depth cannot exceed
 its node count. Children are sorted by timestamp at each level, matching `CommentThreads.asAlist`. -/
-private def CommentThread.linearizeRecWithFuel (threads : CommentThreads) (manager : CommentManager) :
-    Nat → CommentThread → List Comment
-  | 0, _ => []
-  | fuel + 1, thread =>
+private def CommentThread.linearizeRecWithFuel (threads : CommentThreads) (manager : CommentManager) (fuel : Nat) (thread : CommentThread) : List Comment :=
+match fuel with
+| 0 => []
+| fuel + 1 =>
     let comparisonFunction := fun a b => (compare (manager.get a).createdTimestamp (manager.get b).createdTimestamp).isLE
     let sortedChildren := thread.children.mergeSort comparisonFunction
     manager.get thread.value :: sortedChildren.flatMap (fun childRef =>
