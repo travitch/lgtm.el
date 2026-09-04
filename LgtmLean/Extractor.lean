@@ -2,6 +2,7 @@ import Lean
 import LgtmLean
 
 import Extractor.IR
+import Extractor.Render
 
 open Lean
 
