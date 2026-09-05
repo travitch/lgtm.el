@@ -54,7 +54,7 @@ def toLispName (s : String) : String :=
     pure acc.reverse
   String.intercalate "-" ((String.ofList hyphenated).splitOn "-" |>.filter (· ≠ ""))
 
-
+-- FIXME: Check if there is namespacing to account for in Lean identifiers
 def toLgtmName (s : String) : String := "lgtm-" ++ toLispName s
 
 def indentBy : Nat := 2
@@ -64,6 +64,31 @@ def LStructureDefinition.render (d : LStructureDefinition) : String :=
   let sexpr := .block [.atom "cl-defstruct", .atom (toLgtmName d.name)] indentBy fields
   SExpr.render sexpr
 
+def LExpr.toSExpr (e : LExpr) : SExpr :=
+  match e with
+  | .var name => SExpr.atom (toLispName name)
+  | .global name => SExpr.atom (toLgtmName (toLispName name))
+  | .ctorRef name => SExpr.atom (toLgtmName (toLispName name))
+  | .lit (.nat n) => .number n
+  | .lit (.str s) => .string s
+  | .lam params body => .list [.atom "lambda", .list (params.map (λ n => .atom (toLispName n))), body.toSExpr]
+  | .app fn args => .list (fn.toSExpr :: args.map toSExpr)
+  | .letE name e body => .block [.atom "let", .list [.list [.atom (toLispName name), e.toSExpr]]] indentBy [body.toSExpr]
+  | .ite cond thenE elseE => .block [.atom "if", cond.toSExpr] indentBy [thenE.toSExpr, elseE.toSExpr]
+  -- `structName`'s `cl-defstruct` accessor for `fieldName` is named `<lgtm-struct-name>-<field-name>`,
+  -- matching how `LStructureDefinition.render` names the struct and its slots.
+  | .proj structName fieldName target =>
+    SExpr.list [SExpr.atom (toLgtmName structName ++ "-" ++ toLispName fieldName), target.toSExpr]
+  -- FIXME: Not yet implemented -- pattern compilation needs a decided data representation for
+  -- constructors first. Renders as a runtime error instead of `sorry` so the rest of the renderer
+  -- stays evaluable/testable.
+  | .matchE _ _ => SExpr.list [SExpr.atom "error", SExpr.string "match expressions are not yet supported"]
+  | .opaque reason => SExpr.list [SExpr.atom "error", SExpr.string reason]
+
+def LFunction.toSExpr (f : LFunction) : SExpr :=
+  let body := f.body.toSExpr
+  let arglist := SExpr.list (f.parameters.map (λ name => SExpr.atom (toLispName name)))
+  SExpr.block [SExpr.atom "defun", SExpr.atom (toLgtmName (toLispName f.name)), arglist] indentBy [body]
 
 /-- info: "comment-threads" -/
 #guard_msgs in
@@ -133,3 +158,10 @@ def LStructureDefinition.render (d : LStructureDefinition) : String :=
 #guard_msgs in
 #eval LStructureDefinition.render
   { name := "CommentThreads", fields := ["commentTreeNodes", "serverCommentIds", "locationRoots"] }
+
+/-- info: "(defun lgtm-comment.is-persisted-to-server (c)\n  (lgtm-option.is-some (lgtm-comment.backend-id c)))" -/
+#guard_msgs in
+#eval SExpr.render (LFunction.toSExpr
+  { name := "Comment.isPersistedToServer",
+    parameters := ["c"],
+    body := LExpr.app (LExpr.global "Option.isSome") [LExpr.app (LExpr.global "Comment.backendId") [LExpr.var "c"]] })

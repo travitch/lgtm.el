@@ -9,7 +9,7 @@ public structure LStructureDefinition where
 
 /-- A literal with a direct Lisp-representable form. -/
 public inductive LLit where
-  | nat (n : Nat)
+  | nat (n : Nat) -- FIXME: Probably should be Int
   | str (s : String)
   deriving Repr, Inhabited, BEq
 
