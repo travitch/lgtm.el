@@ -59,10 +59,9 @@ def toLgtmName (s : String) : String := "lgtm-" ++ toLispName s
 
 def indentBy : Nat := 2
 
-def LStructureDefinition.render (d : LStructureDefinition) : String :=
+def LStructureDefinition.toSExpr (d : LStructureDefinition) : SExpr :=
   let fields := List.map (λ field => SExpr.list [SExpr.atom (toLispName field), SExpr.atom "nil", SExpr.atom ":read-only", SExpr.atom "t"]) d.fields
-  let sexpr := .block [.atom "cl-defstruct", .atom (toLgtmName d.name)] indentBy fields
-  SExpr.render sexpr
+  .block [.atom "cl-defstruct", .atom (toLgtmName d.name)] indentBy fields
 
 def LExpr.toSExpr (e : LExpr) : SExpr :=
   match e with
@@ -144,20 +143,20 @@ def LFunction.toSExpr (f : LFunction) : SExpr :=
 
 /-- info: "(cl-defstruct lgtm-comment-ref\n  (id nil :read-only t))" -/
 #guard_msgs in
-#eval LStructureDefinition.render { name := "CommentRef", fields := ["id"] }
+#eval SExpr.render (LStructureDefinition.toSExpr { name := "CommentRef", fields := ["id"] })
 
 /-- info: "(cl-defstruct lgtm-tree\n  (value nil :read-only t)\n  (children nil :read-only t))" -/
 #guard_msgs in
-#eval LStructureDefinition.render { name := "Tree", fields := ["value", "children"] }
+#eval SExpr.render (LStructureDefinition.toSExpr { name := "Tree", fields := ["value", "children"] })
 
 /-- info: "(cl-defstruct lgtm-modified-file-state\n)" -/
 #guard_msgs in
-#eval LStructureDefinition.render { name := "ModifiedFileState", fields := [] }
+#eval SExpr.render (LStructureDefinition.toSExpr { name := "ModifiedFileState", fields := [] })
 
 /-- info: "(cl-defstruct lgtm-comment-threads\n  (comment-tree-nodes nil :read-only t)\n  (server-comment-ids nil :read-only t)\n  (location-roots nil :read-only t))" -/
 #guard_msgs in
-#eval LStructureDefinition.render
-  { name := "CommentThreads", fields := ["commentTreeNodes", "serverCommentIds", "locationRoots"] }
+#eval SExpr.render (LStructureDefinition.toSExpr
+  { name := "CommentThreads", fields := ["commentTreeNodes", "serverCommentIds", "locationRoots"] })
 
 /-- info: "(defun lgtm-comment.is-persisted-to-server (c)\n  (lgtm-option.is-some (lgtm-comment.backend-id c)))" -/
 #guard_msgs in
