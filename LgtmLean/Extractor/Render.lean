@@ -1,5 +1,34 @@
 import Extractor.IR
 
+inductive SExpr where
+| number : Int → SExpr
+/-- A quoted string literal -/
+| string : String → SExpr
+| atom : String → SExpr
+/-- A Lisp application form -/
+| list : List SExpr → SExpr
+/-- A block introduced by a list of SExpr terms that indents by N spaces its body forms -/
+| block : List SExpr → Nat → List SExpr → SExpr
+
+/-- Escape `s` for use inside an Emacs Lisp string literal -/
+def escapeLispString (s : String) : String :=
+  (s.replace "\\" "\\\\").replace "\"" "\\\""
+
+/-- Render an `SExpr` in the format used by emacs. -/
+partial def SExpr.render (s : SExpr) : String :=
+  match s with
+  | .number n => toString n
+  | .string s => "\"" ++ escapeLispString s ++ "\""
+  | .atom s => s
+  | .list xs => "(" ++ String.intercalate " " (xs.map SExpr.render) ++ ")"
+  | .block header indent body =>
+    let headerStr := String.intercalate " " (header.map SExpr.render)
+    let indentStr := String.ofList (List.replicate indent ' ')
+    let indentLines (s : String) : String :=
+      String.intercalate "\n" ((s.splitOn "\n").map (indentStr ++ ·))
+    let bodyStr := String.intercalate "\n" (body.map (fun e => indentLines (SExpr.render e)))
+    "(" ++ headerStr ++ "\n" ++ bodyStr ++ ")"
+
 /-- Convert names from camel or pascal case to kebab case. -/
 def toLispName (s : String) : String :=
   let cs := s.toList.toArray
@@ -28,15 +57,12 @@ def toLispName (s : String) : String :=
 
 def toLgtmName (s : String) : String := "lgtm-" ++ toLispName s
 
-def LStructureDefinition.render (d : LStructureDefinition) : String := Id.run do
-  let mut fragments : List String := []
+def indentBy : Nat := 2
 
-  fragments := s!"(cl-defstruct {toLgtmName d.name}\n" :: fragments
-  for field in d.fields do
-    fragments := s!"  ({field} nil :read-only t)" :: fragments
-  fragments := ")" :: fragments
-  pure (String.join fragments.reverse)
-
+def LStructureDefinition.render (d : LStructureDefinition) : String :=
+  let fields := List.map (λ field => SExpr.list [SExpr.atom (toLispName field), SExpr.atom "nil", SExpr.atom ":read-only", SExpr.atom "t"]) d.fields
+  let sexpr := .block [.atom "cl-defstruct", .atom (toLgtmName d.name)] indentBy fields
+  SExpr.render sexpr
 
 
 /-- info: "comment-threads" -/
@@ -95,7 +121,7 @@ def LStructureDefinition.render (d : LStructureDefinition) : String := Id.run do
 #guard_msgs in
 #eval LStructureDefinition.render { name := "CommentRef", fields := ["id"] }
 
-/-- info: "(cl-defstruct lgtm-tree\n  (value nil :read-only t)  (children nil :read-only t))" -/
+/-- info: "(cl-defstruct lgtm-tree\n  (value nil :read-only t)\n  (children nil :read-only t))" -/
 #guard_msgs in
 #eval LStructureDefinition.render { name := "Tree", fields := ["value", "children"] }
 
@@ -103,7 +129,7 @@ def LStructureDefinition.render (d : LStructureDefinition) : String := Id.run do
 #guard_msgs in
 #eval LStructureDefinition.render { name := "ModifiedFileState", fields := [] }
 
-/-- info: "(cl-defstruct lgtm-comment-threads\n  (commentTreeNodes nil :read-only t)  (serverCommentIds nil :read-only t)  (locationRoots nil :read-only t))" -/
+/-- info: "(cl-defstruct lgtm-comment-threads\n  (comment-tree-nodes nil :read-only t)\n  (server-comment-ids nil :read-only t)\n  (location-roots nil :read-only t))" -/
 #guard_msgs in
 #eval LStructureDefinition.render
   { name := "CommentThreads", fields := ["commentTreeNodes", "serverCommentIds", "locationRoots"] }
