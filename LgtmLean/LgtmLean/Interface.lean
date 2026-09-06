@@ -60,9 +60,10 @@ private theorem alter_preserves_versionInvariant
     · exact hInv (loc.fileRef, _) (by rw [Std.HashMap.mem_toList_iff_getElem?_eq_some]; assumption) c' hc'
   · exact hInv (k, v) (by rw [Std.HashMap.mem_toList_iff_getElem?_eq_some]; exact hentry) c' hc'
 
-private def groupComments.go : List Comment → CommentBootstrapState → CommentBootstrapState
-| [], bootstrapState => bootstrapState
-| c :: cs, bootstrapState =>
+public def groupComments.go (comments : List Comment) (bootstrapState : CommentBootstrapState) : CommentBootstrapState :=
+match comments with
+| [] => bootstrapState
+| c :: cs =>
   match hloc : c.location with
   | .topLevel =>
     groupComments.go cs { bootstrapState with
@@ -90,9 +91,10 @@ private def groupComments (comments : List Comment) : CommentBootstrapState :=
   groupComments.go comments (CommentBootstrapState.mk [] (by simp) Std.HashMap.emptyWithCapacity (by simp)
     Std.HashMap.emptyWithCapacity (by simp))
 
-private def commentsByRef.go : List Comment → Std.HashMap CommentRef Comment → Std.HashMap CommentRef Comment
-| [], m => m
-| c :: cs, m => commentsByRef.go cs (m.insert c.ref c)
+public def commentsByRef.go (comments : List Comment) (m : Std.HashMap CommentRef Comment) : Std.HashMap CommentRef Comment :=
+match comments with
+| [] => m
+| c :: cs => commentsByRef.go cs (m.insert c.ref c)
 
 private theorem commentsByRef.go_hCommentsKeyedByRef (comments : List Comment) (m : Std.HashMap CommentRef Comment)
     (hInv : ∀ ref (h : m.contains ref), (m.get ref h).ref = ref) :
@@ -324,35 +326,37 @@ private def FileThreadsBootstrapState.applyCurrent
 bucket (e.g. `bootstrapState.baseComments.toList`), threading the per-entry validity facts through
 via `List.mem_cons_of_mem`/`List.mem_cons_self` at each step (mirroring `commentsByRef.go`'s
 threading style). -/
-private def applyBaseThreads.go (comments₁ : Std.HashMap CommentRef Comment)
-    (origState : Std.HashMap ModifiedFileRef ModifiedFileState) :
-    (l : List (ModifiedFileRef × List Comment)) →
-    (∀ entry, entry ∈ l →
+public def applyBaseThreads.go (comments₁ : Std.HashMap CommentRef Comment)
+    (origState : Std.HashMap ModifiedFileRef ModifiedFileState)
+    (l : List (ModifiedFileRef × List Comment))
+    (hAll : ∀ entry, entry ∈ l →
       origState.contains entry.1 ∧ commentsAllInSameFileOrAllTopLevel entry.2 ∧
       (∀ c, c ∈ entry.2 → ∃ loc, c.location = CommentLocation.fileLocation loc) ∧
       allCommentsHaveBackendId entry.2 ∧ allParentsInComments entry.2 ∧ commentRefsNodup entry.2 ∧
       parentsCreatedBefore entry.2 ∧
-      (∀ c, c ∈ entry.2 → ∃ h' : comments₁.contains c.ref, (comments₁.get c.ref h').backendId.isSome)) →
-    FileThreadsBootstrapState origState comments₁ → FileThreadsBootstrapState origState comments₁
-| [], _, bs => bs
-| entry :: rest, hAll, bs =>
+      (∀ c, c ∈ entry.2 → ∃ h' : comments₁.contains c.ref, (comments₁.get c.ref h').backendId.isSome))
+    (bs : FileThreadsBootstrapState origState comments₁) : FileThreadsBootstrapState origState comments₁ :=
+match l with
+| [] => bs
+| entry :: rest =>
   applyBaseThreads.go comments₁ origState rest (fun e he => hAll e (List.mem_cons_of_mem _ he))
     (let ⟨hFound, hSameLoc, hFileLoc, hBackend, hParents, hNodup, hBefore, hSubset⟩ := hAll entry List.mem_cons_self
      bs.applyBase entry.1 entry.2 hFound hSameLoc hFileLoc hBackend hParents hNodup hBefore hSubset)
 
 /-- The `.current`-version counterpart of `applyBaseThreads.go`. -/
-private def applyCurrentThreads.go (comments₁ : Std.HashMap CommentRef Comment)
-    (origState : Std.HashMap ModifiedFileRef ModifiedFileState) :
-    (l : List (ModifiedFileRef × List Comment)) →
-    (∀ entry, entry ∈ l →
+public def applyCurrentThreads.go (comments₁ : Std.HashMap CommentRef Comment)
+    (origState : Std.HashMap ModifiedFileRef ModifiedFileState)
+    (l : List (ModifiedFileRef × List Comment))
+    (hAll : ∀ entry, entry ∈ l →
       origState.contains entry.1 ∧ commentsAllInSameFileOrAllTopLevel entry.2 ∧
       (∀ c, c ∈ entry.2 → ∃ loc, c.location = CommentLocation.fileLocation loc) ∧
       allCommentsHaveBackendId entry.2 ∧ allParentsInComments entry.2 ∧ commentRefsNodup entry.2 ∧
       parentsCreatedBefore entry.2 ∧
-      (∀ c, c ∈ entry.2 → ∃ h' : comments₁.contains c.ref, (comments₁.get c.ref h').backendId.isSome)) →
-    FileThreadsBootstrapState origState comments₁ → FileThreadsBootstrapState origState comments₁
-| [], _, bs => bs
-| entry :: rest, hAll, bs =>
+      (∀ c, c ∈ entry.2 → ∃ h' : comments₁.contains c.ref, (comments₁.get c.ref h').backendId.isSome))
+    (bs : FileThreadsBootstrapState origState comments₁) : FileThreadsBootstrapState origState comments₁ :=
+match l with
+| [] => bs
+| entry :: rest =>
   applyCurrentThreads.go comments₁ origState rest (fun e he => hAll e (List.mem_cons_of_mem _ he))
     (let ⟨hFound, hSameLoc, hFileLoc, hBackend, hParents, hNodup, hBefore, hSubset⟩ := hAll entry List.mem_cons_self
      bs.applyCurrent entry.1 entry.2 hFound hSameLoc hFileLoc hBackend hParents hNodup hBefore hSubset)
@@ -605,7 +609,8 @@ private def completeCommentWithContent.finalizeTopLevel (s₀ : State) (comment�
 /-- Selects whichever of `baseThreads` / `currentThreads` `version` names -- the shared accessor
 that lets `completeCommentWithContent.finalizeFileScoped` treat the `.base` and `.current` cases
 uniformly. -/
-private def ModifiedFileState.threadsFor (mfs : ModifiedFileState) : FileVersion → CommentThreads
+public def ModifiedFileState.threadsFor (mfs : ModifiedFileState) (v : FileVersion) : CommentThreads :=
+  match v with
   | .base => mfs.baseThreads
   | .current => mfs.currentThreads
 

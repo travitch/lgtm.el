@@ -55,7 +55,7 @@ def isCompilerGenerated (env : Environment) (name : Name) : Bool :=
   let hasBadLastComponent :=
     match name with
     | .str _ s =>
-      s == "ctorIdx" || s == "ctorElimType" || s == "below" || s == "ibelow" ||
+      s == "ctorIdx" || s == "ctorElimType" || s == "below" || s == "ibelow" || s == "ofNat" || s == "toCtorIdx" ||
         s.startsWith "_" || s.startsWith "eq_" || s.startsWith "match_" || s.startsWith "proof_" ||
         s.startsWith "omega_" || s.endsWith "_flat_ctor" || s.startsWith "sizeOf_spec" ||
         s.endsWith "noConfusionType" || s.startsWith "inst"
