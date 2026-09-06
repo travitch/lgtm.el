@@ -85,9 +85,10 @@ def LExpr.toSExpr (e : LExpr) : SExpr :=
   | .opaque reason => SExpr.list [SExpr.atom "error", SExpr.string reason]
 
 def LFunction.toSExpr (f : LFunction) : SExpr :=
+  let name := f.name.map (λ c => if c == '.' then '-' else c)
   let body := f.body.toSExpr
   let arglist := SExpr.list (f.parameters.map (λ name => SExpr.atom (toLispName name)))
-  SExpr.block [SExpr.atom "defun", SExpr.atom (toLgtmName (toLispName f.name)), arglist] indentBy [body]
+  SExpr.block [SExpr.atom "defun", SExpr.atom (toLgtmName (toLispName name)), arglist] indentBy [body]
 
 /-- info: "comment-threads" -/
 #guard_msgs in
@@ -158,7 +159,7 @@ def LFunction.toSExpr (f : LFunction) : SExpr :=
 #eval SExpr.render (LStructureDefinition.toSExpr
   { name := "CommentThreads", fields := ["commentTreeNodes", "serverCommentIds", "locationRoots"] })
 
-/-- info: "(defun lgtm-comment.is-persisted-to-server (c)\n  (lgtm-option.is-some (lgtm-comment.backend-id c)))" -/
+/-- info: "(defun lgtm-comment-is-persisted-to-server (c)\n  (lgtm-option.is-some (lgtm-comment.backend-id c)))" -/
 #guard_msgs in
 #eval SExpr.render (LFunction.toSExpr
   { name := "Comment.isPersistedToServer",
