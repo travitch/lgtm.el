@@ -542,19 +542,28 @@ def translateLeanDefinitions (env : Environment) : MetaM Translations := do
   let mut funcMap : Std.HashMap Name LFunction := Std.HashMap.emptyWithCapacity
   for name in functionNames do
     unless ← isPropReturningDecl name do
-      let f ← translateFunction name
-      funcMap := funcMap.insert name f
+      try
+        let f ← translateFunction name
+        funcMap := funcMap.insert name f
+      catch ex =>
+        IO.eprintln s!"-- failed to translate {name}: {(← ex.toMessageData.format).pretty}"
 
   let mut structMap : Std.HashMap Name LStructureDefinition := Std.HashMap.emptyWithCapacity
   for name in structureNames do
-    let s ← translateStructure name
-    structMap := structMap.insert name s
+    try
+      let s ← translateStructure name
+      structMap := structMap.insert name s
+    catch ex =>
+      IO.eprintln s!"-- failed to translate {name}: {(← ex.toMessageData.format).pretty}"
 
   let mut inductiveMap : Std.HashMap Name LInductiveDefinition := Std.HashMap.emptyWithCapacity
   for name in inductiveNames do
     unless ← isPropSortedInductive name do
-      let i ← translateInductive name
-      inductiveMap := inductiveMap.insert name i
+      try
+        let i ← translateInductive name
+        inductiveMap := inductiveMap.insert name i
+      catch ex =>
+        IO.eprintln s!"-- failed to translate {name}: {(← ex.toMessageData.format).pretty}"
 
   pure ⟨funcMap, structMap, inductiveMap⟩
 
@@ -578,12 +587,18 @@ def main (args : List String) : IO Unit := do
 
   let hdl ← IO.FS.Handle.mk targetFile IO.FS.Mode.write
 
+  hdl.putStrLn ";; Type definitions"
+
   -- We have to emit the type definitions at the top of the file since they define macros that must be visible
   -- by the time the functions are defined to avoid runtime errors.
   for (_, structDef) in translations.structures.toList.mergeSort (·.2.name ≤ ·.2.name) do
     hdl.putStrLn (structDef.toSExpr.render)
+    hdl.putStrLn ""
 
   -- FIXME: Add in the translation of inductives
 
+  hdl.putStrLn ";; Functions"
+
   for (_, functionDef) in translations.functions.toList.mergeSort (·.2.name ≤ ·.2.name) do
     hdl.putStrLn (functionDef.toSExpr.render)
+    hdl.putStrLn ""
