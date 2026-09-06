@@ -464,33 +464,37 @@ def translateStructure (name : Name) : Meta.MetaM LStructureDefinition := do
         fields := fields ++ [toString ld.userName]
     pure { name := toString name, fields }
 
-def main : IO Unit := do
-  Lean.initSearchPath (← Lean.findSysroot)
-  let env ← Lean.importModules #[{ module := `LgtmLean }] {} (trustLevel := 1024)
+def getFunctionNames (env : Environment) : List Name :=
   let names := env.constants.toList.filterMap fun (name, info) =>
     if isFunctionDecl info && isLgtmLeanDecl env name && !isCompilerGenerated env name then
       some name
     else
       none
-  let sorted := names.map toString |>.mergeSort (· ≤ ·)
-  let structNames := env.constants.toList.filterMap fun (name, info) =>
+  names.mergeSort (·.toString ≤ ·.toString)
+
+def getStructureNames (env : Environment) : List Name :=
+  let names := env.constants.toList.filterMap fun (name, info) =>
     if isStructureDecl env name info && isLgtmLeanDecl env name && !isCompilerGenerated env name then
       some name
     else
       none
-  let sortedStructs := structNames.map toString |>.mergeSort (· ≤ ·)
+  names.mergeSort (·.toString ≤ ·.toString)
+
+def main : IO Unit := do
+  Lean.initSearchPath (← Lean.findSysroot)
+  let env ← Lean.importModules #[{ module := `LgtmLean }] {} (trustLevel := 1024)
+  let functionNames := getFunctionNames env
+  let structureNames := getStructureNames env
   let coreCtx : Core.Context := { fileName := "extractor", fileMap := default }
   let coreState : Core.State := { env := env }
   let (_, _) ← ((do
-      for nameStr in sortedStructs do
-        let some name := (structNames.find? (toString · == nameStr)) | pure ()
+      for name in structureNames do
         try
           let s ← translateStructure name
           IO.println (Std.Format.pretty (repr s))
         catch ex =>
           IO.println s!"-- failed to translate {name}: {(← ex.toMessageData.format).pretty}"
-      for nameStr in sorted do
-        let some name := (names.find? (toString · == nameStr)) | pure ()
+      for name in functionNames do
         unless ← isPropReturningDecl name do
           try
             let f ← translateFunction name
