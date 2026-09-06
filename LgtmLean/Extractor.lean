@@ -37,6 +37,13 @@ def isStructureDecl (env : Environment) (name : Name) : ConstantInfo → Bool
   | .inductInfo _ => Lean.isStructure env name
   | _ => false
 
+/-- Whether `name` is a plain inductive definition -- an enum or algebraic data type -- as opposed
+to a structure (handled separately by `isStructureDecl`/`translateStructure`), function, theorem,
+or other kind of declaration. -/
+def isInductiveDecl (env : Environment) (name : Name) : ConstantInfo → Bool
+  | .inductInfo _ => !Lean.isStructure env name
+  | _ => false
+
 /-- Whether `name` is a declaration the compiler generated on our behalf (structure/inductive
 machinery, equation lemmas, proof-irrelevant subterms, etc.) rather than something a person wrote.
 
@@ -48,10 +55,10 @@ def isCompilerGenerated (env : Environment) (name : Name) : Bool :=
   let hasBadLastComponent :=
     match name with
     | .str _ s =>
-      s == "ctorIdx" || s == "ctorElimType" || s.startsWith "_" || s.startsWith "eq_" ||
-        s.startsWith "match_" || s.startsWith "proof_" || s.startsWith "omega_" ||
-        s.endsWith "_flat_ctor" || s.startsWith "sizeOf_spec" || s.endsWith "noConfusionType" ||
-        s.startsWith "inst"
+      s == "ctorIdx" || s == "ctorElimType" || s == "below" || s == "ibelow" ||
+        s.startsWith "_" || s.startsWith "eq_" || s.startsWith "match_" || s.startsWith "proof_" ||
+        s.startsWith "omega_" || s.endsWith "_flat_ctor" || s.startsWith "sizeOf_spec" ||
+        s.endsWith "noConfusionType" || s.startsWith "inst"
     | _ => true
   -- Catches instance-dictionary field projections (e.g. `instBEqFoo.beq`) and `match_N.splitter`
   -- helpers, whose *own* last component looks ordinary but whose parent doesn't.
@@ -448,6 +455,21 @@ def isPropReturningDecl (name : Name) : Meta.MetaM Bool := do
   catch _ =>
     return false
 
+/-- Whether the inductive `name`, once its indices/parameters are peeled off, is itself the `Prop`
+sort -- i.e. it's a proof-only relation (like `CommentThreads.NodeReachable`) rather than a genuine
+data type. Checks `codomain.isProp` (is this expression *literally* the sort `Prop`), not
+`Meta.isProp codomain` (is the *type of* this expression `Prop`, which asks a different question
+here since `codomain` is itself a classifying sort, not a value). Also deliberately does not treat
+a `Type`-valued codomain as erasable the way `isPropReturningDecl` does for functions: every
+ordinary data inductive's own declared type is itself `Type`-sorted (that's just what it means to
+be a type), so that check would reject every inductive, not just the proof-only ones. -/
+def isPropSortedInductive (name : Name) : Meta.MetaM Bool := do
+  try
+    Meta.forallTelescope (← getConstInfo name).type fun _ codomain => do
+      pure (← Meta.whnf codomain).isProp
+  catch _ =>
+    return false
+
 /-- Translate a single top-level `LgtmLean` structure into its `LStructureDefinition`
 representation. Discards any fields of erasable types (e.g., Prop). -/
 def translateStructure (name : Name) : Meta.MetaM LStructureDefinition := do
@@ -460,6 +482,26 @@ def translateStructure (name : Name) : Meta.MetaM LStructureDefinition := do
       unless ← isErasableType ld.type do
         fields := fields ++ [toString ld.userName]
     pure { name := toString name, fields }
+
+/-- Translate a single top-level `LgtmLean` (non-structure) inductive into its
+`LInductiveDefinition` representation: one `(name, arity)` pair per constructor, where the arity
+discards any constructor field of an erasable type (e.g., Prop) -- mirroring `translateStructure`. -/
+def translateInductive (name : Name) : Meta.MetaM LInductiveDefinition := do
+  match ← getConstInfo name with
+  | .inductInfo indInfo => do
+    let mut ctors : List (String × Nat) := []
+    for ctorName in indInfo.ctors do
+      let ctorInfo ← getConstInfo ctorName
+      let arity ← Meta.forallTelescope ctorInfo.type fun xs _ => do
+        let mut n := 0
+        for x in xs do
+          let ld ← x.fvarId!.getDecl
+          unless ← isErasableType ld.type do
+            n := n + 1
+        pure n
+      ctors := ctors ++ [(toString ctorName, arity)]
+    pure { name := toString name, constructors := ctors }
+  | _ => throwError s!"{name} is not an inductive definition"
 
 def getFunctionNames (env : Environment) : List Name :=
   let names := env.constants.toList.filterMap fun (name, info) =>
@@ -477,11 +519,20 @@ def getStructureNames (env : Environment) : List Name :=
       none
   names.mergeSort (·.toString ≤ ·.toString)
 
+def getInductiveNames (env : Environment) : List Name :=
+  let names := env.constants.toList.filterMap fun (name, info) =>
+    if isInductiveDecl env name info && isLgtmLeanDecl env name && !isCompilerGenerated env name then
+      some name
+    else
+      none
+  names.mergeSort (·.toString ≤ ·.toString)
+
 def main : IO Unit := do
   Lean.initSearchPath (← Lean.findSysroot)
   let env ← Lean.importModules #[{ module := `LgtmLean }] {} (trustLevel := 1024)
   let functionNames := getFunctionNames env
   let structureNames := getStructureNames env
+  let inductiveNames := getInductiveNames env
   let coreCtx : Core.Context := { fileName := "extractor", fileMap := default }
   let coreState : Core.State := { env := env }
   let (_, _) ← ((do
@@ -491,6 +542,13 @@ def main : IO Unit := do
           IO.println (Std.Format.pretty (repr s))
         catch ex =>
           IO.println s!"-- failed to translate {name}: {(← ex.toMessageData.format).pretty}"
+      for name in inductiveNames do
+        unless ← isPropSortedInductive name do
+          try
+            let i ← translateInductive name
+            IO.println (Std.Format.pretty (repr i))
+          catch ex =>
+            IO.println s!"-- failed to translate {name}: {(← ex.toMessageData.format).pretty}"
       for name in functionNames do
         unless ← isPropReturningDecl name do
           try

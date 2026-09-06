@@ -7,6 +7,18 @@ public structure LStructureDefinition where
   fields : List String
   deriving Repr
 
+/-- An abstraction of Lean inductive definitions.
+
+Each constructor is a pair of the constructor name and its arity.
+
+In elisp, nullary constructors will be represented as symbols.  Other
+constructors will be represented by unique cl-defstructs with the correct
+number of fields. -/
+public structure LInductiveDefinition where
+  name : String
+  constructors : List (String × Nat)
+  deriving Repr
+
 /-- A literal with a direct Lisp-representable form. -/
 public inductive LLit where
   | nat (n : Nat) -- FIXME: Probably should be Int
