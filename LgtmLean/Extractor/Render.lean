@@ -1,3 +1,4 @@
+import Std
 import Extractor.IR
 
 inductive SExpr where
@@ -64,56 +65,88 @@ def toLgtmName (s : String) : String := "lgtm-" ++ toLispName s
 
 def indentBy : Nat := 2
 
-def LStructureDefinition.toSExpr (d : LStructureDefinition) : SExpr :=
+structure SExprEnv where
+  /-- Functions that are defined globals.
+
+  This is used to determine when a bare reference to a global needs to be rendered as a call instead of
+  just as a reference to the global name. -/
+  definedFunctions : Std.HashSet String
+
+abbrev SExprM α := ReaderM SExprEnv α
+
+def SExprM.run (functions : List LFunction) (s : SExprM α) : α :=
+  let env := SExprEnv.mk (functions.foldr (λ f s => s.insert f.name) Std.HashSet.emptyWithCapacity)
+  Id.run (ReaderT.run s env)
+
+def LStructureDefinition.toSExpr (d : LStructureDefinition) : SExprM SExpr :=
   let fields := List.map (λ field => SExpr.list [SExpr.atom (toLispName field), SExpr.atom "nil", SExpr.atom ":read-only", SExpr.atom "t"]) d.fields
-  .block [.atom "cl-defstruct", .atom (toLgtmName d.name)] indentBy fields
+  pure (.block [.atom "cl-defstruct", .atom (toLgtmName d.name)] indentBy fields)
+
+/-- Global names from Lean are namespaced, so translate appropriately -/
+def translateGlobalName (name : String) : String :=
+  toLgtmName (toLispName (name.map (λ c => if c == '.' then '-' else c)))
 
 mutual
 
 /-- Translate calls to Lean builtins and standard library functions into their elisp equivalents.
 
 If the provided function is not a Lean builtin or standard library function, return none. -/
-partial def translatePrimitives (fn : LExpr) (args : List LExpr) : Option SExpr :=
+partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Option SExpr) :=
   match fn with
-  | .global "Option.isSome" =>
+  | .global "Option.isSome" => do
     -- We represent none as nil in elisp, so the value is some if it is not nil
-    some (args[0]!.toSExpr)
-  | _ => none
+    let theValue ← LExpr.toSExpr args[0]!
+    pure (some theValue)
+  | .global "Std.HashMap.emptyWithCapacity" => pure (some (.list [.atom "make-hash-table"]))
+  | _ => pure none
 
-partial def LExpr.toSExpr (e : LExpr) : SExpr :=
+partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=
   match e with
-  | .var name => SExpr.atom (toLispName name)
-  | .global name => SExpr.atom (toLgtmName (toLispName name))
+  | .var name => pure (SExpr.atom (toLispName name))
+  | .global name => pure (SExpr.atom (translateGlobalName name))
+  | .ctorRef "Option.none" => pure (SExpr.atom "nil")
   | .ctorRef name =>
     -- Constructors in Lean have a `.mk` suffix. Drop that and replace with the equivalent prefix for cl-defstruct.
-    SExpr.atom ("make-" ++ toLgtmName (toLispName (name.dropEnd 3).toString))
-  | .lit (.nat n) => .number n
-  | .lit (.str s) => .string s
-  | .lam params body => .list [.atom "lambda", .list (params.map (λ n => .atom (toLispName n))), body.toSExpr]
-  | .app fn args => match translatePrimitives fn args with
-    | some translation => translation
-    | none => .list (fn.toSExpr :: args.map LExpr.toSExpr)
-  | .letE name e body => .block [.atom "let", .list [.list [.atom (toLispName name), e.toSExpr]]] indentBy [body.toSExpr]
-  | .ite cond thenE elseE => .block [.atom "if", cond.toSExpr] indentBy [thenE.toSExpr, elseE.toSExpr]
+    pure (SExpr.atom ("make-" ++ toLgtmName (toLispName (name.dropEnd 3).toString)))
+  | .lit (.nat n) => pure (.number n)
+  | .lit (.str s) => pure (.string s)
+  | .lam params body => do
+    let sBody ← LExpr.toSExpr body
+    pure (.list [.atom "lambda", .list (params.map (λ n => .atom (toLispName n))), sBody])
+  | .app fn args => do match ← translatePrimitives fn args with
+    | some translation => pure translation
+    | none => do
+      let sBody ← fn.toSExpr
+      let sArgs ← args.mapM LExpr.toSExpr
+      pure (.list (sBody :: sArgs))
+  | .letE name e body => do
+    pure (.block [.atom "let", .list [.list [.atom (toLispName name), ← e.toSExpr]]] indentBy [← body.toSExpr])
+  | .ite cond thenE elseE => do
+    pure (.block [.atom "if", ← cond.toSExpr] indentBy [← thenE.toSExpr, ← elseE.toSExpr])
   -- `structName`'s `cl-defstruct` accessor for `fieldName` is named `<lgtm-struct-name>-<field-name>`,
   -- matching how `LStructureDefinition.render` names the struct and its slots.
-  | .proj structName fieldName target =>
-    SExpr.list [SExpr.atom (toLgtmName structName ++ "-" ++ toLispName fieldName), target.toSExpr]
+  | .proj structName fieldName target => do
+    pure (SExpr.list [SExpr.atom (toLgtmName structName ++ "-" ++ toLispName fieldName), ← target.toSExpr])
   -- FIXME: Not yet implemented -- pattern compilation needs a decided data representation for
   -- constructors first. Renders as a runtime error instead of `sorry` so the rest of the renderer
   -- stays evaluable/testable.
-  | .matchE _ _ => SExpr.list [SExpr.atom "error", SExpr.string "match expressions are not yet supported"]
-  | .opaque reason => SExpr.list [SExpr.atom "error", SExpr.string reason]
+  | .matchE _ _ => pure (SExpr.list [SExpr.atom "error", SExpr.string "match expressions are not yet supported"])
+  | .opaque reason => pure (SExpr.list [SExpr.atom "error", SExpr.string reason])
 
 end
 
-def LFunction.toSExpr (f : LFunction) : SExpr :=
+def LFunction.toSExpr (f : LFunction) : SExprM SExpr := do
   -- Names of Lgtm functions look like Lgtm.foo, so translate to Lgtm-foo so that the rest of the
   -- transformations turn them into a reasonable elisp name
-  let name := f.name.map (λ c => if c == '.' then '-' else c)
-  let body := f.body.toSExpr
-  let arglist := SExpr.list (f.parameters.map (λ name => SExpr.atom (toLispName name)))
-  SExpr.block [SExpr.atom "defun", SExpr.atom (toLgtmName (toLispName name)), arglist] indentBy [body]
+  let name := translateGlobalName f.name
+  let body ← f.body.toSExpr
+  match f.parameters with
+  | [] => pure (SExpr.block [SExpr.atom "defconst", SExpr.atom name] indentBy [body])
+  | _ => do
+    let arglist := SExpr.list (f.parameters.map (λ name => SExpr.atom (toLispName name)))
+    pure (SExpr.block [SExpr.atom "defun", SExpr.atom name, arglist] indentBy [body])
+
+def testRender (s : SExprM SExpr) : String := SExpr.render (SExprM.run [] s)
 
 /-- info: "comment-threads" -/
 #guard_msgs in
@@ -169,24 +202,24 @@ def LFunction.toSExpr (f : LFunction) : SExpr :=
 
 /-- info: "(cl-defstruct lgtm-comment-ref\n  (id nil :read-only t))" -/
 #guard_msgs in
-#eval SExpr.render (LStructureDefinition.toSExpr { name := "CommentRef", fields := ["id"] })
+#eval testRender (LStructureDefinition.toSExpr { name := "CommentRef", fields := ["id"] })
 
 /-- info: "(cl-defstruct lgtm-tree\n  (value nil :read-only t)\n  (children nil :read-only t))" -/
 #guard_msgs in
-#eval SExpr.render (LStructureDefinition.toSExpr { name := "Tree", fields := ["value", "children"] })
+#eval testRender (LStructureDefinition.toSExpr { name := "Tree", fields := ["value", "children"] })
 
 /-- info: "(cl-defstruct lgtm-modified-file-state\n)" -/
 #guard_msgs in
-#eval SExpr.render (LStructureDefinition.toSExpr { name := "ModifiedFileState", fields := [] })
+#eval testRender (LStructureDefinition.toSExpr { name := "ModifiedFileState", fields := [] })
 
 /-- info: "(cl-defstruct lgtm-comment-threads\n  (comment-tree-nodes nil :read-only t)\n  (server-comment-ids nil :read-only t)\n  (location-roots nil :read-only t))" -/
 #guard_msgs in
-#eval SExpr.render (LStructureDefinition.toSExpr
+#eval testRender (LStructureDefinition.toSExpr
   { name := "CommentThreads", fields := ["commentTreeNodes", "serverCommentIds", "locationRoots"] })
 
-/-- info: "(defun lgtm-comment-is-persisted-to-server (c)\n  (lgtm-comment.backend-id c))" -/
+/-- info: "(defun lgtm-comment-is-persisted-to-server (c)\n  (lgtm-comment-backend-id c))" -/
 #guard_msgs in
-#eval SExpr.render (LFunction.toSExpr
+#eval testRender (LFunction.toSExpr
   { name := "Comment.isPersistedToServer",
     parameters := ["c"],
     body := LExpr.app (LExpr.global "Option.isSome") [LExpr.app (LExpr.global "Comment.backendId") [LExpr.var "c"]] })

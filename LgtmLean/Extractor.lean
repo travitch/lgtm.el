@@ -589,10 +589,12 @@ def main (args : List String) : IO Unit := do
 
   hdl.putStrLn ";; Type definitions"
 
+  let functions := translations.functions.values
+
   -- We have to emit the type definitions at the top of the file since they define macros that must be visible
   -- by the time the functions are defined to avoid runtime errors.
   for (_, structDef) in translations.structures.toList.mergeSort (·.2.name ≤ ·.2.name) do
-    hdl.putStrLn (structDef.toSExpr.render)
+    hdl.putStrLn ((structDef.toSExpr.run functions).render)
     hdl.putStrLn ""
 
   -- FIXME: Add in the translation of inductives
@@ -600,5 +602,5 @@ def main (args : List String) : IO Unit := do
   hdl.putStrLn ";; Functions"
 
   for (_, functionDef) in translations.functions.toList.mergeSort (·.2.name ≤ ·.2.name) do
-    hdl.putStrLn (functionDef.toSExpr.render)
+    hdl.putStrLn ((functionDef.toSExpr.run functions).render)
     hdl.putStrLn ""
