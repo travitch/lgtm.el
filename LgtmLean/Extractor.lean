@@ -527,33 +527,63 @@ def getInductiveNames (env : Environment) : List Name :=
       none
   names.mergeSort (·.toString ≤ ·.toString)
 
-def main : IO Unit := do
-  Lean.initSearchPath (← Lean.findSysroot)
-  let env ← Lean.importModules #[{ module := `LgtmLean }] {} (trustLevel := 1024)
+structure Translations where
+  functions : Std.HashMap Name LFunction
+  structures : Std.HashMap Name LStructureDefinition
+  inductives : Std.HashMap Name LInductiveDefinition
+
+def translateLeanDefinitions (env : Environment) : MetaM Translations := do
+  -- FIXME: just put these into MetaM and incorporate isPropSortedInductive and isPropReturningDecl
+  -- to avoid redundant validation
   let functionNames := getFunctionNames env
   let structureNames := getStructureNames env
   let inductiveNames := getInductiveNames env
+
+  let mut funcMap : Std.HashMap Name LFunction := Std.HashMap.emptyWithCapacity
+  for name in functionNames do
+    unless ← isPropReturningDecl name do
+      let f ← translateFunction name
+      funcMap := funcMap.insert name f
+
+  let mut structMap : Std.HashMap Name LStructureDefinition := Std.HashMap.emptyWithCapacity
+  for name in structureNames do
+    let s ← translateStructure name
+    structMap := structMap.insert name s
+
+  let mut inductiveMap : Std.HashMap Name LInductiveDefinition := Std.HashMap.emptyWithCapacity
+  for name in inductiveNames do
+    unless ← isPropSortedInductive name do
+      let i ← translateInductive name
+      inductiveMap := inductiveMap.insert name i
+
+  pure ⟨funcMap, structMap, inductiveMap⟩
+
+
+def runMeta (env : Environment) (action : MetaM α) : IO α := do
   let coreCtx : Core.Context := { fileName := "extractor", fileMap := default }
-  let coreState : Core.State := { env := env }
-  let (_, _) ← ((do
-      for name in structureNames do
-        try
-          let s ← translateStructure name
-          IO.println (Std.Format.pretty (repr s))
-        catch ex =>
-          IO.println s!"-- failed to translate {name}: {(← ex.toMessageData.format).pretty}"
-      for name in inductiveNames do
-        unless ← isPropSortedInductive name do
-          try
-            let i ← translateInductive name
-            IO.println (Std.Format.pretty (repr i))
-          catch ex =>
-            IO.println s!"-- failed to translate {name}: {(← ex.toMessageData.format).pretty}"
-      for name in functionNames do
-        unless ← isPropReturningDecl name do
-          try
-            let f ← translateFunction name
-            IO.println (Std.Format.pretty (repr f))
-          catch ex =>
-            IO.println s!"-- failed to translate {name}: {(← ex.toMessageData.format).pretty}"
-      : Meta.MetaM Unit).run {} {}).toIO coreCtx coreState
+  let coreState₀ : Core.State := { env := env }
+  let ((res, _savedState), _coreState₁) ← (action.run {} {}).toIO coreCtx coreState₀
+  pure res
+
+def main (args : List String) : IO Unit := do
+  let targetFile ← if hArgs : args.length ≠ 1 then
+      throw (IO.userError "The path to an elisp file to generate is a required argument")
+    else
+      pure (System.FilePath.mk (args[0]'(by omega)))
+
+  Lean.initSearchPath (← Lean.findSysroot)
+  let env ← Lean.importModules #[{ module := `LgtmLean }] {} (trustLevel := 1024)
+
+  let translations ← runMeta env (translateLeanDefinitions env)
+
+  let hdl ← IO.FS.Handle.mk targetFile IO.FS.Mode.write
+
+  -- We have to emit the type definitions at the top of the file since they define macros that must be visible
+  -- by the time the functions are defined to avoid runtime errors.
+  for (_, structDef) in translations.structures.toList.mergeSort (·.2.name ≤ ·.2.name) do
+    hdl.putStrLn (structDef.toSExpr.render)
+
+  -- FIXME: Add in the translation of inductives
+
+  for (_, functionDef) in translations.functions.toList.mergeSort (·.2.name ≤ ·.2.name) do
+    hdl.putStrLn (functionDef.toSExpr.render)
