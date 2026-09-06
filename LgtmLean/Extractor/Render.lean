@@ -9,6 +9,7 @@ inductive SExpr where
 | list : List SExpr → SExpr
 /-- A block introduced by a list of SExpr terms that indents by N spaces its body forms -/
 | block : List SExpr → Nat → List SExpr → SExpr
+deriving Inhabited
 
 /-- Escape `s` for use inside an Emacs Lisp string literal -/
 def escapeLispString (s : String) : String :=
@@ -54,7 +55,6 @@ def toLispName (s : String) : String :=
     pure acc.reverse
   String.intercalate "-" ((String.ofList hyphenated).splitOn "-" |>.filter (· ≠ ""))
 
--- FIXME: Check if there is namespacing to account for in Lean identifiers
 def toLgtmName (s : String) : String := "lgtm-" ++ toLispName s
 
 def indentBy : Nat := 2
@@ -63,7 +63,19 @@ def LStructureDefinition.toSExpr (d : LStructureDefinition) : SExpr :=
   let fields := List.map (λ field => SExpr.list [SExpr.atom (toLispName field), SExpr.atom "nil", SExpr.atom ":read-only", SExpr.atom "t"]) d.fields
   .block [.atom "cl-defstruct", .atom (toLgtmName d.name)] indentBy fields
 
-def LExpr.toSExpr (e : LExpr) : SExpr :=
+mutual
+
+/-- Translate calls to Lean builtins and standard library functions into their elisp equivalents.
+
+If the provided function is not a Lean builtin or standard library function, return none. -/
+partial def translatePrimitives (fn : LExpr) (args : List LExpr) : Option SExpr :=
+  match fn with
+  | .global "Option.isSome" =>
+    -- We represent none as nil in elisp, so the value is some if it is not nil
+    some (args[0]!.toSExpr)
+  | _ => none
+
+partial def LExpr.toSExpr (e : LExpr) : SExpr :=
   match e with
   | .var name => SExpr.atom (toLispName name)
   | .global name => SExpr.atom (toLgtmName (toLispName name))
@@ -71,7 +83,9 @@ def LExpr.toSExpr (e : LExpr) : SExpr :=
   | .lit (.nat n) => .number n
   | .lit (.str s) => .string s
   | .lam params body => .list [.atom "lambda", .list (params.map (λ n => .atom (toLispName n))), body.toSExpr]
-  | .app fn args => .list (fn.toSExpr :: args.map toSExpr)
+  | .app fn args => match translatePrimitives fn args with
+    | some translation => translation
+    | none => .list (fn.toSExpr :: args.map LExpr.toSExpr)
   | .letE name e body => .block [.atom "let", .list [.list [.atom (toLispName name), e.toSExpr]]] indentBy [body.toSExpr]
   | .ite cond thenE elseE => .block [.atom "if", cond.toSExpr] indentBy [thenE.toSExpr, elseE.toSExpr]
   -- `structName`'s `cl-defstruct` accessor for `fieldName` is named `<lgtm-struct-name>-<field-name>`,
@@ -84,7 +98,11 @@ def LExpr.toSExpr (e : LExpr) : SExpr :=
   | .matchE _ _ => SExpr.list [SExpr.atom "error", SExpr.string "match expressions are not yet supported"]
   | .opaque reason => SExpr.list [SExpr.atom "error", SExpr.string reason]
 
+end
+
 def LFunction.toSExpr (f : LFunction) : SExpr :=
+  -- Names of Lgtm functions look like Lgtm.foo, so translate to Lgtm-foo so that the rest of the
+  -- transformations turn them into a reasonable elisp name
   let name := f.name.map (λ c => if c == '.' then '-' else c)
   let body := f.body.toSExpr
   let arglist := SExpr.list (f.parameters.map (λ name => SExpr.atom (toLispName name)))
@@ -159,7 +177,7 @@ def LFunction.toSExpr (f : LFunction) : SExpr :=
 #eval SExpr.render (LStructureDefinition.toSExpr
   { name := "CommentThreads", fields := ["commentTreeNodes", "serverCommentIds", "locationRoots"] })
 
-/-- info: "(defun lgtm-comment-is-persisted-to-server (c)\n  (lgtm-option.is-some (lgtm-comment.backend-id c)))" -/
+/-- info: "(defun lgtm-comment-is-persisted-to-server (c)\n  (lgtm-comment.backend-id c))" -/
 #guard_msgs in
 #eval SExpr.render (LFunction.toSExpr
   { name := "Comment.isPersistedToServer",

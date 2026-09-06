@@ -449,16 +449,13 @@ def isPropReturningDecl (name : Name) : Meta.MetaM Bool := do
     return false
 
 /-- Translate a single top-level `LgtmLean` structure into its `LStructureDefinition`
-representation. Reads the fields directly off the structure's constructor (whose type is
-`∀ params, field₁ → field₂ → .. → S params`), skipping the leading `numParams` binders -- the
-structure's own type parameters, e.g. `α` in `Tree α` -- and any Prop-sorted field, since an
-invariant/proof field has no run-time representation. -/
+representation. Discards any fields of erasable types (e.g., Prop). -/
 def translateStructure (name : Name) : Meta.MetaM LStructureDefinition := do
   let env ← getEnv
   let ctor := Lean.getStructureCtor env name
   Meta.forallTelescope ctor.type fun xs _ => do
     let mut fields : List String := []
-    for x in xs[ctor.numParams:] do
+    for x in xs do
       let ld ← x.fvarId!.getDecl
       unless ← isErasableType ld.type do
         fields := fields ++ [toString ld.userName]
