@@ -15,20 +15,25 @@ deriving Inhabited
 def escapeLispString (s : String) : String :=
   (s.replace "\\" "\\\\").replace "\"" "\\\""
 
-/-- Render an `SExpr` in the format used by emacs. -/
-partial def SExpr.render (s : SExpr) : String :=
+/-- Render `s`, laying out every line at the absolute column `curIndent`, which accumulates as we
+descend into nested `block`s (`curIndent + indent` for that block's own header/body) so indentation
+compounds correctly regardless of nesting depth or what's structurally in between (a `block` nested
+inside a `list` inside another `block` still lines up under its own header). -/
+partial def SExpr.renderIndent (curIndent : Nat) (s : SExpr) : String :=
   match s with
   | .number n => toString n
   | .string s => "\"" ++ escapeLispString s ++ "\""
   | .atom s => s
-  | .list xs => "(" ++ String.intercalate " " (xs.map SExpr.render) ++ ")"
+  | .list xs => "(" ++ String.intercalate " " (xs.map (SExpr.renderIndent curIndent)) ++ ")"
   | .block header indent body =>
-    let headerStr := String.intercalate " " (header.map SExpr.render)
-    let indentStr := String.ofList (List.replicate indent ' ')
-    let indentLines (s : String) : String :=
-      String.intercalate "\n" ((s.splitOn "\n").map (indentStr ++ ·))
-    let bodyStr := String.intercalate "\n" (body.map (fun e => indentLines (SExpr.render e)))
+    let headerStr := String.intercalate " " (header.map (SExpr.renderIndent curIndent))
+    let newIndent := curIndent + indent
+    let indentStr := String.ofList (List.replicate newIndent ' ')
+    let bodyStr := String.intercalate "\n" (body.map (fun e => indentStr ++ SExpr.renderIndent newIndent e))
     "(" ++ headerStr ++ "\n" ++ bodyStr ++ ")"
+
+/-- Render an `SExpr` in the format used by emacs. -/
+def SExpr.render (s : SExpr) : String := SExpr.renderIndent 0 s
 
 /-- Convert names from camel or pascal case to kebab case. -/
 def toLispName (s : String) : String :=
@@ -183,3 +188,12 @@ def LFunction.toSExpr (f : LFunction) : SExpr :=
   { name := "Comment.isPersistedToServer",
     parameters := ["c"],
     body := LExpr.app (LExpr.global "Option.isSome") [LExpr.app (LExpr.global "Comment.backendId") [LExpr.var "c"]] })
+
+-- A `block` nested inside a `list` that's itself a body form of an outer `block` should still
+-- have its own body forms indented cumulatively (outer `indent` + inner `indent`), not just the
+-- inner block's own `indent` in isolation -- exercising `SExpr.renderIndent`'s threaded, rather
+-- than purely local, indentation.
+/-- info: "(defun\n  (foo (let\n    body1\n    body2)))" -/
+#guard_msgs in
+#eval SExpr.render (.block [.atom "defun"] 2
+  [.list [.atom "foo", .block [.atom "let"] 2 [.atom "body1", .atom "body2"]]])
