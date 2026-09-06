@@ -84,7 +84,9 @@ partial def LExpr.toSExpr (e : LExpr) : SExpr :=
   match e with
   | .var name => SExpr.atom (toLispName name)
   | .global name => SExpr.atom (toLgtmName (toLispName name))
-  | .ctorRef name => SExpr.atom (toLgtmName (toLispName name))
+  | .ctorRef name =>
+    -- Constructors in Lean have a `.mk` suffix. Drop that and replace with the equivalent prefix for cl-defstruct.
+    SExpr.atom ("make-" ++ toLgtmName (toLispName (name.dropEnd 3).toString))
   | .lit (.nat n) => .number n
   | .lit (.str s) => .string s
   | .lam params body => .list [.atom "lambda", .list (params.map (λ n => .atom (toLispName n))), body.toSExpr]
