@@ -3,6 +3,12 @@ module
 public import LgtmLean.Basic
 import all LgtmLean.Basic
 
+public def compareLocatedCommentThreads (t₁ : ThreadLocation × List CommentThread) (t₂ : ThreadLocation × List CommentThread) : Bool :=
+  match (t₁, t₂) with
+  | ((.topLevel, _), _) => true
+  | (_, (.topLevel, _)) => false
+  | ((.lineNumber n₁, _), (.lineNumber n₂, _)) => n₁ ≤ n₂
+
 /-- Extract an alist of threads grouped by location.
 
 The list is sorted by location.  Each list at a given location is sorted by comment timestamp.
@@ -12,10 +18,10 @@ public def CommentThreads.asAlist (threads : CommentThreads) (manager : CommentM
     let commentThreads := threadRoots.attach.map (λ ⟨commentRef, href⟩ =>
       let hMember := Std.HashMap.mem_iff_contains.mpr (threads.hHasNodeForComment loc threadRoots hpair commentRef href)
       threads.commentTreeNodes.get commentRef hMember)
-    let sortByComparison := λ t1 t2 => (compare (manager.get t1.value).createdTimestamp (manager.get t2.value).createdTimestamp).isLE
-    let sortedThreads := List.mergeSort commentThreads sortByComparison
+    let compareThreadsByTimestamp := λ (t₁ t₂ : CommentThread) => decide ((manager.get t₁.value).createdTimestamp ≤ (manager.get t₂.value).createdTimestamp)
+    let sortedThreads := List.mergeSort commentThreads compareThreadsByTimestamp
     (loc, sortedThreads))
-  unsorted.mergeSort (λ p1 p2 => (compare p1.fst p2.fst).isLE)
+  unsorted.mergeSort compareLocatedCommentThreads
 
 /-- Return the threads in sorted order. -/
 public def CommentThreads.toThreadsOrdered (threads : CommentThreads) (manager : CommentManager) : List CommentThread :=
@@ -472,7 +478,12 @@ private theorem listIsSortedPredicate_iff_pairwise {α} [Ord α] (l : List α) :
 theorem CommentThreads.asAlist.isSortedByLocation (threads : CommentThreads) (manager : CommentManager) :
   listIsSortedPredicate (List.map Prod.fst (threads.asAlist manager)) := by
   unfold CommentThreads.asAlist
-  rw [List.map_mergeSort (s := ThreadLocation.le) (by intro a _ b _; rfl)]
+  rw [List.map_mergeSort (s := ThreadLocation.le) (by
+    intro a _ b _
+    unfold compareLocatedCommentThreads ThreadLocation.le compare instOrdThreadLocation instOrdThreadLocation.ord
+    rcases a with ⟨aloc, athreads⟩
+    rcases b with ⟨bloc, bthreads⟩
+    rcases aloc <;> rcases bloc <;> simp <;> rw [Bool.eq_iff_iff] <;> simp [Nat.isLE_compare])]
   rw [listIsSortedPredicate_iff_pairwise]
   exact List.pairwise_mergeSort ThreadLocation.le_trans ThreadLocation.le_total _
 
@@ -498,15 +509,18 @@ theorem CommentThreads.asAlist.threadLocationsSortedByTimestamp (threads : Comme
         (List.map (fun x => threads.commentTreeNodes.get x.val
             (Std.HashMap.mem_iff_contains.mpr (threads.hHasNodeForComment loc threadRoots hpair x.val x.2)))
           threadRoots.attach)
-        (fun t1 t2 => (compare (manager.get t1.value).createdTimestamp (manager.get t2.value).createdTimestamp).isLE) := by
+        (fun t₁ t₂ => decide ((manager.get t₁.value).createdTimestamp ≤ (manager.get t₂.value).createdTimestamp)) := by
     rw [← heq2, ← heq1]
   rw [listIsSortedPredicate_iff_pairwise, List.pairwise_map, hthreadListEq]
   refine (List.pairwise_mergeSort ?_ ?_ _).imp (fun {x y} h => ?_)
   · intro t1 t2 t3 h1 h2
-    exact nat_compareLE_trans _ _ _ h1 h2
+    simp only [decide_eq_true_eq] at h1 h2 ⊢
+    omega
   · intro t1 t2
-    exact nat_compareLE_total _ _
-  · exact h
+    simp only [decide_eq_true_eq, Bool.or_eq_true]
+    omega
+  · rw [Nat.isLE_compare]
+    simpa using h
 
 /-- Each group of threads that `toThreadsOrdered` concatenates in (i.e. each location's thread
 list from `asAlist`) occurs as a contiguous run in the result, and that run is sorted by
