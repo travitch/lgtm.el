@@ -112,6 +112,10 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
   | .global "Std.HashMap.toList" => do
     let m ← LExpr.toSExpr args[2]!
     pure (some (.list [.atom "lgtm--hash-map-to-list", m]))
+  | .global "Std.HashMap.map" => do
+    let func ← LExpr.toSExpr args[2]!
+    let map ← LExpr.toSExpr args[3]!
+    pure (some (.list [.atom "lgtm--hash-map-map", func, map]))
   | .global "Prod.snd" => do
     let p ← LExpr.toSExpr args[0]!
     pure (some (.list [.atom "elt", p, .number 1]))
@@ -121,8 +125,6 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
     let idx ← LExpr.toSExpr args[4]!
     pure (some (.list [.atom "gethash", idx, collection]))
   | _ => pure none
-
---
 
 partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=
   match e with
@@ -136,7 +138,7 @@ partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=
   | .lit (.str s) => pure (.string s)
   | .lam params body => do
     let sBody ← LExpr.toSExpr body
-    pure (.list [.atom "lambda", .list (params.map (λ n => .atom (toLispName n))), sBody])
+    pure (SExpr.block [.atom "lambda", .list (params.map (λ n => .atom (toLispName n)))] indentBy [sBody])
   | .app fn args => do match ← translatePrimitives fn args with
     | some translation => pure translation
     | none => do
