@@ -9,10 +9,12 @@ public def compareLocatedCommentThreads (t₁ : ThreadLocation × List CommentTh
   | (_, (.topLevel, _)) => false
   | ((.lineNumber n₁, _), (.lineNumber n₂, _)) => n₁ ≤ n₂
 
+public def compareThreadsByTimestamp (manager : CommentManager) (t₁ : CommentThread) (t₂ : CommentThread) : Bool :=
+  (manager.get t₁.value).createdTimestamp ≤ (manager.get t₂.value).createdTimestamp
+
 public def CommentThreads.asAlist.sortThreadLists (threads : CommentThreads) (manager : CommentManager)
   (subtype₁ : {x : ThreadLocation × List CommentRef // x ∈ threads.locationRoots.toList}) :
     ThreadLocation × List CommentThread :=
-  let compareThreadsByTimestamp := λ (t₁ t₂ : CommentThread) => decide ((manager.get t₁.value).createdTimestamp ≤ (manager.get t₂.value).createdTimestamp)
   let hPair := subtype₁.property
   let loc := subtype₁.val.1
   let threadRoots := subtype₁.val.2
@@ -21,7 +23,7 @@ public def CommentThreads.asAlist.sortThreadLists (threads : CommentThreads) (ma
     let commentRef := subtype₂.val
     let hMember := Std.HashMap.mem_iff_contains.mpr (threads.hHasNodeForComment loc threadRoots hPair commentRef href)
     threads.commentTreeNodes.get commentRef hMember)
-  let sortedThreads := List.mergeSort commentThreads compareThreadsByTimestamp
+  let sortedThreads := List.mergeSort commentThreads (compareThreadsByTimestamp manager)
   (loc, sortedThreads)
 
 /-- Extract an alist of threads grouped by location.
