@@ -29,8 +29,7 @@ public def CommentThreads.asAlist.sortThreadLists (threads : CommentThreads) (ma
 The list is sorted by location.  Each list at a given location is sorted by comment timestamp.
 The comment manager is required to get access to those timestamps. -/
 public def CommentThreads.asAlist (threads : CommentThreads) (manager : CommentManager) : List (ThreadLocation × List CommentThread) :=
-  let threadsAtLocationsWithMemberProofs : List { x : ThreadLocation × List CommentRef // x ∈ threads.locationRoots.toList } :=
-    threads.locationRoots.toList.attach
+  let threadsAtLocationsWithMemberProofs := threads.locationRoots.toList.attach
   let unsorted := threadsAtLocationsWithMemberProofs.map (CommentThreads.asAlist.sortThreadLists threads manager)
   unsorted.mergeSort compareLocatedCommentThreads
 
