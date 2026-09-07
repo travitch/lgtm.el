@@ -13,7 +13,7 @@ public structure Result α where
 /-- Delete all of the comments in the current review state.
 
 This is used to prepare to fetch an updated state from the server. -/
-def resetCommentState (s₀ : State) : Result Unit :=
+public def resetCommentState (s₀ : State) : Result Unit :=
   let manager₁ := s₀.fileManager.resetCommentState
   let s₁ := { s₀ with
               commentBeingEdited := none,

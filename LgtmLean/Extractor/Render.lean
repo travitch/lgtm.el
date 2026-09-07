@@ -145,6 +145,7 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
 partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=
   match e with
   | .var name => pure (SExpr.atom (toLispName name))
+  | .global "Unit.unit" => pure (.atom "'unit")
   | .global "Prod.snd" => pure (.list [.atom "lambda", .list [.atom "l"], .list [.atom "elt", .atom "l", .number 1]])
   | .global name => pure (SExpr.atom (translateGlobalName name))
   | .ctorRef "Option.none" => pure (SExpr.atom "nil")
