@@ -74,4 +74,5 @@ public structure LFunction where
   name : String
   parameters : List String
   body : LExpr
+  docstring : Option String
   deriving Repr

@@ -192,7 +192,10 @@ def LFunction.toSExpr (f : LFunction) : SExprM SExpr := do
   | [] => pure (SExpr.block [SExpr.atom "defconst", SExpr.atom name] indentBy [body])
   | _ => do
     let arglist := SExpr.list (f.parameters.map (λ name => SExpr.atom (toLispName name)))
-    pure (SExpr.block [SExpr.atom "defun", SExpr.atom name, arglist] indentBy [body])
+    let docstring := match f.docstring with
+    | some ds => [SExpr.string ds]
+    | none => []
+    pure (SExpr.block [SExpr.atom "defun", SExpr.atom name, arglist] indentBy (docstring ++ [body]))
 
 def testRender (s : SExprM SExpr) : String := SExpr.render (SExprM.run [] s)
 
@@ -270,7 +273,8 @@ def testRender (s : SExprM SExpr) : String := SExpr.render (SExprM.run [] s)
 #eval testRender (LFunction.toSExpr
   { name := "Comment.isPersistedToServer",
     parameters := ["c"],
-    body := LExpr.app (LExpr.global "Option.isSome") [LExpr.app (LExpr.global "Comment.backendId") [LExpr.var "c"]] })
+    body := LExpr.app (LExpr.global "Option.isSome") [LExpr.app (LExpr.global "Comment.backendId") [LExpr.var "c"]],
+    docstring := none })
 
 -- A `block` nested inside a `list` that's itself a body form of an outer `block` should still
 -- have its own body forms indented cumulatively (outer `indent` + inner `indent`), not just the

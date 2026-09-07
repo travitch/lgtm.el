@@ -396,6 +396,7 @@ clause that does destructure its arguments, e.g. a single-constructor structure)
 into one `LExpr.matchE` over the declared parameters. -/
 def translateFunction (name : Name) : Meta.MetaM LFunction := do
   let info ← getConstInfo name
+  let docstring ← findDocString? (← getEnv) name
   let paramNames ← Meta.forallTelescope info.type fun xs _ => do
     let mut names : List String := []
     for x in xs do
@@ -431,10 +432,12 @@ def translateFunction (name : Name) : Meta.MetaM LFunction := do
       | [(pats, bodyL)] =>
         if isTrivialClause pats paramNames then bodyL else .matchE (paramNames.map LExpr.var) clauses
       | _ => .matchE (paramNames.map LExpr.var) clauses
-    pure { name := toString name, parameters := paramNames, body }
+    pure { name := toString name, parameters := paramNames, body, docstring }
   | none =>
     match info.value? with
-    | none => pure { name := toString name, parameters := paramNames, body := .opaque "no definition available" }
+    | none =>
+      let body := LExpr.opaque "no definition available"
+      pure { name := toString name, parameters := paramNames, body, docstring }
     | some v =>
       Meta.lambdaTelescope v fun xs body => do
         let mut varNames : Std.HashMap FVarId String := {}
@@ -442,7 +445,7 @@ def translateFunction (name : Name) : Meta.MetaM LFunction := do
           let ld ← x.fvarId!.getDecl
           varNames := varNames.insert x.fvarId! (toString ld.userName)
         let bodyL ← translateExpr varNames body
-        pure { name := toString name, parameters := paramNames, body := bodyL }
+        pure { name := toString name, parameters := paramNames, body := bodyL, docstring }
 
 /-- Whether `name`'s own declared type has no run-time representation once its full arrow
 telescope is peeled off: either a `Prop` (a proof-producing predicate like
