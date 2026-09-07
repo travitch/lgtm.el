@@ -574,6 +574,8 @@ def runMeta (env : Environment) (action : MetaM α) : IO α := do
   let ((res, _savedState), _coreState₁) ← (action.run {} {}).toIO coreCtx coreState₀
   pure res
 
+def elispPrelude : String := include_str "Extractor/prelude.el"
+
 def main (args : List String) : IO Unit := do
   let targetFile ← if hArgs : args.length ≠ 1 then
       throw (IO.userError "The path to an elisp file to generate is a required argument")
@@ -590,7 +592,6 @@ def main (args : List String) : IO Unit := do
   hdl.putStrLn ";; Type definitions"
 
   let functions := translations.functions.values
-
   -- We have to emit the type definitions at the top of the file since they define macros that must be visible
   -- by the time the functions are defined to avoid runtime errors.
   for (_, structDef) in translations.structures.toList.mergeSort (·.2.name ≤ ·.2.name) do
@@ -599,8 +600,16 @@ def main (args : List String) : IO Unit := do
 
   -- FIXME: Add in the translation of inductives
 
+  hdl.putStrLn ";; Prelude"
+  hdl.putStrLn ""
+
+  hdl.putStrLn elispPrelude
+  hdl.putStrLn ""
+
   hdl.putStrLn ";; Functions"
 
+  -- FIXME: These need to be emitted such that the constant defs (nullary functions) are first and
+  -- in dependency order
   for (_, functionDef) in translations.functions.toList.mergeSort (·.2.name ≤ ·.2.name) do
     hdl.putStrLn ((functionDef.toSExpr.run functions).render)
     hdl.putStrLn ""

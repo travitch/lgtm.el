@@ -97,8 +97,32 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
     -- We represent none as nil in elisp, so the value is some if it is not nil
     let theValue ← LExpr.toSExpr args[0]!
     pure (some theValue)
+  | .ctorRef "List.cons" => do
+    let elt ← LExpr.toSExpr args[0]!
+    let elts ← LExpr.toSExpr args[1]!
+    pure (some (.list [.atom "cons", elt, elts]))
+  | .global "List.isEmpty" => do
+    let lst ← LExpr.toSExpr args[0]!
+    pure (some (.list [.atom "seq-empty-p", lst]))
+  | .global "List.all" => do
+    let lst ← LExpr.toSExpr args[0]!
+    let p ← LExpr.toSExpr args[1]!
+    pure (some (.list [.atom "seq-every-p", p, lst]))
   | .global "Std.HashMap.emptyWithCapacity" => pure (some (.list [.atom "make-hash-table"]))
+  | .global "Std.HashMap.toList" => do
+    let m ← LExpr.toSExpr args[2]!
+    pure (some (.list [.atom "lgtm--hash-map-to-list", m]))
+  | .global "Prod.snd" => do
+    let p ← LExpr.toSExpr args[0]!
+    pure (some (.list [.atom "elt", p, .number 1]))
+  | .global "GetElem?.getElem!" => do
+    -- WARNING/TODO: Is there an overload with lists here?
+    let collection ← LExpr.toSExpr args[3]!
+    let idx ← LExpr.toSExpr args[4]!
+    pure (some (.list [.atom "gethash", idx, collection]))
   | _ => pure none
+
+--
 
 partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=
   match e with
