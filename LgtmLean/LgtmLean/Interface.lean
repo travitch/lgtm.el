@@ -87,7 +87,7 @@ match comments with
         hCurrentCommentsHaveCurrentVersion :=
           alter_preserves_versionInvariant bootstrapState.hCurrentCommentsHaveCurrentVersion hloc hver }
 
-private def groupComments (comments : List Comment) : CommentBootstrapState :=
+public def groupComments (comments : List Comment) : CommentBootstrapState :=
   groupComments.go comments (CommentBootstrapState.mk [] (by simp) Std.HashMap.emptyWithCapacity (by simp)
     Std.HashMap.emptyWithCapacity (by simp))
 
@@ -162,7 +162,7 @@ private theorem commentsByRef.go_contains_of_mem (comments : List Comment) (m : 
 
 /-- Builds the `CommentManager.comments` map for a batch of comments received from the server,
 keyed by `.ref`. -/
-private def commentsByRef (comments : List Comment) : Std.HashMap CommentRef Comment :=
+public def commentsByRef (comments : List Comment) : Std.HashMap CommentRef Comment :=
   commentsByRef.go comments Std.HashMap.emptyWithCapacity
 
 private theorem commentsByRef_hCommentsKeyedByRef (comments : List Comment) :
@@ -235,7 +235,7 @@ public structure FileThreadsBootstrapState (origState : Std.HashMap ModifiedFile
 `currentThreads` (and every other file) untouched. `hSubset` packages what the caller already knows
 about how `cs` relates to the final `comments₁` map (via `commentsByRef`), decoupling this
 per-file step from the global bookkeeping needed to establish it. -/
-private def FileThreadsBootstrapState.applyBase
+public def FileThreadsBootstrapState.applyBase
     {origState : Std.HashMap ModifiedFileRef ModifiedFileState} {comments₁ : Std.HashMap CommentRef Comment}
     (bs : FileThreadsBootstrapState origState comments₁)
     (fileRef : ModifiedFileRef) (cs : List Comment)
@@ -279,7 +279,7 @@ private def FileThreadsBootstrapState.applyBase
         exact bs.hPublished fileRef' hc' }
 
 /-- The `.current`-version counterpart of `FileThreadsBootstrapState.applyBase`. -/
-private def FileThreadsBootstrapState.applyCurrent
+public def FileThreadsBootstrapState.applyCurrent
     {origState : Std.HashMap ModifiedFileRef ModifiedFileState} {comments₁ : Std.HashMap CommentRef Comment}
     (bs : FileThreadsBootstrapState origState comments₁)
     (fileRef : ModifiedFileRef) (cs : List Comment)
@@ -365,29 +365,31 @@ match l with
 file's base and current buckets, flattened into one list. `CommentManager.comments` is keyed by
 `commentsByRef` of this list, so every published-ness obligation for any of the three buckets
 ultimately reduces to a membership fact in `allComments`. -/
-private def CommentBootstrapState.allComments (bootstrapState : CommentBootstrapState) : List Comment :=
-  bootstrapState.topLevelComments ++ bootstrapState.baseComments.toList.flatMap Prod.snd ++
-    bootstrapState.currentComments.toList.flatMap Prod.snd
+public def CommentBootstrapState.allComments (bootstrapState : CommentBootstrapState) : List Comment :=
+  List.flatten [bootstrapState.topLevelComments, bootstrapState.baseComments.toList.flatMap Prod.snd, bootstrapState.currentComments.toList.flatMap Prod.snd]
 
 private theorem CommentBootstrapState.mem_allComments_of_mem_topLevelComments
     (bootstrapState : CommentBootstrapState) (c : Comment) (hc : c ∈ bootstrapState.topLevelComments) :
     c ∈ bootstrapState.allComments := by
-  simp only [CommentBootstrapState.allComments, List.mem_append]
-  exact Or.inl (Or.inl hc)
+  simp only [CommentBootstrapState.allComments, List.flatten_cons, List.flatten_nil,
+    List.append_nil, List.mem_append]
+  exact Or.inl hc
 
 private theorem CommentBootstrapState.mem_allComments_of_mem_baseComments
     (bootstrapState : CommentBootstrapState) (entry : ModifiedFileRef × List Comment)
     (hentry : entry ∈ bootstrapState.baseComments.toList) (c : Comment) (hc : c ∈ entry.2) :
     c ∈ bootstrapState.allComments := by
-  simp only [CommentBootstrapState.allComments, List.mem_append, List.mem_flatMap]
-  exact Or.inl (Or.inr ⟨entry, hentry, hc⟩)
+  simp only [CommentBootstrapState.allComments, List.flatten_cons, List.flatten_nil,
+    List.append_nil, List.mem_append, List.mem_flatMap]
+  exact Or.inr (Or.inl ⟨entry, hentry, hc⟩)
 
 private theorem CommentBootstrapState.mem_allComments_of_mem_currentComments
     (bootstrapState : CommentBootstrapState) (entry : ModifiedFileRef × List Comment)
     (hentry : entry ∈ bootstrapState.currentComments.toList) (c : Comment) (hc : c ∈ entry.2) :
     c ∈ bootstrapState.allComments := by
-  simp only [CommentBootstrapState.allComments, List.mem_append, List.mem_flatMap]
-  exact Or.inr ⟨entry, hentry, hc⟩
+  simp only [CommentBootstrapState.allComments, List.flatten_cons, List.flatten_nil,
+    List.append_nil, List.mem_append, List.mem_flatMap]
+  exact Or.inr (Or.inr ⟨entry, hentry, hc⟩)
 
 /-- Every comment across the batch's three buckets has a backend id, given each bucket already
 satisfies `allCommentsHaveBackendId` on its own. -/
@@ -397,8 +399,9 @@ private theorem CommentBootstrapState.allComments_haveBackendId (bootstrapState 
     (hBackendCurrent : ∀ entry, entry ∈ bootstrapState.currentComments.toList → allCommentsHaveBackendId entry.2) :
     ∀ c, c ∈ bootstrapState.allComments → c.backendId.isSome := by
   intro c hc
-  simp only [CommentBootstrapState.allComments, List.mem_append, List.mem_flatMap] at hc
-  rcases hc with (hc | ⟨entry, hentry, hc⟩) | ⟨entry, hentry, hc⟩
+  simp only [CommentBootstrapState.allComments, List.flatten_cons, List.flatten_nil,
+    List.append_nil, List.mem_append, List.mem_flatMap] at hc
+  rcases hc with hc | ⟨entry, hentry, hc⟩ | ⟨entry, hentry, hc⟩
   · exact hBackendTop c hc
   · exact hBackendBase entry hentry c hc
   · exact hBackendCurrent entry hentry c hc
@@ -467,7 +470,7 @@ private theorem CommentBootstrapState.hAllCurrentEntries (bootstrapState : Comme
 the whole batch (`allComments`), and `topLevelThreads` is assembled from the top-level bucket alone
 (free of `hSameLocationTop`, since `groupComments` already guarantees every top-level comment is
 actually top-level). -/
-private def CommentBootstrapState.toCommentManager (bootstrapState : CommentBootstrapState)
+public def CommentBootstrapState.toCommentManager (bootstrapState : CommentBootstrapState)
     (hBackendTop : allCommentsHaveBackendId bootstrapState.topLevelComments)
     (hParentsTop : allParentsInComments bootstrapState.topLevelComments)
     (hNodupTop : commentRefsNodup bootstrapState.topLevelComments)
@@ -492,7 +495,7 @@ private def CommentBootstrapState.toCommentManager (bootstrapState : CommentBoot
 `hConsistentState` transfers from `fileManager.resetCommentState`'s own (via `hSameContains`, since
 the fold only ever replaces an already-tracked file's `ModifiedFileState`, never adds or removes
 tracked files). -/
-private def FileThreadsBootstrapState.toModifiedFileManager {comments₁ : Std.HashMap CommentRef Comment}
+public def FileThreadsBootstrapState.toModifiedFileManager {comments₁ : Std.HashMap CommentRef Comment}
     (fileManager : ModifiedFileManager)
     (bs : FileThreadsBootstrapState fileManager.resetCommentState.state comments₁) : ModifiedFileManager :=
   { state := bs.state,
@@ -553,7 +556,7 @@ public def addRemoteComments (s₀ : State) : Result (Except String Unit) :=
 `CommentManager.comments`) is recomputed from `comment₀`/`comment₂`/`href2` rather than taken as a
 parameter, since it must stay *definitionally* `s₀.commentManager.comments.insert comment₀.ref
 comment₂` for the proofs below to typecheck -- an opaque parameter would lose that. -/
-private def completeCommentWithContent.finalizeTopLevel (s₀ : State) (comment₀ comment₂ : Comment)
+public def completeCommentWithContent.finalizeTopLevel (s₀ : State) (comment₀ comment₂ : Comment)
     (hloc : comment₂.location = CommentLocation.topLevel) (hHasBackendId : comment₂.backendId.isSome)
     (href2 : comment₂.ref = comment₀.ref) (hFresh0 : ¬ s₀.commentManager.comments.contains comment₀.ref)
     (hparent2 : ∀ parentId, comment₂.parent = some parentId →
@@ -643,7 +646,7 @@ private theorem State.notMem_threadsFor_of_unpublished (s : State) {ref : Commen
 /-- Rebuilds `mfs` with `threadsFor version` replaced by `newThreads` (and the matching
 `hThreadsFileScoped` obligation discharged by `hFileScoped`), leaving the other version's threads
 untouched. The setter counterpart of `threadsFor`. -/
-private def ModifiedFileState.withThreadsFor (mfs : ModifiedFileState) (version : FileVersion)
+public def ModifiedFileState.withThreadsFor (mfs : ModifiedFileState) (version : FileVersion)
     (newThreads : CommentThreads)
     (hFileScoped : ∀ loc, loc ∈ newThreads.locationRoots.keys → loc.isTopLevel = false) : ModifiedFileState :=
   match version with
@@ -669,7 +672,7 @@ which still has to name `State.hFileThreadsPublished_insert_base` / `_insert_cur
 since those remain separate theorems (each asserting the *other* field is unchanged in a way that's
 tied to the concrete field name, not expressible through `threadsFor` alone). `comments₁` is
 recomputed rather than taken as a parameter, for the same reason as in `finalizeTopLevel`. -/
-private def completeCommentWithContent.finalizeFileScoped (s₀ : State) (comment₀ comment₂ : Comment)
+def completeCommentWithContent.finalizeFileScoped (s₀ : State) (comment₀ comment₂ : Comment)
     {serverId : ServerId} (fileRef : ModifiedFileRef) (modifiedFileState : ModifiedFileState)
     (hOldContainsFileRef : s₀.fileManager.state.contains fileRef)
     (hgetval : s₀.fileManager.state.get fileRef hOldContainsFileRef = modifiedFileState)

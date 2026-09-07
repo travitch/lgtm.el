@@ -108,6 +108,13 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
     let lst ← LExpr.toSExpr args[0]!
     let p ← LExpr.toSExpr args[1]!
     pure (some (.list [.atom "seq-every-p", p, lst]))
+  | .global "List.flatten" => do
+    let lst ← LExpr.toSExpr args[0]!
+    pure (some (.list [.atom "seq-mapcat", .atom "#'identity", lst]))
+  | .global "List.flatMap" => do
+    let f ← LExpr.toSExpr args[0]!
+    let lst ← LExpr.toSExpr args[1]!
+    pure (some (.list [.atom "seq-mapcat", f, lst]))
   | .global "Std.HashMap.emptyWithCapacity" => pure (some (.list [.atom "make-hash-table"]))
   | .global "Std.HashMap.toList" => do
     let m ← LExpr.toSExpr args[2]!
@@ -129,8 +136,10 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
 partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=
   match e with
   | .var name => pure (SExpr.atom (toLispName name))
+  | .global "Prod.snd" => pure (.list [.atom "lambda", .list [.atom "l"], .list [.atom "elt", .atom "l", .number 1]])
   | .global name => pure (SExpr.atom (translateGlobalName name))
   | .ctorRef "Option.none" => pure (SExpr.atom "nil")
+  | .ctorRef "List.nil" => pure (SExpr.atom "nil")
   | .ctorRef name =>
     -- Constructors in Lean have a `.mk` suffix. Drop that and replace with the equivalent prefix for cl-defstruct.
     pure (SExpr.atom ("make-" ++ toLgtmName (toLispName (name.dropEnd 3).toString)))

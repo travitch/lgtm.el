@@ -1,8 +1,8 @@
 module
 
-import all LgtmLean.Basic
+public import LgtmLean.Basic
 
-def parseFileModificationType (c : Char) : Option ModificationType :=
+public def parseFileModificationType (c : Char) : Option ModificationType :=
 match c with
 | 'M' => some .modified
 | 'A' => some .added
@@ -12,7 +12,7 @@ match c with
 | 'C' => some .copied
 | _ => none
 
-def formatFileModificationType (t : ModificationType) : String :=
+public def formatFileModificationType (t : ModificationType) : String :=
 match t with
 | .modified => "M"
 | .added => "A"

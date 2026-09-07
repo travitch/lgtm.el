@@ -152,7 +152,7 @@ private theorem mem_alter_insertSingletonOrAppend
     simp only [beq_iff_eq] at hk
     simp [hk]
 
-private def registerServerCommentIds
+public def registerServerCommentIds
     (comments : List Comment)
     (hCommentsHaveBackendIds : allCommentsHaveBackendId comments)
     (s : CommentTreeBootstrapState)
@@ -323,7 +323,7 @@ private theorem registerServerCommentIds_children_empty
 
 /-- Attach every reply comment to its parent's tree node, and collect the root comments into
 `locationRoots`. -/
-private def linkReplies (serverCommentIds : Std.HashMap ServerId CommentRef)
+public def linkReplies (serverCommentIds : Std.HashMap ServerId CommentRef)
     (comments : List Comment)
     (hParentsHaveNode : ∀ c, c ∈ comments → ∀ parentId, c.parent = some parentId → parentId ∈ serverCommentIds)
     (s : CommentTreeBootstrapState)
@@ -725,7 +725,7 @@ private theorem bootstrapCommentTreeNodesInv
       (m := (registerServerCommentIds comments hCommentsHaveBackendIds s₀).serverCommentIds) h |>.trans
         (by rw [Std.HashMap.get_eq_getElem])
 
-private def bootstrapCommentTrees (comments : List Comment)
+public def bootstrapCommentTrees (comments : List Comment)
                                   (hCommentsHaveBackendIds : allCommentsHaveBackendId comments)
                                   (hParentsInComments : allParentsInComments comments)
                                   (s₀ : CommentTreeBootstrapState)
