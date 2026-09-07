@@ -1,12 +1,13 @@
 module
 
+public import LgtmLean.Basic
 import all LgtmLean.Basic
 
 /-- Extract an alist of threads grouped by location.
 
 The list is sorted by location.  Each list at a given location is sorted by comment timestamp.
 The comment manager is required to get access to those timestamps. -/
-def CommentThreads.asAlist (threads : CommentThreads) (manager : CommentManager) : List (ThreadLocation × List CommentThread) :=
+public def CommentThreads.asAlist (threads : CommentThreads) (manager : CommentManager) : List (ThreadLocation × List CommentThread) :=
   let unsorted := threads.locationRoots.toList.attach.map (λ ⟨(loc, threadRoots), hpair⟩ =>
     let commentThreads := threadRoots.attach.map (λ ⟨commentRef, href⟩ =>
       let hMember := Std.HashMap.mem_iff_contains.mpr (threads.hHasNodeForComment loc threadRoots hpair commentRef href)
@@ -30,7 +31,7 @@ The linear order is as established in the ordering defined by CommentThreads.
 
 Note: It would be nice to keep the association between the selection and the threads objects it references.  Future work.
 -/
-def CommentThreads.nextThread (threads : CommentThreads) (manager : CommentManager) (version : FileVersion) (selection : SelectedComment) : Option SelectedComment :=
+public def CommentThreads.nextThread (threads : CommentThreads) (manager : CommentManager) (version : FileVersion) (selection : SelectedComment) : Option SelectedComment :=
   let orderedThreads := threads.toThreadsOrdered manager
   match version == selection.version, orderedThreads with
   | false, [] => none
@@ -44,7 +45,7 @@ def CommentThreads.nextThread (threads : CommentThreads) (manager : CommentManag
       let nextThread := orderedThreads[nextIdx]!
       some ⟨version, nextThread, nextThread.value⟩
 
-def CommentThreads.previousThread (threads : CommentThreads) (manager : CommentManager) (version : FileVersion) (selection : SelectedComment) : Option SelectedComment :=
+public def CommentThreads.previousThread (threads : CommentThreads) (manager : CommentManager) (version : FileVersion) (selection : SelectedComment) : Option SelectedComment :=
   let orderedThreads := threads.toThreadsOrdered manager
   match version == selection.version, orderedThreads with
   | false, [] => none
@@ -63,7 +64,7 @@ def CommentThreads.previousThread (threads : CommentThreads) (manager : CommentM
 `fuel` levels deep. `fuel := threads.commentTreeNodes.size` in `CommentThread.linearize` is enough
 to reach every node of a genuine (cycle-free) thread, since such a thread's depth cannot exceed
 its node count. Children are sorted by timestamp at each level, matching `CommentThreads.asAlist`. -/
-private def CommentThread.linearizeRecWithFuel (threads : CommentThreads) (manager : CommentManager) (fuel : Nat) (thread : CommentThread) : List Comment :=
+public def CommentThread.linearizeRecWithFuel (threads : CommentThreads) (manager : CommentManager) (fuel : Nat) (thread : CommentThread) : List Comment :=
 match fuel with
 | 0 => []
 | fuel + 1 =>
@@ -75,7 +76,7 @@ match fuel with
       | some childThread => CommentThread.linearizeRecWithFuel threads manager fuel childThread)
 
 /-- Linearize a comment THREAD (belonging to `threads`) with a depth-first traversal. -/
-private def CommentThread.linearize (thread : CommentThread) (threads : CommentThreads) (manager : CommentManager) : List Comment :=
+public def CommentThread.linearize (thread : CommentThread) (threads : CommentThreads) (manager : CommentManager) : List Comment :=
   CommentThread.linearizeRecWithFuel threads manager threads.commentTreeNodes.size thread
 
 private theorem CommentThread.linearizeRecWithFuel.ne_nil_of_fuel_ne_zero (threads : CommentThreads)
@@ -450,7 +451,7 @@ private def listIsSortedPredicate [Ord α] (values : List α) : Prop :=
   | [] => True
   | v :: rest => rest.all (λ other => (compare v other).isLE) ∧ listIsSortedPredicate rest
 
-private def ThreadLocation.le (a b : ThreadLocation) : Bool := (compare a b).isLE
+public def ThreadLocation.le (a b : ThreadLocation) : Bool := (compare a b).isLE
 
 private theorem ThreadLocation.le_trans : ∀ (a b c : ThreadLocation), le a b → le b c → le a c := by
   intro a b c
