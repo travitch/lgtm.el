@@ -132,6 +132,9 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
     let m ← LExpr.toSExpr args[2]!
     let key ← LExpr.toSExpr args[3]!
     pure (some (.list [.atom "gethash", key, m]))
+  | .global "Std.HashMap.size" => do
+    let m ← LExpr.toSExpr args[2]!
+    pure (some (.list [.atom "hash-table-count", m]))
   | .global "Prod.snd" => do
     let p ← LExpr.toSExpr args[0]!
     pure (some (.list [.atom "elt", p, .number 1]))
