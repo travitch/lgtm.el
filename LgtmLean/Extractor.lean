@@ -195,6 +195,21 @@ where
       pure (.ctor (toString cName) fields)
     | _ => pure .wildcard
 
+/-- Whether `n` was invented by the elaborator rather than written by the user. This happens
+exactly when a function parameter is bound via a pattern instead of a plain name (e.g.
+`def f : Nat → Nat | 0 => .. | n+1 => ..`), since Lean still needs *some* name for the parameter
+in `f`'s own type. `translateFunction` uses this to reject the pattern-bound function definition
+form, which `LFunction`'s flat `parameters : List String` cannot represent. -/
+def isElaboratorGeneratedName (n : Name) : Bool :=
+  n.hasMacroScopes
+
+/-- A stable, Lisp-safe name for a parameter binder. Falls back to a synthetic name when the
+binder's own name was invented by the elaborator (see `isElaboratorGeneratedName`) -- which
+happens for eta-expansion's own synthesized trailing parameters (see `translateApp`), since those
+don't come from any real source-level binder. -/
+def paramNameOrFallback (n : Name) (idx : Nat) : String :=
+  if isElaboratorGeneratedName n then s!"etaArg{idx}" else toString n
+
 mutual
 
 partial def translateConstRef (n : Name) : Meta.MetaM LExpr := do
@@ -245,30 +260,49 @@ partial def translateExpr (varNames : Std.HashMap FVarId String) (e : Expr) : Me
   | .const n _ => translateConstRef n
   | _ => pure (.opaque s!"unsupported term shape")
 
-/-- Translate a (fully-applied) application. First checks whether the head looks like an
-auto-generated matcher and, if so, tries to decode it into `LExpr.matchE`; otherwise (or if
-decoding fails) falls back to translating it as an ordinary call, erasing `Prop`/`Sort` arguments
-and special-casing the two-branch `cond`/`ite` primitives into `LExpr.ite`. -/
+/-- Translate a (possibly under-saturated) application. If `e`'s own type is still a function
+type -- i.e. `e` is a first-class partially-applied value, such as a bare global reference passed
+to `List.map` -- eta-expand it into an explicit `LExpr.lam` over the remaining parameters before
+translating, since Lisp targets don't support Lean's implicit currying: an elisp `defun` called
+with fewer arguments than it declares is a runtime arity error, not a closure. Otherwise, first
+checks whether the head looks like an auto-generated matcher and, if so, tries to decode it into
+`LExpr.matchE`; otherwise (or if decoding fails) falls back to translating it as an ordinary call,
+erasing `Prop`/`Sort` arguments and special-casing the two-branch `cond`/`ite` primitives into
+`LExpr.ite`. -/
 partial def translateApp (varNames : Std.HashMap FVarId String) (e : Expr) : Meta.MetaM LExpr := do
-  e.withApp fun fn args => do
-    let matcherResult? ← match fn with
-      | .const cName _ =>
-        if isLikelyMatcherName cName then tryDecodeMatcher varNames cName args else pure none
-      | _ => pure none
-    match matcherResult? with
-    | some r => pure r
-    | none => do
-      let fnL ← translateExpr varNames fn
-      let mut keptArgs : List LExpr := []
-      for a in args do
-        if ← isErasableValue a then
-          pure ()
-        else
-          keptArgs := keptArgs ++ [← translateExpr varNames a]
-      match fn, keptArgs with
-      | .const cName _, [c, t, eBr] =>
-        if cName == ``cond || cName == ``ite then pure (.ite c t eBr) else pure (mkLApp fnL keptArgs)
-      | _, _ => pure (mkLApp fnL keptArgs)
+  let eType ← Meta.whnf (← Meta.inferType e)
+  if eType.isForall then
+    Meta.forallTelescope eType fun tailXs _ => do
+      let mut varNames' := varNames
+      let mut tailNames : List String := []
+      for x in tailXs do
+        let ld ← x.fvarId!.getDecl
+        unless ← isErasableType ld.type do
+          let nm := paramNameOrFallback ld.userName tailNames.length
+          varNames' := varNames'.insert x.fvarId! nm
+          tailNames := tailNames ++ [nm]
+      let bodyL ← translateApp varNames' (mkAppN e tailXs)
+      pure (.lam tailNames bodyL)
+  else
+    e.withApp fun fn args => do
+      let matcherResult? ← match fn with
+        | .const cName _ =>
+          if isLikelyMatcherName cName then tryDecodeMatcher varNames cName args else pure none
+        | _ => pure none
+      match matcherResult? with
+      | some r => pure r
+      | none => do
+        let fnL ← translateExpr varNames fn
+        let mut keptArgs : List LExpr := []
+        for a in args do
+          if ← isErasableValue a then
+            pure ()
+          else
+            keptArgs := keptArgs ++ [← translateExpr varNames a]
+        match fn, keptArgs with
+        | .const cName _, [c, t, eBr] =>
+          if cName == ``cond || cName == ``ite then pure (.ite c t eBr) else pure (mkLApp fnL keptArgs)
+        | _, _ => pure (mkLApp fnL keptArgs)
 
 /-- Try to decode a call `matcherName args...` into an `LExpr.matchE`.
 
@@ -363,14 +397,6 @@ partial def decomposeCasesOn (xsPos : Std.HashMap FVarId Nat) (indName : Name) (
   | _ => pure []
 
 end
-
-/-- Whether `n` was invented by the elaborator rather than written by the user. This happens
-exactly when a function parameter is bound via a pattern instead of a plain name (e.g.
-`def f : Nat → Nat | 0 => .. | n+1 => ..`), since Lean still needs *some* name for the parameter
-in `f`'s own type. `translateFunction` uses this to reject the pattern-bound function definition
-form, which `LFunction`'s flat `parameters : List String` cannot represent. -/
-def isElaboratorGeneratedName (n : Name) : Bool :=
-  n.hasMacroScopes
 
 /-- Whether equation clause `pats` is nothing more than the trivial variable patterns naming
 `params`, in order -- i.e. the clause doesn't actually destructure any of its arguments. When it's

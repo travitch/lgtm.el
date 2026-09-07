@@ -9,18 +9,29 @@ public def compareLocatedCommentThreads (t₁ : ThreadLocation × List CommentTh
   | (_, (.topLevel, _)) => false
   | ((.lineNumber n₁, _), (.lineNumber n₂, _)) => n₁ ≤ n₂
 
+public def CommentThreads.asAlist.sortThreadLists (threads : CommentThreads) (manager : CommentManager)
+  (subtype₁ : {x : ThreadLocation × List CommentRef // x ∈ threads.locationRoots.toList}) :
+    ThreadLocation × List CommentThread :=
+  let compareThreadsByTimestamp := λ (t₁ t₂ : CommentThread) => decide ((manager.get t₁.value).createdTimestamp ≤ (manager.get t₂.value).createdTimestamp)
+  let hPair := subtype₁.property
+  let loc := subtype₁.val.1
+  let threadRoots := subtype₁.val.2
+  let commentThreads := threadRoots.attach.map (λ subtype₂ =>
+    let href := subtype₂.property
+    let commentRef := subtype₂.val
+    let hMember := Std.HashMap.mem_iff_contains.mpr (threads.hHasNodeForComment loc threadRoots hPair commentRef href)
+    threads.commentTreeNodes.get commentRef hMember)
+  let sortedThreads := List.mergeSort commentThreads compareThreadsByTimestamp
+  (loc, sortedThreads)
+
 /-- Extract an alist of threads grouped by location.
 
 The list is sorted by location.  Each list at a given location is sorted by comment timestamp.
 The comment manager is required to get access to those timestamps. -/
 public def CommentThreads.asAlist (threads : CommentThreads) (manager : CommentManager) : List (ThreadLocation × List CommentThread) :=
-  let unsorted := threads.locationRoots.toList.attach.map (λ ⟨(loc, threadRoots), hpair⟩ =>
-    let commentThreads := threadRoots.attach.map (λ ⟨commentRef, href⟩ =>
-      let hMember := Std.HashMap.mem_iff_contains.mpr (threads.hHasNodeForComment loc threadRoots hpair commentRef href)
-      threads.commentTreeNodes.get commentRef hMember)
-    let compareThreadsByTimestamp := λ (t₁ t₂ : CommentThread) => decide ((manager.get t₁.value).createdTimestamp ≤ (manager.get t₂.value).createdTimestamp)
-    let sortedThreads := List.mergeSort commentThreads compareThreadsByTimestamp
-    (loc, sortedThreads))
+  let threadsAtLocationsWithMemberProofs : List { x : ThreadLocation × List CommentRef // x ∈ threads.locationRoots.toList } :=
+    threads.locationRoots.toList.attach
+  let unsorted := threadsAtLocationsWithMemberProofs.map (CommentThreads.asAlist.sortThreadLists threads manager)
   unsorted.mergeSort compareLocatedCommentThreads
 
 /-- Return the threads in sorted order. -/
@@ -445,7 +456,7 @@ theorem CommentThreads.asAlist.hasConsistentLocations (threads : CommentThreads)
     unfold CommentThreads.asAlist at hloc
     simp only [List.mem_map, List.mem_mergeSort, List.mem_attach, true_and] at hloc
     obtain ⟨a, ⟨a1, heq1⟩, heq2⟩ := hloc
-    have hloceq : loc = a1.1.fst := by rw [← heq2, ← heq1]
+    have hloceq : loc = a1.1.fst := by rw [← heq2, ← heq1]; rfl
     rw [hloceq, ← Std.HashMap.map_fst_toList_eq_keys]
     exact List.mem_map.mpr ⟨a1.1, a1.2, rfl⟩
   rcases threads.hLocationsConsistent with hc | hc
@@ -510,7 +521,7 @@ theorem CommentThreads.asAlist.threadLocationsSortedByTimestamp (threads : Comme
             (Std.HashMap.mem_iff_contains.mpr (threads.hHasNodeForComment loc threadRoots hpair x.val x.2)))
           threadRoots.attach)
         (fun t₁ t₂ => decide ((manager.get t₁.value).createdTimestamp ≤ (manager.get t₂.value).createdTimestamp)) := by
-    rw [← heq2, ← heq1]
+    rw [← heq2, ← heq1]; rfl
   rw [listIsSortedPredicate_iff_pairwise, List.pairwise_map, hthreadListEq]
   refine (List.pairwise_mergeSort ?_ ?_ _).imp (fun {x y} h => ?_)
   · intro t1 t2 t3 h1 h2
@@ -552,7 +563,7 @@ private theorem CommentThreads.toThreadsOrdered.eq_nil_of_isEmpty (threads : Com
   have hRootsEmpty := hThreadRootsEmpty loc threadRoots hpair
   subst hRootsEmpty
   rw [← heq]
-  simp
+  simp [CommentThreads.asAlist.sortThreadLists]
 
 theorem CommentThreads.nextThread.noSelectionForEmptyFile (threads : CommentThreads) (manager : CommentManager) (version : FileVersion) (selection : SelectedComment) :
   version ≠ selection.version ∧ threads.isEmpty → threads.nextThread manager version selection = none := by
