@@ -11,3 +11,11 @@ The function is called with two arguments: the keys and values from M."
   (let ((res (make-hash-table)))
     (maphash (lambda (key value) (puthash key (funcall func value) res)) m)
     res))
+
+(defun lgtm--hash-map-insert (key value m)
+  "Insert KEY mapped to VALUE in M.
+
+This does not mutate the original map."
+  (let ((res (copy-hash-table m)))
+    (puthash key value res)
+    res))

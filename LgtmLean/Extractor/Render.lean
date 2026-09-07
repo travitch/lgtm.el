@@ -123,6 +123,15 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
     let func ← LExpr.toSExpr args[2]!
     let map ← LExpr.toSExpr args[3]!
     pure (some (.list [.atom "lgtm--hash-map-map", func, map]))
+  | .global "Std.HashMap.insert" => do
+    let m ← LExpr.toSExpr args[2]!
+    let key ← LExpr.toSExpr args[3]!
+    let value ← LExpr.toSExpr args[4]!
+    pure (some (.list [.atom "lgtm--hash-map-insert", key, value, m]))
+  | .global "Std.HashMap.get" => do
+    let m ← LExpr.toSExpr args[2]!
+    let key ← LExpr.toSExpr args[3]!
+    pure (some (.list [.atom "gethash", key, m]))
   | .global "Prod.snd" => do
     let p ← LExpr.toSExpr args[0]!
     pure (some (.list [.atom "elt", p, .number 1]))
