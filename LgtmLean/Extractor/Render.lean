@@ -115,6 +115,9 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
     let f ← LExpr.toSExpr args[0]!
     let lst ← LExpr.toSExpr args[1]!
     pure (some (.list [.atom "seq-mapcat", f, lst]))
+  | .global "List.attach" => do
+    let l ← LExpr.toSExpr args[0]!
+    pure (some l)
   | .global "Std.HashMap.emptyWithCapacity" => pure (some (.list [.atom "make-hash-table"]))
   | .global "Std.HashMap.toList" => do
     let m ← LExpr.toSExpr args[2]!
