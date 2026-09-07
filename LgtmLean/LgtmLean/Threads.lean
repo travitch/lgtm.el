@@ -18,7 +18,7 @@ public def CommentThreads.asAlist (threads : CommentThreads) (manager : CommentM
   unsorted.mergeSort (λ p1 p2 => (compare p1.fst p2.fst).isLE)
 
 /-- Return the threads in sorted order. -/
-def CommentThreads.toThreadsOrdered (threads : CommentThreads) (manager : CommentManager) : List CommentThread :=
+public def CommentThreads.toThreadsOrdered (threads : CommentThreads) (manager : CommentManager) : List CommentThread :=
   List.flatMap (λ p => Prod.snd p) (threads.asAlist manager)
 
 /--
@@ -324,7 +324,7 @@ theorem SelectedComment.WellFormed.currentlySelectedIndex_eq {threads : CommentT
 indexing into the thread's linearization provably in-bounds (see
 `SelectedComment.WellFormed.linearizedCommentRefs_ne_nil`) instead of relying on a `!`-panic
 fallback. -/
-def CommentThreads.nextCommentInThread (threads : CommentThreads) (manager : CommentManager)
+public def CommentThreads.nextCommentInThread (threads : CommentThreads) (manager : CommentManager)
     (selection : SelectedComment) (hWF : SelectedComment.WellFormed threads selection) : SelectedComment :=
   let selectedThread := selection.thread
   let linearizedComments := selectedThread.linearize threads manager
@@ -344,7 +344,7 @@ def CommentThreads.nextCommentInThread (threads : CommentThreads) (manager : Com
 
 `hWF` certifies that `selection` is well-formed with respect to `threads`; see
 `CommentThreads.nextCommentInThread` for why this makes the indexing provably in-bounds. -/
-def CommentThreads.previousCommentInThread (threads : CommentThreads) (manager : CommentManager)
+public def CommentThreads.previousCommentInThread (threads : CommentThreads) (manager : CommentManager)
     (selection : SelectedComment) (hWF : SelectedComment.WellFormed threads selection) : SelectedComment :=
   let selectedThread := selection.thread
   let linearizedComments := selectedThread.linearize threads manager
