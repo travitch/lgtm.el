@@ -93,6 +93,10 @@ mutual
 If the provided function is not a Lean builtin or standard library function, return none. -/
 partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Option SExpr) :=
   match fn with
+  | .global "instDecidableEqBool" => do
+    let b₁ ← LExpr.toSExpr args[0]!
+    let b₂ ← LExpr.toSExpr args[1]!
+    pure (some (.list [.atom "eq", b₁, b₂]))
   | .global "Option.isSome" => do
     -- We represent none as nil in elisp, so the value is some if it is not nil
     let theValue ← LExpr.toSExpr args[0]!
@@ -126,6 +130,9 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
     -- This is a no-op in elisp because this only adds proof terms
     let l ← LExpr.toSExpr args[0]!
     pure (some l)
+  | .global "String.isEmpty" => do
+    let s ← LExpr.toSExpr args[0]!
+    pure (some (.list [.atom "string-empty-p", s]))
   | .global "Std.HashMap.emptyWithCapacity" => pure (some (.list [.atom "make-hash-table"]))
   | .global "Std.HashMap.toList" => do
     let m ← LExpr.toSExpr args[2]!
@@ -160,6 +167,19 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
   | .global "OfNat.ofNat" => do
     let i ← LExpr.toSExpr args[0]!
     pure (some i)
+  | .global "Decidable.decide" => do
+    -- These arise in the lifting of comparisons from Prop to Bool.  Since there is no Prop, we can just
+    -- discard them in Lisp
+    let t ← LExpr.toSExpr args[0]!
+    pure (some t)
+  | .global "Nat.decLe" => do
+    let v₁ ← LExpr.toSExpr args[0]!
+    let v₂ ← LExpr.toSExpr args[1]!
+    pure (some (.list [.atom "<=", v₁, v₂]))
+  | .global "Nat.decLt" => do
+    let v₁ ← LExpr.toSExpr args[0]!
+    let v₂ ← LExpr.toSExpr args[1]!
+    pure (some (.list [.atom "<", v₁, v₂]))
   | _ => pure none
 
 partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=
@@ -172,6 +192,8 @@ partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=
   | .global name => pure (SExpr.atom ("#'" ++ translateGlobalName name))
   | .ctorRef "Option.none" => pure (SExpr.atom "nil")
   | .ctorRef "List.nil" => pure (SExpr.atom "nil")
+  | .ctorRef "Bool.true" => pure (SExpr.atom "t")
+  | .ctorRef "Bool.false" => pure (SExpr.atom "nil")
   | .ctorRef name =>
     -- Constructors in Lean have a `.mk` suffix. Drop that and replace with the equivalent prefix for cl-defstruct.
     pure (SExpr.atom ("#'make-" ++ toLgtmName (toLispName (name.dropEnd 3).toString)))
