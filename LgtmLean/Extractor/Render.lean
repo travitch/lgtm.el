@@ -180,8 +180,9 @@ partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=
         let sFunc := SExpr.atom (toLispName name)
         pure (.list (.atom "funcall" :: sFunc :: sArgs))
       | .ctorRef name => do
+        -- Special case the rendering of these because they usually have many arguments
         let sFunc := SExpr.atom ("make-" ++ toLgtmName (toLispName (name.dropEnd 3).toString))
-        pure (.list (sFunc :: sArgs))
+        pure (.block [sFunc] indentBy sArgs)
       | .lam _ _ => do
         let sFunc ← fn.toSExpr
         pure (.list (sFunc :: sArgs))
