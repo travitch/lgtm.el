@@ -19,3 +19,13 @@ This does not mutate the original map."
   (let ((res (copy-hash-table m)))
     (puthash key value res)
     res))
+
+;; Tuples (including pairs) are represented as lists in the translation
+
+(defun lgtm--pair-fst (p)
+  "Select the first element of a tuple P."
+  (elt p 0))
+
+(defun lgtm--pair-snd (p)
+  "Select the second element of a tuple P."
+  (elt p 1))

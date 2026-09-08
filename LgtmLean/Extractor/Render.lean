@@ -138,9 +138,12 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
   | .global "Std.HashMap.size" => do
     let m ← LExpr.toSExpr args[2]!
     pure (some (.list [.atom "hash-table-count", m]))
+  | .global "Prod.fst" => do
+    let p ← LExpr.toSExpr args[0]!
+    pure (some (.list [.atom "lgtm--pair-fst", p]))
   | .global "Prod.snd" => do
     let p ← LExpr.toSExpr args[0]!
-    pure (some (.list [.atom "elt", p, .number 1]))
+    pure (some (.list [.atom "lgtm--pair-snd", p]))
   | .global "GetElem?.getElem!" => do
     -- WARNING/TODO: Is there an overload with lists here?
     let collection ← LExpr.toSExpr args[3]!
@@ -152,13 +155,14 @@ partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=
   match e with
   | .var name => pure (SExpr.atom (toLispName name))
   | .global "Unit.unit" => pure (.atom "'unit")
-  | .global "Prod.snd" => pure (.list [.atom "lambda", .list [.atom "l"], .list [.atom "elt", .atom "l", .number 1]])
-  | .global name => pure (SExpr.atom (translateGlobalName name))
+  | .global "Prod.fst" => pure (.atom "#'lgtm--pair-fst")
+  | .global "Prod.snd" => pure (.atom "#'lgtm--pair-snd")
+  | .global name => pure (SExpr.atom ("#'" ++ translateGlobalName name))
   | .ctorRef "Option.none" => pure (SExpr.atom "nil")
   | .ctorRef "List.nil" => pure (SExpr.atom "nil")
   | .ctorRef name =>
     -- Constructors in Lean have a `.mk` suffix. Drop that and replace with the equivalent prefix for cl-defstruct.
-    pure (SExpr.atom ("make-" ++ toLgtmName (toLispName (name.dropEnd 3).toString)))
+    pure (SExpr.atom ("#'make-" ++ toLgtmName (toLispName (name.dropEnd 3).toString)))
   | .lit (.nat n) => pure (.number n)
   | .lit (.str s) => pure (.string s)
   | .lam params body => do
@@ -167,9 +171,21 @@ partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=
   | .app fn args => do match ← translatePrimitives fn args with
     | some translation => pure translation
     | none => do
-      let sBody ← fn.toSExpr
       let sArgs ← args.mapM LExpr.toSExpr
-      pure (.list (sBody :: sArgs))
+      match fn with
+      | .global name => do
+        let sFunc := SExpr.atom (translateGlobalName name)
+        pure (.list (sFunc :: sArgs))
+      | .var name => do
+        let sFunc := SExpr.atom (toLispName name)
+        pure (.list (.atom "funcall" :: sFunc :: sArgs))
+      | .ctorRef name => do
+        let sFunc := SExpr.atom ("make-" ++ toLgtmName (toLispName (name.dropEnd 3).toString))
+        pure (.list (sFunc :: sArgs))
+      | .lam _ _ => do
+        let sFunc ← fn.toSExpr
+        pure (.list (sFunc :: sArgs))
+      | callee => pure (.list [.atom "error", .string s!"Unsupported callee {reprStr callee}"])
   | .letE name e body => do
     pure (.block [.atom "let", .list [.list [.atom (toLispName name), ← e.toSExpr]]] indentBy [← body.toSExpr])
   | .ite cond thenE elseE => do
