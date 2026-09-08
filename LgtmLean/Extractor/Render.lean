@@ -119,6 +119,9 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
     let f ← LExpr.toSExpr args[0]!
     let lst ← LExpr.toSExpr args[1]!
     pure (some (.list [.atom "seq-mapcat", f, lst]))
+  | .global "List.length" => do
+    let lst ← LExpr.toSExpr args[0]!
+    pure (some (.list [.atom "length", lst]))
   | .global "List.attach" => do
     -- This is a no-op in elisp because this only adds proof terms
     let l ← LExpr.toSExpr args[0]!
@@ -154,6 +157,9 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
     let collection ← LExpr.toSExpr args[3]!
     let idx ← LExpr.toSExpr args[4]!
     pure (some (.list [.atom "gethash", idx, collection]))
+  | .global "OfNat.ofNat" => do
+    let i ← LExpr.toSExpr args[0]!
+    pure (some i)
   | _ => pure none
 
 partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=
@@ -162,6 +168,7 @@ partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=
   | .global "Unit.unit" => pure (.atom "'unit")
   | .global "Prod.fst" => pure (.atom "#'lgtm--pair-fst")
   | .global "Prod.snd" => pure (.atom "#'lgtm--pair-snd")
+  -- FIXME: Only add the hash prefix if the global definition is actually a function (not a constant)
   | .global name => pure (SExpr.atom ("#'" ++ translateGlobalName name))
   | .ctorRef "Option.none" => pure (SExpr.atom "nil")
   | .ctorRef "List.nil" => pure (SExpr.atom "nil")
