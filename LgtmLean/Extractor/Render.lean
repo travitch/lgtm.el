@@ -108,6 +108,10 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
     let lst ← LExpr.toSExpr args[0]!
     let p ← LExpr.toSExpr args[1]!
     pure (some (.list [.atom "seq-every-p", p, lst]))
+  | .global "List.map" => do
+    let func ← LExpr.toSExpr args[0]!
+    let lst ← LExpr.toSExpr args[1]!
+    pure (some (.list [.atom "seq-map", func, lst]))
   | .global "List.flatten" => do
     let lst ← LExpr.toSExpr args[0]!
     pure (some (.list [.atom "seq-mapcat", .atom "#'identity", lst]))
@@ -116,6 +120,7 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
     let lst ← LExpr.toSExpr args[1]!
     pure (some (.list [.atom "seq-mapcat", f, lst]))
   | .global "List.attach" => do
+    -- This is a no-op in elisp because this only adds proof terms
     let l ← LExpr.toSExpr args[0]!
     pure (some l)
   | .global "Std.HashMap.emptyWithCapacity" => pure (some (.list [.atom "make-hash-table"]))
