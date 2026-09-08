@@ -58,7 +58,7 @@ def isCompilerGenerated (env : Environment) (name : Name) : Bool :=
       s == "ctorIdx" || s == "ctorElimType" || s == "below" || s == "ibelow" || s == "ofNat" || s == "toCtorIdx" ||
         s.startsWith "_" || s.startsWith "eq_" || s.startsWith "match_" || s.startsWith "proof_" ||
         s.startsWith "omega_" || s.endsWith "_flat_ctor" || s.startsWith "sizeOf_spec" ||
-        s.endsWith "noConfusionType" || s.startsWith "inst"
+        s.endsWith "noConfusionType" || s.startsWith "inst" || s.endsWith "decidable"
     | _ => true
   -- Catches instance-dictionary field projections (e.g. `instBEqFoo.beq`) and `match_N.splitter`
   -- helpers, whose *own* last component looks ordinary but whose parent doesn't.
