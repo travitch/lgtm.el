@@ -164,6 +164,11 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
     let collection ← LExpr.toSExpr args[3]!
     let idx ← LExpr.toSExpr args[4]!
     pure (some (.list [.atom "gethash", idx, collection]))
+  | .global "Subtype.val" => do
+    -- Since we ignore the proof component of Subtype values, we just represent them with the bare variable
+    -- so we pass it through.
+    let v ← LExpr.toSExpr args[1]!
+    pure (some v)
   | .ctorRef "Prod.mk" => do
     let fst ← LExpr.toSExpr args[0]!
     let snd ← LExpr.toSExpr args[1]!
