@@ -180,7 +180,7 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
     let lhs ← LExpr.toSExpr args[1]!
     let rhs ← LExpr.toSExpr args[2]!
     pure (some (.list [.atom "min", lhs, rhs]))
-  | .global "Min.max" => do
+  | .global "Max.max" => do
     let lhs ← LExpr.toSExpr args[1]!
     let rhs ← LExpr.toSExpr args[2]!
     pure (some (.list [.atom "max", lhs, rhs]))
