@@ -172,6 +172,26 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
     let collection ← LExpr.toSExpr args[3]!
     let idx ← LExpr.toSExpr args[4]!
     pure (some (.list [.atom "gethash", idx, collection]))
+  | .global "GetElem.getElem" => do
+    let collection ← LExpr.toSExpr args[2]!
+    let idx ← LExpr.toSExpr args[3]!
+    pure (some (.list [.atom "seq-elt", collection, idx]))
+  | .global "Min.min" => do
+    let lhs ← LExpr.toSExpr args[1]!
+    let rhs ← LExpr.toSExpr args[2]!
+    pure (some (.list [.atom "min", lhs, rhs]))
+  | .global "Min.max" => do
+    let lhs ← LExpr.toSExpr args[1]!
+    let rhs ← LExpr.toSExpr args[2]!
+    pure (some (.list [.atom "max", lhs, rhs]))
+  | .global "HAdd.hAdd" => do
+    let lhs ← LExpr.toSExpr args[1]!
+    let rhs ← LExpr.toSExpr args[2]!
+    pure (some (.list [.atom "+", lhs, rhs]))
+  | .global "HSub.hSub" => do
+    let lhs ← LExpr.toSExpr args[1]!
+    let rhs ← LExpr.toSExpr args[2]!
+    pure (some (.list [.atom "-", lhs, rhs]))
   | .global "Subtype.val" => do
     -- Since we ignore the proof component of Subtype values, we just represent them with the bare variable
     -- so we pass it through.
