@@ -15,3 +15,4 @@ root = "Main"
 [[lean_exe]]
 name = "extractor"
 root = "Extractor"
+supportInterpreter = true

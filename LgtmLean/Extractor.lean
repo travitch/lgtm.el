@@ -695,14 +695,23 @@ def runMeta (env : Environment) (action : MetaM α) : IO α := do
 
 def elispPrelude : String := include_str "Extractor/prelude.el"
 
-def main (args : List String) : IO Unit := do
+unsafe def main (args : List String) : IO Unit := do
   let targetFile ← if hArgs : args.length ≠ 1 then
       throw (IO.userError "The path to an elisp file to generate is a required argument")
     else
       pure (System.FilePath.mk (args[0]'(by omega)))
 
+  -- `loadExts` defaults to `false`, which leaves environment extensions -- including the
+  -- `Structural`/`WF` `EqnInfo` that `Meta.getEqnsFor?` needs to lazily regenerate equation lemmas
+  -- for recursive functions -- unpopulated from the imported `.olean`s, even though the
+  -- declarations themselves are visible. Without it, `translateFunction` intermittently fails to
+  -- translate a recursive function with "no progress at goal", not because the function is
+  -- untranslatable, but because the equation-lemma generator was missing the very state that made
+  -- generation succeed when the same declaration is queried from inside its own file (e.g. via
+  -- `#print equations`). `enableInitializersExecution` is `loadExts := true`'s own prerequisite.
+  Lean.enableInitializersExecution
   Lean.initSearchPath (← Lean.findSysroot)
-  let env ← Lean.importModules #[{ module := `LgtmLean }] {} (trustLevel := 1024)
+  let env ← Lean.importModules #[{ module := `LgtmLean }] {} (trustLevel := 1024) (loadExts := true)
 
   let translations ← runMeta env (translateLeanDefinitions env)
 
