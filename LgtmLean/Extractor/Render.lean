@@ -130,6 +130,10 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
     -- This is a no-op in elisp because this only adds proof terms
     let l ← LExpr.toSExpr args[0]!
     pure (some l)
+  | .global "List.idxOf" => do
+    let elt ← LExpr.toSExpr args[1]!
+    let lst ← LExpr.toSExpr args[2]!
+    pure (some (.list [.atom "lgtm--list-idx-of", elt, lst]))
   | .global "String.isEmpty" => do
     let s ← LExpr.toSExpr args[0]!
     pure (some (.list [.atom "string-empty-p", s]))

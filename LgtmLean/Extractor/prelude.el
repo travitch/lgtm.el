@@ -20,7 +20,14 @@ This does not mutate the original map."
     (puthash key value res)
     res))
 
-;; Tuples (including pairs) are represented as lists in the translation
+(defun lgtm--list-idx-of (elt lst)
+  "Find the index of ELT in LST.
+
+Returns the length of the list of no element is equal to ELT."
+  (let ((idx (seq-position lst elt)))
+    (if idx idx (length lst))))
+
+;; Tuples (including pairs) are represented as vectors in the translation
 
 (defun lgtm--pair-fst (p)
   "Select the first element of a tuple P."
