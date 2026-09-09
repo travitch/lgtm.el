@@ -23,15 +23,16 @@ public structure LInductiveDefinition where
 public inductive LLit where
   | nat (n : Nat) -- FIXME: Probably should be Int
   | str (s : String)
+  | char (c : Char)
   deriving Repr, Inhabited, BEq
 
 /-- A pattern that can occur on the left-hand side of a function clause or `match` alternative.
 
-Only a single level of constructor nesting is modeled: `fields` are always variables or
-wildcards, never nested `ctor` patterns. This matches every pattern actually written in
-`LgtmLean` (which are all shallow); a deeper source pattern is instead compiled by Lean into a
-*nested* matcher application, which shows up as ordinary control flow in the body of the
-enclosing alternative rather than as a nested `LPat`. -/
+`fields` may themselves be `ctor` patterns to arbitrary depth: matching on a source-level
+nested pattern (e.g. destructuring a field of a field in one alternative, as a tuple-of-tuples
+pattern like `(t₁, t₂)` does) doesn't reliably compile into a separate auxiliary matcher call --
+Lean sometimes inlines the whole nested `casesOn` tree into a single matcher's own body instead
+-- so `tryDecodeMatcher` must be able to recover nesting of any depth from one such tree. -/
 public inductive LPat where
   | var (name : String)
   | wildcard

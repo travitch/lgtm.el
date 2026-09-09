@@ -304,33 +304,48 @@ partial def translateApp (varNames : Std.HashMap FVarId String) (e : Expr) : Met
           if cName == ``cond || cName == ``ite then pure (.ite c t eBr) else pure (mkLApp fnL keptArgs)
         | _, _ => pure (mkLApp fnL keptArgs)
 
+/-- Overwrite the node at `path` (a chain of `ctor`-field indices, root-to-leaf) within `pat` with
+`sub`. Each row only ever inserts a shallower entry before any of its deeper extensions (see
+`decomposeCasesOn`, which prepends its own `(rootPos, path, ..)` in front of everything its
+recursive call already produced), so every prefix of `path` is already a `ctor` node by the time
+it's reached; `pat` is returned unchanged if that invariant is somehow violated. -/
+partial def insertAtPath (pat : LPat) (path : List Nat) (sub : LPat) : LPat :=
+  match path with
+  | [] => sub
+  | i :: rest =>
+    match pat with
+    | .ctor name fields => .ctor name (fields.set i (insertAtPath (fields.getD i .wildcard) rest sub))
+    | _ => pat
+
 /-- Try to decode a call `matcherName args...` into an `LExpr.matchE`.
 
 `matcherName`'s own (uninstantiated) value has the shape
 `fun params motive discrs alts => <tree of casesOn on the discrs>`, with the tree's leaves being
 bare applications of one of the `alts` binders. We walk that tree once (`walkMatcherBody`) to
-recover, per leaf, which discriminant positions were scrutinized under which constructor to reach
-it; the real per-alternative bodies (with real bound-variable names) are then read off of `args` at
-the corresponding position, not out of the generic tree. Returns `none` (falling back to ordinary
-call translation) if `matcherName` isn't actually a matcher-shaped definition, e.g. because it
-doesn't delta-reduce to a recognizable `casesOn` tree at all. -/
+recover, per leaf, which discriminants were scrutinized -- to what nested depth, under which
+constructors -- to reach it; the real per-alternative bodies (with real bound-variable names) are
+then read off of `args` at the corresponding position, not out of the generic tree. Returns `none`
+(falling back to ordinary call translation) if `matcherName` isn't actually a matcher-shaped
+definition, e.g. because it doesn't delta-reduce to a recognizable `casesOn` tree at all. -/
 partial def tryDecodeMatcher (varNames : Std.HashMap FVarId String) (matcherName : Name) (args : Array Expr) :
     Meta.MetaM (Option LExpr) := do
   let some ci := (← getEnv).find? matcherName | return none
   let some matcherVal := ci.value? | return none
   Meta.lambdaTelescope matcherVal fun xs body => do
     if xs.size != args.size then return none
-    let mut xsPos : Std.HashMap FVarId Nat := {}
+    let mut topPos : Std.HashMap FVarId Nat := {}
+    let mut varPos : Std.HashMap FVarId (Nat × List Nat) := {}
     for i in [0:xs.size] do
-      xsPos := xsPos.insert xs[i]!.fvarId! i
-    let rows ← walkMatcherBody xsPos body
+      topPos := topPos.insert xs[i]!.fvarId! i
+      varPos := varPos.insert xs[i]!.fvarId! (i, [])
+    let rows ← walkMatcherBody topPos varPos body
     if rows.isEmpty then return none
-    let allPositions := ((rows.flatMap (fun (assoc, _) => assoc.map Prod.fst)).eraseDups).mergeSort (· ≤ ·)
+    let allPositions := ((rows.flatMap (fun (assoc, _) => assoc.map (·.1))).eraseDups).mergeSort (· ≤ ·)
     if allPositions.isEmpty then return none
     let discrExprs ← allPositions.mapM (fun p => translateExpr varNames args[p]!)
     let mut alts : List (List LPat × LExpr) := []
     for (assoc, altFv) in rows do
-      let some altPos := xsPos[altFv]? | continue
+      let some altPos := topPos[altFv]? | continue
       let altArgExpr := args[altPos]!
       let clause ← Meta.lambdaTelescope altArgExpr fun realXs realBody => do
         let mut varNames' := varNames
@@ -341,37 +356,58 @@ partial def tryDecodeMatcher (varNames : Std.HashMap FVarId String) (matcherName
           varNames' := varNames'.insert rx.fvarId! nm
           nameStrs := nameStrs ++ [nm]
         let bodyL ← translateExpr varNames' realBody
+        -- Several entries in `assoc` can share the same root position `p` -- one per depth of
+        -- nesting scrutinized under it -- so fold them into `p`'s pattern shallowest-first,
+        -- inserting each deeper `ctor` into the placeholder its immediate parent already reserved.
         let rawPats := allPositions.map (fun p =>
-          ((assoc.find? (·.1 == p)).map Prod.snd).getD (.var "_"))
+          let entries := (assoc.filter (·.1 == p)).map (fun (_, path, pat) => (path, pat))
+          let sorted := entries.mergeSort (fun a b => a.1.length ≤ b.1.length)
+          sorted.foldl (fun acc (path, pat) => insertAtPath acc path pat) (.var "_"))
         let (labeledPats, _) := relabelPats rawPats nameStrs
         pure (labeledPats, bodyL)
       alts := alts ++ [clause]
     return some (.matchE discrExprs alts)
 
 /-- Walk a matcher's own generic `casesOn` tree. Returns one row per leaf reached: the assoc-list
-of (discriminant position in `xsPos`, constructor pattern) accumulated on the way there, plus the
-`FVarId` (one of `xsPos`'s keys) of the alternative binder applied at that leaf. A discriminant
-that's never destructured on some path (e.g. a wildcard `_` pattern) simply doesn't appear in that
-row's assoc-list; `tryDecodeMatcher` pads for this using the union of positions seen across all
-rows. -/
-partial def walkMatcherBody (xsPos : Std.HashMap FVarId Nat) (e : Expr) :
-    Meta.MetaM (List (List (Nat × LPat) × FVarId)) := do
-  match e.getAppFn with
+of (root discriminant position, path of ctor-field indices from that root, constructor pattern at
+that path) accumulated on the way there, plus the `FVarId` (one of `topPos`'s keys) of the
+alternative binder applied at that leaf. A discriminant (or field of one) that's never destructured
+on some path (e.g. a wildcard `_` pattern) simply doesn't appear in that row's assoc-list;
+`tryDecodeMatcher` pads for this using the union of root positions seen across all rows, and
+defaults any un-visited field within a visited root to a plain variable.
+
+A named/dependent match (`match h : e with`) makes the matcher's motive depend on the scrutinee
+equality, so the elaborator wraps the real `casesOn` tree in an extra redex --
+`(fun x_1 => casesOn ... x_1 ...) x (Eq.refl x)` -- to thread that equality proof through. `headBeta`
+strips exactly that wrapper (without unfolding any definitions, unlike `whnf`) so the `casesOn` node
+underneath is still recognized; it's a no-op everywhere else. -/
+partial def walkMatcherBody (topPos : Std.HashMap FVarId Nat) (varPos : Std.HashMap FVarId (Nat × List Nat))
+    (e : Expr) : Meta.MetaM (List (List (Nat × List Nat × LPat) × FVarId)) := do
+  match e.headBeta.getAppFn with
   | .const casesOnName _ =>
     let indName := casesOnName.getPrefix
     if casesOnName == indName ++ `casesOn then
-      decomposeCasesOn xsPos indName e
+      decomposeCasesOn topPos varPos indName e.headBeta
+    else if casesOnName == ``dite then
+      decomposeDiteLiteral topPos varPos e.headBeta
     else
       pure []
-  | .fvar fvid => pure (if xsPos.contains fvid then [([], fvid)] else [])
+  | .fvar fvid => pure (if topPos.contains fvid then [([], fvid)] else [])
   | _ => pure []
 
 /-- Decompose one `indName.casesOn params motive major minor₁ ... minorₖ` node (`k` = number of
 constructors of `indName`, in declaration order) and recurse into each `minorᵢ`, which is a
 function of that constructor's fields. Only handles non-indexed inductives (true of every type
-`LgtmLean` actually pattern-matches on: `Bool`, `List`, `Option`, `Nat`, and its own plain enums). -/
-partial def decomposeCasesOn (xsPos : Std.HashMap FVarId Nat) (indName : Name) (e : Expr) :
-    Meta.MetaM (List (List (Nat × LPat) × FVarId)) := do
+`LgtmLean` actually pattern-matches on: `Bool`, `List`, `Option`, `Nat`, and its own plain enums).
+
+`major` need not be one of the matcher's own top-level discriminants directly (`varPos[·]` covers
+both cases uniformly via an empty vs. non-empty path): it may instead be a field variable this
+same function bound while decomposing an *enclosing* `casesOn`, which is what makes a source
+pattern like `((.topLevel, _), _)` -- nested two constructors deep on a single discriminant --
+decodable at all, since Lean compiles it into one matcher whose body chains `casesOn` nodes
+directly rather than delegating the inner level to its own auxiliary matcher. -/
+partial def decomposeCasesOn (topPos : Std.HashMap FVarId Nat) (varPos : Std.HashMap FVarId (Nat × List Nat))
+    (indName : Name) (e : Expr) : Meta.MetaM (List (List (Nat × List Nat × LPat) × FVarId)) := do
   match (← getEnv).find? indName with
   | some (.inductInfo indInfo) => do
     let args := e.getAppArgs
@@ -379,22 +415,76 @@ partial def decomposeCasesOn (xsPos : Std.HashMap FVarId Nat) (indName : Name) (
     if args.size < base + indInfo.ctors.length then return []
     match args[indInfo.numParams + 1]! with
     | .fvar fvid =>
-      match xsPos[fvid]? with
+      match varPos[fvid]? with
       | none => pure []
-      | some pos => do
-        let mut allRows : List (List (Nat × LPat) × FVarId) := []
+      | some (rootPos, path) => do
+        let mut allRows : List (List (Nat × List Nat × LPat) × FVarId) := []
         for i in [0:indInfo.ctors.length] do
           let ctorName := indInfo.ctors[i]!
           let minor := args[base + i]!
           let rows ← Meta.lambdaTelescope minor fun fieldVars minorBody => do
             let placeholders := fieldVars.toList.map (fun _ => LPat.var "_")
-            let subRows ← walkMatcherBody xsPos minorBody
+            let mut varPos' := varPos
+            for j in [0:fieldVars.size] do
+              varPos' := varPos'.insert fieldVars[j]!.fvarId! (rootPos, path ++ [j])
+            let subRows ← walkMatcherBody topPos varPos' minorBody
             pure (subRows.map (fun (assoc, altFv) =>
-              ((pos, LPat.ctor (toString ctorName) placeholders) :: assoc, altFv)))
+              ((rootPos, path, LPat.ctor (toString ctorName) placeholders) :: assoc, altFv)))
           allRows := allRows ++ rows
         pure allRows
     | _ => pure []
   | _ => pure []
+
+/-- Decompose one `dite (scrutinee = lit) inst thenBranch elseBranch` node -- how Lean compiles a
+`match` against a literal value (`Nat`, `String`, or -- since `Char` has no constructors of its own
+-- `Char.ofNat n`) instead of against a genuine inductive constructor -- into a `(rootPos, path,
+LPat.lit ..)` row for the positive branch, chained with whatever `elseBranch` (the next `dite` in
+the chain, or the final wildcard alt) contributes.
+
+`thenBranch`'s value is `@Eq.ndrec_symm α lit motive (h Unit.unit) scrutinee`: since
+`Eq.ndrec_symm`'s own signature is `.. → motive a → {b} → b = a → motive b`, this partial
+application (5 of its 6 explicit args) already has exactly the function type `dite` needs for its
+`t : cond → α` argument, with no further eta-expansion -- so the leaf alt-binder is its own 4th
+explicit argument (`h Unit.unit`), not something reached via `lambdaTelescope`. Literal patterns
+carry no field data, so unlike `decomposeCasesOn`'s constructor branches, that binder is applied to
+a throwaway `Unit.unit` rather than to any real fields. Only recognizes the scrutinee-on-the-left
+equality order actually produced for `LgtmLean`'s own literal matches; anything else falls back
+(returns `[]`) to ordinary call translation, same as an unrecognized `casesOn` shape. -/
+partial def decomposeDiteLiteral (topPos : Std.HashMap FVarId Nat) (varPos : Std.HashMap FVarId (Nat × List Nat))
+    (e : Expr) : Meta.MetaM (List (List (Nat × List Nat × LPat) × FVarId)) := do
+  let args := e.getAppArgs
+  if args.size < 5 then return []
+  let condProp := args[1]!
+  let thenBranch := args[3]!
+  let elseBranch := args[4]!
+  match condProp.getAppFn, condProp.getAppArgs with
+  | .const ``Eq _, eqArgs =>
+    if eqArgs.size != 3 then return []
+    match eqArgs[1]! with
+    | .fvar fvid =>
+      match varPos[fvid]? with
+      | none => pure []
+      | some (rootPos, path) =>
+        let litPat? : Option LPat := match eqArgs[2]! with
+          | .lit (.natVal n) => some (.lit (.nat n))
+          | .lit (.strVal s) => some (.lit (.str s))
+          | .app (.const ``Char.ofNat _) (.lit (.natVal n)) => some (.lit (.char (Char.ofNat n)))
+          | _ => none
+        match litPat? with
+        | none => pure []
+        | some litPat => do
+          let thenAlts : List FVarId := match thenBranch.getAppFn with
+            | .const ``Eq.ndrec_symm _ =>
+              let ndrecArgs := thenBranch.getAppArgs
+              if ndrecArgs.size < 4 then [] else
+                match ndrecArgs[3]!.headBeta.getAppFn with
+                | .fvar altFv => if topPos.contains altFv then [altFv] else []
+                | _ => []
+            | _ => []
+          let elseRows ← Meta.lambdaTelescope elseBranch fun _ elseBody => walkMatcherBody topPos varPos elseBody
+          pure (thenAlts.map (fun altFv => ([(rootPos, path, litPat)], altFv)) ++ elseRows)
+    | _ => pure []
+  | _, _ => pure []
 
 end
 

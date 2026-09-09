@@ -16,6 +16,18 @@ deriving Inhabited
 def escapeLispString (s : String) : String :=
   (s.replace "\\" "\\\\").replace "\"" "\\\""
 
+/-- Render `c` using Emacs Lisp's basic character syntax, `?c` (see the "Basic Char Syntax" section
+of the Elisp manual): a `?` immediately followed by the character, or by a backslash escape for the
+handful of characters that need one to stay a single token. -/
+def charToLispSyntax (c : Char) : String :=
+  match c with
+  | '\\' => "?\\\\"
+  | '?' => "?\\?"
+  | ' ' => "?\\s"
+  | '\n' => "?\\n"
+  | '\t' => "?\\t"
+  | c => "?" ++ String.singleton c
+
 /-- Render `s`, laying out every line at the absolute column `curIndent`, which accumulates as we
 descend into nested `block`s (`curIndent + indent` for that block's own header/body) so indentation
 compounds correctly regardless of nesting depth or what's structurally in between (a `block` nested
@@ -236,6 +248,7 @@ partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=
     pure (SExpr.atom ("#'make-" ++ toLgtmName (toLispName (name.dropEnd 3).toString)))
   | .lit (.nat n) => pure (.number n)
   | .lit (.str s) => pure (.string s)
+  | .lit (.char c) => pure (.atom (charToLispSyntax c))
   | .lam params body => do
     let sBody ← LExpr.toSExpr body
     pure (SExpr.block [.atom "lambda", .list (params.map (λ n => .atom (toLispName n)))] indentBy [sBody])
