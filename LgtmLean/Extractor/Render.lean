@@ -200,7 +200,7 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
   | .ctorRef "Prod.mk" => do
     let fst ← LExpr.toSExpr args[0]!
     let snd ← LExpr.toSExpr args[1]!
-    pure (some (.list [.atom "list", fst, snd]))
+    pure (some (.list [.atom "vector", fst, snd]))
   | .global "OfNat.ofNat" => do
     let i ← LExpr.toSExpr args[0]!
     pure (some i)
