@@ -134,6 +134,10 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
     let elt ← LExpr.toSExpr args[1]!
     let lst ← LExpr.toSExpr args[2]!
     pure (some (.list [.atom "lgtm--list-idx-of", elt, lst]))
+  | .global "List.mergeSort" => do
+    let seq ← LExpr.toSExpr args[0]!
+    let comparator ← LExpr.toSExpr args[1]!
+    pure (some (.list [.atom "seq-sort", comparator, seq]))
   | .global "String.isEmpty" => do
     let s ← LExpr.toSExpr args[0]!
     pure (some (.list [.atom "string-empty-p", s]))
