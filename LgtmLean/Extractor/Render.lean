@@ -28,6 +28,13 @@ def charToLispSyntax (c : Char) : String :=
   | '\t' => "?\\t"
   | c => "?" ++ String.singleton c
 
+/-- The direct Lisp representation of a literal, shared between rendering literal expressions and
+literal patterns in `matchE`. -/
+def LLit.toSExpr : LLit → SExpr
+  | .nat n => .number n
+  | .str s => .string s
+  | .char c => .atom (charToLispSyntax c)
+
 /-- Render `s`, laying out every line at the absolute column `curIndent`, which accumulates as we
 descend into nested `block`s (`curIndent + indent` for that block's own header/body) so indentation
 compounds correctly regardless of nesting depth or what's structurally in between (a `block` nested
@@ -97,6 +104,25 @@ def LStructureDefinition.toSExpr (d : LStructureDefinition) : SExprM SExpr :=
 /-- Global names from Lean are namespaced, so translate appropriately -/
 def translateGlobalName (name : String) : String :=
   toLgtmName (toLispName (name.map (λ c => if c == '.' then '-' else c)))
+
+/-- The elisp symbol naming constructor `name` (fully-qualified, e.g. `ThreadLocation.topLevel`):
+the literal value of a nullary constructor, and the tag in position 0 of a non-nullary
+constructor's vector. See [ref:inductive-type-representation]. -/
+def translateConstructorTag (name : String) : String :=
+  toLispName (name.map (λ c => if c == '.' then '-' else c))
+
+/-- Render `p` as a `pcase` "backquote pattern" fragment (the `QPAT` grammar), suitable for
+splicing directly inside a backquote pattern. Variables and wildcards need an explicit `,` to turn
+them into sub-patterns (`UPAT`s); nullary-constructor symbols and literals already match themselves
+via `equal`; constructors with fields become vector patterns. See
+[ref:inductive-type-representation]. -/
+partial def LPat.toQPat : LPat → String
+  | .var name => "," ++ toLispName name
+  | .wildcard => ",_"
+  | .lit l => SExpr.render l.toSExpr
+  | .ctor name [] => translateConstructorTag name
+  | .ctor name fields =>
+    "[" ++ String.intercalate " " (translateConstructorTag name :: fields.map LPat.toQPat) ++ "]"
 
 mutual
 
@@ -246,9 +272,7 @@ partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=
   | .ctorRef name =>
     -- Constructors in Lean have a `.mk` suffix. Drop that and replace with the equivalent prefix for cl-defstruct.
     pure (SExpr.atom ("#'make-" ++ toLgtmName (toLispName (name.dropEnd 3).toString)))
-  | .lit (.nat n) => pure (.number n)
-  | .lit (.str s) => pure (.string s)
-  | .lit (.char c) => pure (.atom (charToLispSyntax c))
+  | .lit l => pure l.toSExpr
   | .lam params body => do
     let sBody ← LExpr.toSExpr body
     pure (SExpr.block [.atom "lambda", .list (params.map (λ n => .atom (toLispName n)))] indentBy [sBody])
@@ -279,10 +303,19 @@ partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=
   -- matching how `LStructureDefinition.render` names the struct and its slots.
   | .proj structName fieldName target => do
     pure (SExpr.list [SExpr.atom (toLgtmName structName ++ "-" ++ toLispName fieldName), ← target.toSExpr])
-  -- FIXME: Not yet implemented -- pattern compilation needs a decided data representation for
-  -- constructors first. Renders as a runtime error instead of `sorry` so the rest of the renderer
-  -- stays evaluable/testable.
-  | .matchE _ _ => pure (SExpr.list [SExpr.atom "error", SExpr.string "match expressions are not yet supported"])
+  | .matchE discrs alts => do
+    let sDiscrs ← discrs.mapM LExpr.toSExpr
+    let sAlts ← alts.mapM (λ (pats, body) => do
+      let sBody ← body.toSExpr
+      let patText := match pats with
+        | [p] => "`" ++ p.toQPat
+        | ps => "`(" ++ String.intercalate " " (ps.map LPat.toQPat) ++ ")"
+      pure (SExpr.list [SExpr.atom patText, sBody]))
+    -- `pcase` dispatches on a single value, so multiple discriminants are bundled into a list
+    -- that each alternative's pattern then destructures. See [ref:inductive-type-representation].
+    match sDiscrs with
+    | [d] => pure (SExpr.block [SExpr.atom "pcase", d] indentBy sAlts)
+    | ds => pure (SExpr.block [SExpr.atom "pcase", SExpr.list (SExpr.atom "list" :: ds)] indentBy sAlts)
   | .opaque reason => pure (SExpr.list [SExpr.atom "error", SExpr.string reason])
 
 end
@@ -380,6 +413,30 @@ def testRender (s : SExprM SExpr) : String := SExpr.render (SExprM.run [] s)
     body := LExpr.app (LExpr.global "Option.isSome") [LExpr.app (LExpr.global "Comment.backendId") [LExpr.var "c"]],
     docstring := none })
 
+-- `matchE` over a single discriminant: a nullary constructor becomes a bare symbol pattern, and a
+-- constructor with a field becomes a vector pattern with the field bound via `,`.
+/-- info: "(pcase loc\n  (`thread-location-top-level \"top\")\n  (`[thread-location-nested ,parent] parent))" -/
+#guard_msgs in
+#eval testRender (LExpr.toSExpr
+  (.matchE [.var "loc"]
+    [([.ctor "ThreadLocation.topLevel" []], .lit (.str "top")),
+     ([.ctor "ThreadLocation.nested" [.var "parent"]], .var "parent")]))
+
+-- `matchE` over multiple discriminants: the discriminants are bundled into a `list`, and each
+-- alternative matches a backquoted list pattern against it.
+/-- info: "(pcase (list a b)\n  (`(,x ,_) x))" -/
+#guard_msgs in
+#eval testRender (LExpr.toSExpr
+  (.matchE [.var "a", .var "b"] [([.var "x", .wildcard], .var "x")]))
+
+-- Literal patterns match themselves via `equal`; a trailing wildcard alternative catches the rest.
+/-- info: "(pcase s\n  (`\"foo\" \"yes\")\n  (`,_ \"no\"))" -/
+#guard_msgs in
+#eval testRender (LExpr.toSExpr
+  (.matchE [.var "s"]
+    [([.lit (.str "foo")], .lit (.str "yes")),
+     ([.wildcard], .lit (.str "no"))]))
+
 -- A `block` nested inside a `list` that's itself a body form of an outer `block` should still
 -- have its own body forms indented cumulatively (outer `indent` + inner `indent`), not just the
 -- inner block's own `indent` in isolation -- exercising `SExpr.renderIndent`'s threaded, rather
@@ -388,3 +445,18 @@ def testRender (s : SExprM SExpr) : String := SExpr.render (SExprM.run [] s)
 #guard_msgs in
 #eval SExpr.render (.block [.atom "defun"] 2
   [.list [.atom "foo", .block [.atom "let"] 2 [.atom "body1", .atom "body2"]]])
+
+
+
+/- [tag:inductive-type-representation]
+
+There are no types in elisp equivalent to Lean inductive definitions.  We represent them in elisp as follows:
+
+- Nullary constructors are represented as symbols.  A constructor like `ThreadLocation.topLevel` becomes an elisp symbol `'thread-location-top-level`
+- Other constructors are represented as vectors where the first element is a symbol with the name of the corresponding constructor and the other elements are the values in the inductive constructor
+
+Match expressions over inductives are implemented using elisp's `pcase` macro.
+
+This uniform representation means that no special type declarations are required for inductives.
+
+-/
