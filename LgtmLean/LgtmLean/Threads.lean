@@ -55,7 +55,7 @@ public def CommentThreads.nextThread (threads : CommentThreads) (manager : Comme
   | false, [] => none
   | false, firstThread :: _ => some ⟨version, firstThread, firstThread.value⟩
   | true, _ =>
-    match orderedThreads.findIdx? (·.value == selection.thread.value) with
+    match orderedThreads.findIdx? (fun thread => thread.value == selection.thread.value) with
     | none => none
     | some curIdx =>
       /- This should be provable because if we found the thread in the list, the list cannot be empty -/
@@ -71,7 +71,7 @@ public def CommentThreads.previousThread (threads : CommentThreads) (manager : C
     let lastThread := (a :: as).getLast (List.cons_ne_nil a as)
     some ⟨version, lastThread, lastThread.value⟩
   | true, _ =>
-    match orderedThreads.findIdx? (·.value == selection.thread.value) with
+    match orderedThreads.findIdx? (fun thread => thread.value == selection.thread.value) with
     | none => none
     | some curIdx =>
       let prevIdx := if curIdx == 0 then 0 else curIdx - 1
