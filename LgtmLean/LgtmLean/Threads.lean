@@ -86,7 +86,7 @@ public def CommentThread.linearizeRecWithFuel (threads : CommentThreads) (manage
 match fuel with
 | 0 => []
 | fuel + 1 =>
-    let comparisonFunction := fun a b => (compare (manager.get a).createdTimestamp (manager.get b).createdTimestamp).isLE
+    let comparisonFunction := fun a b => decide ((manager.get a).createdTimestamp ≤ (manager.get b).createdTimestamp)
     let sortedChildren := thread.children.mergeSort comparisonFunction
     manager.get thread.value :: sortedChildren.flatMap (fun childRef =>
       match threads.commentTreeNodes[childRef]? with
