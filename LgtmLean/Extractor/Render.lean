@@ -120,6 +120,13 @@ partial def LPat.toQPat : LPat → String
   | .var name => "," ++ toLispName name
   | .wildcard => ",_"
   | .lit l => SExpr.render l.toSExpr
+  -- `Option.none`/`Option.some` are special-cased to `nil`/the bare value, and `Bool.true`/
+  -- `Bool.false` to `t`/`nil`, rather than the usual symbol/vector encoding. See
+  -- [ref:inductive-type-representation].
+  | .ctor "Option.none" [] => "nil"
+  | .ctor "Option.some" [p] => p.toQPat
+  | .ctor "Bool.true" [] => "t"
+  | .ctor "Bool.false" [] => "nil"
   | .ctor name [] => translateConstructorTag name
   | .ctor name fields =>
     "[" ++ String.intercalate " " (translateConstructorTag name :: fields.map LPat.toQPat) ++ "]"
@@ -214,6 +221,14 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
     let collection ← LExpr.toSExpr args[2]!
     let idx ← LExpr.toSExpr args[3]!
     pure (some (.list [.atom "seq-elt", collection, idx]))
+  | .global "GetElem?.getElem?" => do
+    let collection ← LExpr.toSExpr args[2]!
+    let idx ← LExpr.toSExpr args[3]!
+    pure (some (.list [.atom "seq-elt", collection, idx]))
+  | .global "Nat.min" => do
+    let lhs ← LExpr.toSExpr args[0]!
+    let rhs ← LExpr.toSExpr args[1]!
+    pure (some (.list [.atom "min", lhs, rhs]))
   | .global "Min.min" => do
     let lhs ← LExpr.toSExpr args[1]!
     let rhs ← LExpr.toSExpr args[2]!
@@ -437,6 +452,24 @@ def testRender (s : SExprM SExpr) : String := SExpr.render (SExprM.run [] s)
     [([.lit (.str "foo")], .lit (.str "yes")),
      ([.wildcard], .lit (.str "no"))]))
 
+-- `Option.none`/`Option.some` patterns are special-cased to match their `nil`/unwrapped-value
+-- representation instead of the usual symbol/vector encoding.
+/-- info: "(pcase o\n  (`nil \"none\")\n  (`,x x))" -/
+#guard_msgs in
+#eval testRender (LExpr.toSExpr
+  (.matchE [.var "o"]
+    [([.ctor "Option.none" []], .lit (.str "none")),
+     ([.ctor "Option.some" [.var "x"]], .var "x")]))
+
+-- `Bool.true`/`Bool.false` patterns are special-cased to match their `t`/`nil` representation
+-- instead of the usual symbol encoding.
+/-- info: "(pcase b\n  (`t \"yes\")\n  (`nil \"no\"))" -/
+#guard_msgs in
+#eval testRender (LExpr.toSExpr
+  (.matchE [.var "b"]
+    [([.ctor "Bool.true" []], .lit (.str "yes")),
+     ([.ctor "Bool.false" []], .lit (.str "no"))]))
+
 -- A `block` nested inside a `list` that's itself a body form of an outer `block` should still
 -- have its own body forms indented cumulatively (outer `indent` + inner `indent`), not just the
 -- inner block's own `indent` in isolation -- exercising `SExpr.renderIndent`'s threaded, rather
@@ -458,5 +491,9 @@ There are no types in elisp equivalent to Lean inductive definitions.  We repres
 Match expressions over inductives are implemented using elisp's `pcase` macro.
 
 This uniform representation means that no special type declarations are required for inductives.
+
+As special cases:
+- Implement Lean's `Option.none` as standard elisp `nil` and `Option.some x` as `x` (i.e., just the value itself)
+- Implement Lean's `Bool.true` and `Bool.false` as elisp `t` and `nil`, respectively
 
 -/
