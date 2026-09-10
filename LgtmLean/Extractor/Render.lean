@@ -146,6 +146,9 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
     -- We represent none as nil in elisp, so the value is some if it is not nil
     let theValue ← LExpr.toSExpr args[0]!
     pure (some theValue)
+  | .ctorRef "Option.some" => do
+    let v ← LExpr.toSExpr args[0]!
+    pure (some v)
   | .ctorRef "List.cons" => do
     let elt ← LExpr.toSExpr args[0]!
     let elts ← LExpr.toSExpr args[1]!
@@ -179,6 +182,10 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
     let elt ← LExpr.toSExpr args[1]!
     let lst ← LExpr.toSExpr args[2]!
     pure (some (.list [.atom "lgtm--list-idx-of", elt, lst]))
+  | .global "List.findIdx?" => do
+    let p ← LExpr.toSExpr args[0]!
+    let lst ← LExpr.toSExpr args[1]!
+    pure (some (.list [.atom "lgtm--list-find-idx", p, lst]))
   | .global "List.mergeSort" => do
     let seq ← LExpr.toSExpr args[0]!
     let comparator ← LExpr.toSExpr args[1]!
@@ -270,6 +277,10 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
     let v₁ ← LExpr.toSExpr args[0]!
     let v₂ ← LExpr.toSExpr args[1]!
     pure (some (.list [.atom "<", v₁, v₂]))
+  | .global "BEq.beq" => do
+    let v₁ ← LExpr.toSExpr args[1]!
+    let v₂ ← LExpr.toSExpr args[2]!
+    pure (some (.list [.atom "equal", v₁, v₂]))
   | _ => pure none
 
 partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=

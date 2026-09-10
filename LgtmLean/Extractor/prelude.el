@@ -27,6 +27,13 @@ Returns the length of the list of no element is equal to ELT."
   (let ((idx (seq-position lst elt)))
     (if idx idx (length lst))))
 
+(defun lgtm--list-find-idx (p lst)
+  "Find the index of the first item in LST that matches P.
+
+Returns nil if none is found."
+  (let ((item (seq-find (lambda (item) (funcall p (elt item 0))) (seq-map-indexed #'list lst))))
+    (if item (elt item 1) nil)))
+
 ;; Tuples (including pairs) are represented as vectors in the translation
 
 (defun lgtm--pair-fst (p)
