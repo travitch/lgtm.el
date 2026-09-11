@@ -463,6 +463,20 @@ def testRender (s : SExprM SExpr) : String := SExpr.render (SExprM.run 2 emptyTr
     body := LExpr.app (LExpr.global "Option.isSome") [LExpr.app (LExpr.global "Comment.backendId") [LExpr.var "c"]],
     docstring := none })
 
+-- A global nullary function (a "global constant", translated to a `defconst` by
+-- `LFunction.toSExpr`) is referenced by its bare elisp name, not prefixed with `#'` like ordinary
+-- function references: a `defconst` symbol's value is read directly, whereas calling a function
+-- via `funcall`/`apply` needs a sharp-quoted function reference.
+/-- info: "(defun lgtm-uses-constant (x)\n  lgtm-some-constant)" -/
+#guard_msgs in
+#eval
+  let translations : Translations String :=
+    { emptyTranslations with
+      functions := Std.HashMap.emptyWithCapacity.insert "someConstant"
+        { name := "someConstant", parameters := [], body := .lit (.nat 0), docstring := none } }
+  SExpr.render (SExprM.run 2 translations (LFunction.toSExpr
+    { name := "usesConstant", parameters := ["x"], body := .global "someConstant", docstring := none })).1
+
 -- `matchE` over a single discriminant: a nullary constructor becomes a bare symbol pattern, and a
 -- constructor with a field becomes a vector pattern with the field bound via `,`.
 /-- info: "(pcase loc\n  (`thread-location-top-level \"top\")\n  (`[thread-location-nested ,parent] parent))" -/
