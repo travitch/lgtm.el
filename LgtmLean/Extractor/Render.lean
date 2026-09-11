@@ -82,24 +82,43 @@ def toLispName (s : String) : String :=
 
 def toLgtmName (s : String) : String := "lgtm-" ++ toLispName s
 
-def indentBy : Nat := 2
-
 structure SExprEnv where
-  /-- Functions that are defined globals.
+  /-- We keep the original translations around so we can determine which globals are functions vs
+  those that are global constants.  We need to generate their names differently in elisp. -/
+  translations : Translations String
+  /-- The number of spaces to indent in block forms -/
+  indentation : Nat
+  /-- If a function is currently being translated, this holds its name -/
+  currentFunction : Option String
 
-  This is used to determine when a bare reference to a global needs to be rendered as a call instead of
-  just as a reference to the global name. -/
-  definedFunctions : Std.HashSet String
+structure SExprState where
+  calledGlobalNames : Std.HashMap String (Std.HashSet String)
 
-abbrev SExprM α := ReaderM SExprEnv α
+def emptyState : SExprState := ⟨Std.HashMap.emptyWithCapacity⟩
 
-def SExprM.run (functions : List LFunction) (s : SExprM α) : α :=
-  let env := SExprEnv.mk (functions.foldr (λ f s => s.insert f.name) Std.HashSet.emptyWithCapacity)
-  Id.run (ReaderT.run s env)
+abbrev SExprM α := StateT SExprState (ReaderM SExprEnv) α
 
-def LStructureDefinition.toSExpr (d : LStructureDefinition) : SExprM SExpr :=
+def insertOrSingleton (s : String) (elts : Option (Std.HashSet String)) : Option (Std.HashSet String) :=
+  match elts with
+  | none => some (Std.HashSet.emptyWithCapacity.insert s)
+  | some set => some (set.insert s)
+
+/-- Record that `name` has been used by the function definition currently being translated. -/
+def recordUsedNameInContext (name : String) : SExprM Unit := do
+  match (← read).currentFunction with
+  | none => pure ()
+  | some currentFuncName => do
+    modifyGet (fun s => ((), { s with calledGlobalNames := s.calledGlobalNames.alter currentFuncName (insertOrSingleton name) }))
+
+def indentBy : SExprM Nat := do pure (← read).indentation
+
+def SExprM.run (indentation : Nat) (translations : Translations String) (s : SExprM α) : α × SExprState :=
+  let env := SExprEnv.mk translations indentation none
+  Id.run (ReaderT.run (StateT.run s emptyState) env)
+
+def LStructureDefinition.toSExpr (d : LStructureDefinition) : SExprM SExpr := do
   let fields := List.map (λ field => SExpr.list [SExpr.atom (toLispName field), SExpr.atom "nil", SExpr.atom ":read-only", SExpr.atom "t"]) d.fields
-  pure (.block [.atom "cl-defstruct", .atom (toLgtmName d.name)] indentBy fields)
+  pure (.block [.atom "cl-defstruct", .atom (toLgtmName d.name)] (← indentBy) fields)
 
 /-- Global names from Lean are namespaced, so translate appropriately -/
 def translateGlobalName (name : String) : String :=
@@ -289,8 +308,13 @@ partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=
   | .global "Unit.unit" => pure (.atom "'unit")
   | .global "Prod.fst" => pure (.atom "#'lgtm--pair-fst")
   | .global "Prod.snd" => pure (.atom "#'lgtm--pair-snd")
-  -- FIXME: Only add the hash prefix if the global definition is actually a function (not a constant)
-  | .global name => pure (SExpr.atom ("#'" ++ translateGlobalName name))
+  | .global name => do
+    recordUsedNameInContext name
+    match (← read).translations.functions[name]? with
+    | some lfunc => match lfunc.parameters with
+      | [] => pure (SExpr.atom (translateGlobalName name))
+      | _ => pure (SExpr.atom ("#'" ++ translateGlobalName name))
+    | none => pure (SExpr.atom ("#'" ++ translateGlobalName name))
   | .ctorRef "Option.none" => pure (SExpr.atom "nil")
   | .ctorRef "List.nil" => pure (SExpr.atom "nil")
   | .ctorRef "Bool.true" => pure (SExpr.atom "t")
@@ -301,7 +325,7 @@ partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=
   | .lit l => pure l.toSExpr
   | .lam params body => do
     let sBody ← LExpr.toSExpr body
-    pure (SExpr.block [.atom "lambda", .list (params.map (λ n => .atom (toLispName n)))] indentBy [sBody])
+    pure (SExpr.block [.atom "lambda", .list (params.map (λ n => .atom (toLispName n)))] (← indentBy) [sBody])
   | .app fn args => do match ← translatePrimitives fn args with
     | some translation => pure translation
     | none => do
@@ -316,15 +340,15 @@ partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=
       | .ctorRef name => do
         -- Special case the rendering of these because they usually have many arguments
         let sFunc := SExpr.atom ("make-" ++ toLgtmName (toLispName (name.dropEnd 3).toString))
-        pure (.block [sFunc] indentBy sArgs)
+        pure (.block [sFunc] (← indentBy) sArgs)
       | .lam _ _ => do
         let sFunc ← fn.toSExpr
         pure (.list (sFunc :: sArgs))
       | callee => pure (.list [.atom "error", .string s!"Unsupported callee {reprStr callee}"])
   | .letE name e body => do
-    pure (.block [.atom "let", .list [.list [.atom (toLispName name), ← e.toSExpr]]] indentBy [← body.toSExpr])
+    pure (.block [.atom "let", .list [.list [.atom (toLispName name), ← e.toSExpr]]] (← indentBy) [← body.toSExpr])
   | .ite cond thenE elseE => do
-    pure (.block [.atom "if", ← cond.toSExpr] indentBy [← thenE.toSExpr, ← elseE.toSExpr])
+    pure (.block [.atom "if", ← cond.toSExpr] (← indentBy) [← thenE.toSExpr, ← elseE.toSExpr])
   -- `structName`'s `cl-defstruct` accessor for `fieldName` is named `<lgtm-struct-name>-<field-name>`,
   -- matching how `LStructureDefinition.render` names the struct and its slots.
   | .proj structName fieldName target => do
@@ -340,27 +364,27 @@ partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=
     -- `pcase` dispatches on a single value, so multiple discriminants are bundled into a list
     -- that each alternative's pattern then destructures. See [ref:inductive-type-representation].
     match sDiscrs with
-    | [d] => pure (SExpr.block [SExpr.atom "pcase", d] indentBy sAlts)
-    | ds => pure (SExpr.block [SExpr.atom "pcase", SExpr.list (SExpr.atom "list" :: ds)] indentBy sAlts)
+    | [d] => pure (SExpr.block [SExpr.atom "pcase", d] (← indentBy) sAlts)
+    | ds => pure (SExpr.block [SExpr.atom "pcase", SExpr.list (SExpr.atom "list" :: ds)] (← indentBy) sAlts)
   | .opaque reason => pure (SExpr.list [SExpr.atom "error", SExpr.string reason])
 
 end
 
-def LFunction.toSExpr (f : LFunction) : SExprM SExpr := do
+def LFunction.toSExpr (f : LFunction) : SExprM SExpr := withReader (fun e => if f.parameters.isEmpty then { e with currentFunction := some f.name } else e) do
   -- Names of Lgtm functions look like Lgtm.foo, so translate to Lgtm-foo so that the rest of the
   -- transformations turn them into a reasonable elisp name
   let name := translateGlobalName f.name
   let body ← f.body.toSExpr
   match f.parameters with
-  | [] => pure (SExpr.block [SExpr.atom "defconst", SExpr.atom name] indentBy [body])
+  | [] => pure (SExpr.block [SExpr.atom "defconst", SExpr.atom name] (← indentBy) [body])
   | _ => do
     let arglist := SExpr.list (f.parameters.map (λ name => SExpr.atom (toLispName name)))
     let docstring := match f.docstring with
     | some ds => [SExpr.string ds]
     | none => []
-    pure (SExpr.block [SExpr.atom "defun", SExpr.atom name, arglist] indentBy (docstring ++ [body]))
+    pure (SExpr.block [SExpr.atom "defun", SExpr.atom name, arglist] (← indentBy) (docstring ++ [body]))
 
-def testRender (s : SExprM SExpr) : String := SExpr.render (SExprM.run [] s)
+def testRender (s : SExprM SExpr) : String := SExpr.render (SExprM.run 2 emptyTranslations s).1
 
 /-- info: "comment-threads" -/
 #guard_msgs in

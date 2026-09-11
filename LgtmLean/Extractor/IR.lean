@@ -1,3 +1,5 @@
+import Std
+
 /-- An abstraction of Lean structure definitions.
 
 Since the target language (lisp) is untyped, the types of the fields are erased.
@@ -77,3 +79,11 @@ public structure LFunction where
   body : LExpr
   docstring : Option String
   deriving Repr
+
+
+structure Translations α [Hashable α] [BEq α] where
+  functions : Std.HashMap α LFunction
+  structures : Std.HashMap α LStructureDefinition
+  inductives : Std.HashMap α LInductiveDefinition
+
+def emptyTranslations : Translations String := ⟨Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity⟩

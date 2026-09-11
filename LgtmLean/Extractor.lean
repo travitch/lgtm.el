@@ -646,41 +646,36 @@ def getInductiveNames (env : Environment) : List Name :=
       none
   names.mergeSort (·.toString ≤ ·.toString)
 
-structure Translations where
-  functions : Std.HashMap Name LFunction
-  structures : Std.HashMap Name LStructureDefinition
-  inductives : Std.HashMap Name LInductiveDefinition
-
-def translateLeanDefinitions (env : Environment) : MetaM Translations := do
+def translateLeanDefinitions (env : Environment) : MetaM (Translations String) := do
   -- FIXME: just put these into MetaM and incorporate isPropSortedInductive and isPropReturningDecl
   -- to avoid redundant validation
   let functionNames := getFunctionNames env
   let structureNames := getStructureNames env
   let inductiveNames := getInductiveNames env
 
-  let mut funcMap : Std.HashMap Name LFunction := Std.HashMap.emptyWithCapacity
+  let mut funcMap : Std.HashMap String LFunction := Std.HashMap.emptyWithCapacity
   for name in functionNames do
     unless ← isPropReturningDecl name do
       try
         let f ← translateFunction name
-        funcMap := funcMap.insert name f
+        funcMap := funcMap.insert name.toString f
       catch ex =>
         IO.eprintln s!"-- failed to translate {name}: {(← ex.toMessageData.format).pretty}"
 
-  let mut structMap : Std.HashMap Name LStructureDefinition := Std.HashMap.emptyWithCapacity
+  let mut structMap : Std.HashMap String LStructureDefinition := Std.HashMap.emptyWithCapacity
   for name in structureNames do
     try
       let s ← translateStructure name
-      structMap := structMap.insert name s
+      structMap := structMap.insert name.toString s
     catch ex =>
       IO.eprintln s!"-- failed to translate {name}: {(← ex.toMessageData.format).pretty}"
 
-  let mut inductiveMap : Std.HashMap Name LInductiveDefinition := Std.HashMap.emptyWithCapacity
+  let mut inductiveMap : Std.HashMap String LInductiveDefinition := Std.HashMap.emptyWithCapacity
   for name in inductiveNames do
     unless ← isPropSortedInductive name do
       try
         let i ← translateInductive name
-        inductiveMap := inductiveMap.insert name i
+        inductiveMap := inductiveMap.insert name.toString i
       catch ex =>
         IO.eprintln s!"-- failed to translate {name}: {(← ex.toMessageData.format).pretty}"
 
@@ -692,6 +687,27 @@ def runMeta (env : Environment) (action : MetaM α) : IO α := do
   let coreState₀ : Core.State := { env := env }
   let ((res, _savedState), _coreState₁) ← (action.run {} {}).toIO coreCtx coreState₀
   pure res
+
+structure Rendered where
+  functions : Std.HashMap String SExpr
+  structures : Std.HashMap String SExpr
+
+def renderIR (ir : Translations String) : Rendered :=
+  let (res, postState) := SExprM.run 2 ir do
+    let mut functions := Std.HashMap.emptyWithCapacity
+    let mut structures := Std.HashMap.emptyWithCapacity
+
+    for (name, structDef) in ir.structures.toList do
+      let s ← structDef.toSExpr
+      structures := structures.insert name s
+
+    for (name, funcDef) in ir.functions.toList do
+      let f ← funcDef.toSExpr
+      functions := functions.insert name f
+    pure ⟨functions, structures⟩
+
+  -- TODO Return the functions sorted in topological order
+  res
 
 def elispPrelude : String := include_str "Extractor/prelude.el"
 
@@ -714,6 +730,7 @@ unsafe def main (args : List String) : IO Unit := do
   let env ← Lean.importModules #[{ module := `LgtmLean }] {} (trustLevel := 1024) (loadExts := true)
 
   let translations ← runMeta env (translateLeanDefinitions env)
+  let rendered := renderIR translations
 
   let rawHdl ← IO.FS.Handle.mk "/tmp/out.txt" IO.FS.Mode.write
   for (_name, ind) in translations.inductives.toList do
@@ -725,14 +742,11 @@ unsafe def main (args : List String) : IO Unit := do
   hdl.putStrLn ""
   hdl.putStrLn ";; Type definitions"
 
-  let functions := translations.functions.values
   -- We have to emit the type definitions at the top of the file since they define macros that must be visible
   -- by the time the functions are defined to avoid runtime errors.
-  for (_, structDef) in translations.structures.toList.mergeSort (·.2.name ≤ ·.2.name) do
-    hdl.putStrLn ((structDef.toSExpr.run functions).render)
+  for (_, structSExpr) in rendered.structures.toList.mergeSort (·.1 ≤ ·.1) do
+    hdl.putStrLn (structSExpr.render)
     hdl.putStrLn ""
-
-  -- FIXME: Add in the translation of inductives
 
   hdl.putStrLn ";; Prelude"
   hdl.putStrLn ""
@@ -744,6 +758,6 @@ unsafe def main (args : List String) : IO Unit := do
 
   -- FIXME: These need to be emitted such that the constant defs (nullary functions) are first and
   -- in dependency order
-  for (_, functionDef) in translations.functions.toList.mergeSort (·.2.name ≤ ·.2.name) do
-    hdl.putStrLn ((functionDef.toSExpr.run functions).render)
+  for (_, funcSExpr) in rendered.functions.toList.mergeSort (·.1 ≤ ·.1) do
+    hdl.putStrLn (funcSExpr.render)
     hdl.putStrLn ""
