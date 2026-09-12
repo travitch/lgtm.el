@@ -110,6 +110,15 @@ def recordUsedNameInContext (name : String) : SExprM Unit := do
   | some currentFuncName => do
     modifyGet (fun s => ((), { s with calledGlobalNames := s.calledGlobalNames.alter currentFuncName (insertOrSingleton name) }))
 
+/-- If the given name refers to an inductive constructor, return true. -/
+def isInductiveConstructor (name : String) : SExprM Bool := do
+  let env ← read
+  match (name.split '.').toList with
+  | [typeName, _conName] => match env.translations.inductives[typeName.toString]? with
+    | some _ => pure true
+    | none => pure false
+  | _ => pure false
+
 def indentBy : SExprM Nat := do pure (← read).indentation
 
 def SExprM.run (indentation : Nat) (translations : Translations String) (s : SExprM α) : α × SExprState :=
@@ -319,9 +328,12 @@ partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=
   | .ctorRef "List.nil" => pure (SExpr.atom "nil")
   | .ctorRef "Bool.true" => pure (SExpr.atom "t")
   | .ctorRef "Bool.false" => pure (SExpr.atom "nil")
-  | .ctorRef name =>
-    -- Constructors in Lean have a `.mk` suffix. Drop that and replace with the equivalent prefix for cl-defstruct.
-    pure (SExpr.atom ("#'make-" ++ toLgtmName (toLispName (name.dropEnd 3).toString)))
+  | .ctorRef name => do
+    match ← isInductiveConstructor name with
+    | false =>
+      -- Constructors in Lean have a `.mk` suffix. Drop that and replace with the equivalent prefix for cl-defstruct.
+      pure (SExpr.atom ("#'make-" ++ toLgtmName (toLispName (name.dropEnd 3).toString)))
+    | true => pure (SExpr.atom ("'" ++ translateGlobalName name))
   | .lit l => pure l.toSExpr
   | .lam params body => do
     let sBody ← LExpr.toSExpr body
@@ -338,9 +350,14 @@ partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=
         let sFunc := SExpr.atom (toLispName name)
         pure (.list (.atom "funcall" :: sFunc :: sArgs))
       | .ctorRef name => do
-        -- Special case the rendering of these because they usually have many arguments
-        let sFunc := SExpr.atom ("make-" ++ toLgtmName (toLispName (name.dropEnd 3).toString))
-        pure (.block [sFunc] (← indentBy) sArgs)
+        if ← isInductiveConstructor name then
+          let sFunc := SExpr.atom "vector"
+          let tag := SExpr.atom ("'" ++ translateGlobalName name)
+          pure (.block [sFunc] (← indentBy) (tag :: sArgs))
+        else do
+          -- Special case the rendering of these because they usually have many arguments
+          let sFunc := SExpr.atom ("make-" ++ toLgtmName (toLispName (name.dropEnd 3).toString))
+          pure (.block [sFunc] (← indentBy) sArgs)
       | .lam _ _ => do
         let sFunc ← fn.toSExpr
         pure (.list (sFunc :: sArgs))
