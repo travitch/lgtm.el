@@ -13,6 +13,7 @@ match c with
 | 'C' => some .copied
 | _ => none
 
+/-- Format modification type M as a string in the style Git uses. -/
 public def formatFileModificationType (m : ModificationType) : String :=
 match m with
 | .modified => "M"

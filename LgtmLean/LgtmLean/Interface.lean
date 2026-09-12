@@ -87,6 +87,9 @@ match comments with
         hCurrentCommentsHaveCurrentVersion :=
           alter_preserves_versionInvariant bootstrapState.hCurrentCommentsHaveCurrentVersion hloc hver }
 
+/-- Group COMMENTS by the file containing them (or as top levels).
+
+The grouping maintains internal consistency proofs. -/
 public def groupComments (comments : List Comment) : CommentBootstrapState :=
   groupComments.go comments (CommentBootstrapState.mk [] (by simp) Std.HashMap.emptyWithCapacity (by simp)
     Std.HashMap.emptyWithCapacity (by simp))
