@@ -500,6 +500,46 @@ def testRender (s : SExprM SExpr) : String := SExpr.render (SExprM.run 2 emptyTr
   SExpr.render (SExprM.run 2 translations (LFunction.toSExpr
     { name := "usesConstant", parameters := ["x"], body := .global "someConstant", docstring := none })).1
 
+-- A bare reference to a nullary inductive constructor (per `LExpr.ctorRef`'s doc comment, a
+-- constructor is used bare, with no `app` wrapper, when it takes no arguments) renders as a quoted
+-- elisp symbol, matching how nullary constructors are represented per
+-- [ref:inductive-type-representation] -- unlike a `.mk`-suffixed structure constructor, which
+-- renders as a `make-` function reference instead.
+/-- info: "'lgtm-thread-location-top-level" -/
+#guard_msgs in
+#eval
+  let translations : Translations String :=
+    { emptyTranslations with
+      inductives := Std.HashMap.emptyWithCapacity.insert "ThreadLocation"
+        { name := "ThreadLocation", constructors := [("ThreadLocation.topLevel", 0), ("ThreadLocation.nested", 1)] } }
+  SExpr.render (SExprM.run 2 translations (LExpr.toSExpr (.ctorRef "ThreadLocation.topLevel"))).1
+
+-- An inductive constructor applied to arguments renders as a `vector` form with the quoted
+-- constructor symbol in position 0 followed by the field values, per
+-- [ref:inductive-type-representation] -- unlike a `.mk`-suffixed structure constructor applied to
+-- arguments, which renders as a `make-` function call instead.
+/-- info: "(vector\n  'lgtm-thread-location-nested\n  parent)" -/
+#guard_msgs in
+#eval
+  let translations : Translations String :=
+    { emptyTranslations with
+      inductives := Std.HashMap.emptyWithCapacity.insert "ThreadLocation"
+        { name := "ThreadLocation", constructors := [("ThreadLocation.topLevel", 0), ("ThreadLocation.nested", 1)] } }
+  SExpr.render (SExprM.run 2 translations
+    (LExpr.toSExpr (.app (.ctorRef "ThreadLocation.nested") [.var "parent"]))).1
+
+-- `Except.ok`/`Except.error` are special-cased in `translatePrimitives` to render as a two-element
+-- `vector` tagged with a plain (unnamespaced) quoted symbol, rather than going through the general
+-- inductive-constructor encoding (which would require registering an `Except` `LInductiveDefinition`
+-- and would namespace the tag as `'lgtm-except-ok`).
+/-- info: "(vector 'except-ok 42)" -/
+#guard_msgs in
+#eval testRender (LExpr.toSExpr (.app (.ctorRef "Except.ok") [.lit (.nat 42)]))
+
+/-- info: "(vector 'except-error \"oops\")" -/
+#guard_msgs in
+#eval testRender (LExpr.toSExpr (.app (.ctorRef "Except.error") [.lit (.str "oops")]))
+
 -- `matchE` over a single discriminant: a nullary constructor becomes a bare symbol pattern, and a
 -- constructor with a field becomes a vector pattern with the field bound via `,`.
 /-- info: "(pcase loc\n  (`thread-location-top-level \"top\")\n  (`[thread-location-nested ,parent] parent))" -/
