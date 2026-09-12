@@ -2,6 +2,7 @@ module
 
 public import LgtmLean.Basic
 
+/-- Attempt to parse C as a git file modification type. -/
 public def parseFileModificationType (c : Char) : Option ModificationType :=
 match c with
 | 'M' => some .modified

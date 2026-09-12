@@ -403,7 +403,7 @@ def LFunction.toSExpr (f : LFunction) : SExprM SExpr := withReader (fun e => if 
   | _ => do
     let arglist := SExpr.list (f.parameters.map (λ name => SExpr.atom (toLispName name)))
     let docstring := match f.docstring with
-    | some ds => [SExpr.string ds]
+    | some ds => [SExpr.string ds.trimAscii.toString]
     | none => []
     pure (SExpr.block [SExpr.atom "defun", SExpr.atom name, arglist] (← indentBy) (docstring ++ [body]))
 
