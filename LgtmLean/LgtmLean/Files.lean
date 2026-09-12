@@ -12,8 +12,8 @@ match c with
 | 'C' => some .copied
 | _ => none
 
-public def formatFileModificationType (t : ModificationType) : String :=
-match t with
+public def formatFileModificationType (m : ModificationType) : String :=
+match m with
 | .modified => "M"
 | .added => "A"
 | .deleted => "D"
