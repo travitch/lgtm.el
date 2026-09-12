@@ -177,6 +177,12 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
   | .ctorRef "Option.some" => do
     let v ← LExpr.toSExpr args[0]!
     pure (some v)
+  | .ctorRef "Except.ok" => do
+    let v ← LExpr.toSExpr args[0]!
+    pure (some (.list [.atom "vector", .atom "'except-ok", v]))
+  | .ctorRef "Except.error" => do
+    let v ← LExpr.toSExpr args[0]!
+    pure (some (.list [.atom "vector", .atom "'except-error", v]))
   | .ctorRef "List.cons" => do
     let elt ← LExpr.toSExpr args[0]!
     let elts ← LExpr.toSExpr args[1]!
