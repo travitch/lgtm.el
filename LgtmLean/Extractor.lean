@@ -171,6 +171,7 @@ partial def exprToPat (varNames : Std.HashMap FVarId String) (e : Expr) : MetaM 
   | .fvar fvid => pure ((varNames[fvid]?.map LPat.var).getD .wildcard)
   | .lit (.natVal n) => pure (.lit (.nat n))
   | .lit (.strVal s) => pure (.lit (.str s))
+  | .app (.const ``Char.ofNat _) (.lit (.natVal n)) => pure (.lit (.char (Char.ofNat n)))
   | _ =>
     e.withApp fun fn args => do
       match fn with
@@ -562,6 +563,22 @@ def translateFunction (name : Name) : Meta.MetaM LFunction := do
           varNames := varNames.insert x.fvarId! (toString ld.userName)
         let bodyL ← translateExpr varNames body
         pure { name := toString name, parameters := paramNames, body := bodyL, docstring }
+
+-- Regression test: `LgtmLean.Files.parseFileModificationType` matches its `Char` parameter against
+-- literal patterns (`'M'`, `'A'`, ...). Since it's non-recursive, `translateFunction` takes this
+-- function's equation-lemma path, converting each equation's left-hand-side argument via
+-- `exprToPat` -- as opposed to the *matcher*-decoding path (`tryDecodeMatcher`/
+-- `decomposeDiteLiteral`), used only for a `match` nested inside a larger body. `exprToPat` once
+-- had no case for a `Char` literal (represented as the application `Char.ofNat n`, not a bare
+-- `Expr.lit`) and silently fell back to `.wildcard` instead of `.lit (.char _)`, which -- since
+-- `pcase` tries alternatives in order -- made every character match the first alternative.
+/-- info: "LPat.lit (LLit.char 'M'), LPat.lit (LLit.char 'A'), LPat.lit (LLit.char 'D'), LPat.lit (LLit.char 'T'), LPat.lit (LLit.char 'R'), LPat.lit (LLit.char 'C'), LPat.var \"c\"" -/
+#guard_msgs in
+#eval show Meta.MetaM String from do
+  let f ← translateFunction `parseFileModificationType
+  match f.body with
+  | .matchE _ alts => pure (", ".intercalate (alts.map (fun (pats, _) => reprStr pats.head!)))
+  | _ => pure "no matchE"
 
 /-- Whether `name`'s own declared type has no run-time representation once its full arrow
 telescope is peeled off: either a `Prop` (a proof-producing predicate like
