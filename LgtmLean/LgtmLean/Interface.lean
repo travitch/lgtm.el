@@ -222,12 +222,14 @@ the server: `state` starts as `fileManager.resetCommentState.state` (every file'
 and is updated one file at a time by `applyBase` / `.applyCurrent`. `hSameContains` says the update
 never changes which files are tracked (only an already-tracked file's `ModifiedFileState` can be
 replaced), which is what lets the final `ModifiedFileManager.hConsistentState` be recovered from the
-original `fileManager.resetCommentState`'s. `hPublished` is the `State.hFileThreadsPublished`
-invariant relative to the final, fixed `comments₁` map. -/
+original `fileManager.resetCommentState`'s. `hKeyedByRef` is the `ModifiedFileManager.hStateKeyedByRef`
+invariant, threaded the same way. `hPublished` is the `State.hFileThreadsPublished` invariant relative
+to the final, fixed `comments₁` map. -/
 public structure FileThreadsBootstrapState (origState : Std.HashMap ModifiedFileRef ModifiedFileState)
     (comments₁ : Std.HashMap CommentRef Comment) where
   state : Std.HashMap ModifiedFileRef ModifiedFileState
   hSameContains : ∀ mf, state.contains mf = origState.contains mf
+  hKeyedByRef : ∀ ref (h : state.contains ref), (state.get ref h).ref = ref
   hPublished : ∀ fileRef (h : state.contains fileRef),
     (∀ ref (_hc : (state.get fileRef h).baseThreads.commentTreeNodes.contains ref),
       ∃ h' : comments₁.contains ref, (comments₁.get ref h').backendId.isSome) ∧
@@ -251,6 +253,7 @@ public def FileThreadsBootstrapState.applyBase
     FileThreadsBootstrapState origState comments₁ :=
   have hOldState : bs.state.contains fileRef := by rw [bs.hSameContains]; exact hFound
   let oldFileState := bs.state.get fileRef hOldState
+  have hOldRef : oldFileState.ref = fileRef := bs.hKeyedByRef fileRef hOldState
   let newBaseThreads := assembleCommentTrees cs hSameLoc hBackend hParents hNodup hBefore
   let newFileState : ModifiedFileState :=
     { oldFileState with
@@ -262,6 +265,20 @@ public def FileThreadsBootstrapState.applyBase
   { state := bs.state.insert fileRef newFileState,
     hSameContains := fun mf => by
       rw [contains_insert_of_contains hOldState, bs.hSameContains],
+    hKeyedByRef := fun ref' h => by
+      by_cases heq : fileRef = ref'
+      · subst heq
+        rw [Std.HashMap.get_insert_self]
+        exact hOldRef
+      · have hne : ¬ (fileRef == ref') := fun h => heq (beq_iff_eq.mp h)
+        have hc' : bs.state.contains ref' := by
+          have h2 := h
+          rw [Std.HashMap.contains_insert, Bool.or_eq_true, beq_iff_eq] at h2
+          rcases h2 with h1 | h1
+          · exact absurd h1 heq
+          · exact h1
+        rw [Std.HashMap.get_insert_of_ne hne h hc']
+        exact bs.hKeyedByRef ref' hc',
     hPublished := fun fileRef' h => by
       by_cases heq : fileRef = fileRef'
       · subst heq
@@ -295,6 +312,7 @@ public def FileThreadsBootstrapState.applyCurrent
     FileThreadsBootstrapState origState comments₁ :=
   have hOldState : bs.state.contains fileRef := by rw [bs.hSameContains]; exact hFound
   let oldFileState := bs.state.get fileRef hOldState
+  have hOldRef : oldFileState.ref = fileRef := bs.hKeyedByRef fileRef hOldState
   let newCurrentThreads := assembleCommentTrees cs hSameLoc hBackend hParents hNodup hBefore
   let newFileState : ModifiedFileState :=
     { oldFileState with
@@ -306,6 +324,20 @@ public def FileThreadsBootstrapState.applyCurrent
   { state := bs.state.insert fileRef newFileState,
     hSameContains := fun mf => by
       rw [contains_insert_of_contains hOldState, bs.hSameContains],
+    hKeyedByRef := fun ref' h => by
+      by_cases heq : fileRef = ref'
+      · subst heq
+        rw [Std.HashMap.get_insert_self]
+        exact hOldRef
+      · have hne : ¬ (fileRef == ref') := fun h => heq (beq_iff_eq.mp h)
+        have hc' : bs.state.contains ref' := by
+          have h2 := h
+          rw [Std.HashMap.contains_insert, Bool.or_eq_true, beq_iff_eq] at h2
+          rcases h2 with h1 | h1
+          · exact absurd h1 heq
+          · exact h1
+        rw [Std.HashMap.get_insert_of_ne hne h hc']
+        exact bs.hKeyedByRef ref' hc',
     hPublished := fun fileRef' h => by
       by_cases heq : fileRef = fileRef'
       · subst heq
@@ -505,7 +537,8 @@ public def FileThreadsBootstrapState.toModifiedFileManager {comments₁ : Std.Ha
     modifiedFiles := fileManager.modifiedFiles,
     hConsistentState := fun mf => by
       rw [bs.hSameContains]
-      exact fileManager.resetCommentState.hConsistentState mf }
+      exact fileManager.resetCommentState.hConsistentState mf,
+    hStateKeyedByRef := bs.hKeyedByRef }
 
 /-- Bulk-loads a fresh batch of comments from the server, replacing whatever comment state was
 there before.
@@ -535,6 +568,7 @@ public def addRemoteComments (s₀ : State) : Result (Except String Unit) :=
               (commentsByRef bootstrapState.allComments) :=
             { state := noCommentFileManager.state,
               hSameContains := fun _ => rfl,
+              hKeyedByRef := noCommentFileManager.hStateKeyedByRef,
               hPublished := s₀.fileManager.hFileThreadsPublished_resetCommentState
                 (commentsByRef bootstrapState.allComments) }
           let bs1 := applyBaseThreads.go _ _ bootstrapState.baseComments.toList
@@ -666,6 +700,15 @@ public def ModifiedFileState.withThreadsFor (mfs : ModifiedFileState) (version :
       hSelectedCommentWellFormed := by simp,
       hCurrentThreadsFileScoped := hFileScoped }
 
+/-- `withThreadsFor` only replaces one version's thread pool, so it leaves `.ref` untouched --
+what `completeCommentWithContent.finalizeFileScoped` needs to carry
+`ModifiedFileManager.hStateKeyedByRef` across a per-file thread update. -/
+public theorem ModifiedFileState.withThreadsFor_ref (mfs : ModifiedFileState) (version : FileVersion)
+    (newThreads : CommentThreads)
+    (hFileScoped : ∀ loc, loc ∈ newThreads.locationRoots.keys → loc.isTopLevel = false) :
+    (mfs.withThreadsFor version newThreads hFileScoped).ref = mfs.ref := by
+  cases version <;> rfl
+
 /-- Finalizes publishing a file-scoped being-edited comment into whichever of a file's `baseThreads`
 / `currentThreads` `version` names, leaving the other untouched, and assembles the resulting
 `State`. Generalizes what were previously separate `finalizeBase` / `finalizeCurrent` defs: every
@@ -693,6 +736,12 @@ public def completeCommentWithContent.finalizeFileScoped (s₀ : State) (comment
   let comments₁ := s₀.commentManager.comments.insert comment₀.ref comment₂
   have hCommentsKeyedByRef₁ : ∀ ref (h : comments₁.contains ref), (comments₁.get ref h).ref = ref :=
     s₀.commentManager.hCommentsKeyedByRef_insert comment₀.ref comment₂ href2
+  -- `ModifiedFileManager.hStateKeyedByRef` guarantees `fileRef`'s stored value really is stored
+  -- under its own `.ref`; combined with the direct lookup (`hgetval`), this recovers
+  -- `modifiedFileState.ref = fileRef` for free, needed below to reestablish
+  -- `ModifiedFileManager.hStateKeyedByRef` after inserting `newFileState` at `fileRef`.
+  have hRefEq : modifiedFileState.ref = fileRef := by
+    rw [← hgetval]; exact s₀.fileManager.hStateKeyedByRef fileRef hOldContainsFileRef
   have hRefFresh : comment₂.ref ∉ (modifiedFileState.threadsFor version).commentTreeNodes := by
     rw [href2, ← hgetval]
     exact s₀.notMem_threadsFor_of_unpublished hFresh0 hOldContainsFileRef version
@@ -731,8 +780,11 @@ public def completeCommentWithContent.finalizeFileScoped (s₀ : State) (comment
       (newState := newState) (newComments := comments₁) hOldContainsFileRef hgetval hFresh0 href2 hbackendId2
       hNewThreadsContains rfl rfl rfl rfl
     have hConsistentState₁ := s₀.fileManager.hConsistentState_insert hOldContainsFileRef newFileState
+    have hNewRef : newFileState.ref = fileRef :=
+      (modifiedFileState.withThreadsFor_ref .base newThreads hFileScoped₁).trans hRefEq
+    have hStateKeyedByRef₁ := s₀.fileManager.hStateKeyedByRef_insert fileRef newFileState hNewRef
     let fileManager₁ : ModifiedFileManager :=
-      { s₀.fileManager with state := newState, hConsistentState := hConsistentState₁ }
+      { s₀.fileManager with state := newState, hConsistentState := hConsistentState₁, hStateKeyedByRef := hStateKeyedByRef₁ }
     { s₀ with
       commentBeingEdited := none,
       commentManager := commentManager₁,
@@ -746,8 +798,11 @@ public def completeCommentWithContent.finalizeFileScoped (s₀ : State) (comment
       (newState := newState) (newComments := comments₁) hOldContainsFileRef hgetval hFresh0 href2 hbackendId2
       hNewThreadsContains rfl rfl rfl rfl
     have hConsistentState₁ := s₀.fileManager.hConsistentState_insert hOldContainsFileRef newFileState
+    have hNewRef : newFileState.ref = fileRef :=
+      (modifiedFileState.withThreadsFor_ref .current newThreads hFileScoped₁).trans hRefEq
+    have hStateKeyedByRef₁ := s₀.fileManager.hStateKeyedByRef_insert fileRef newFileState hNewRef
     let fileManager₁ : ModifiedFileManager :=
-      { s₀.fileManager with state := newState, hConsistentState := hConsistentState₁ }
+      { s₀.fileManager with state := newState, hConsistentState := hConsistentState₁, hStateKeyedByRef := hStateKeyedByRef₁ }
     { s₀ with
       commentBeingEdited := none,
       commentManager := commentManager₁,
@@ -817,39 +872,38 @@ public def completeCommentWithContent (s₀ : State) (newContent : String) : Res
           match hfound : s₀.fileManager.state.get? loc.fileRef with
           | none => Result.mk (Except.error "Unexpected file") s₀
           | some modifiedFileState =>
-            -- The direct lookup is by key, but `CommentBeingEditedWellFormed` (and hence
-            -- `hparent0` below) is stated purely in terms of a stored value's own `.ref` field, so
-            -- we still have to check it matches the location's `fileRef` explicitly -- nothing
-            -- about the `Std.HashMap` lookup itself guarantees a value is stored under its own
-            -- `.ref`.
-            if hpred : modifiedFileState.ref == loc.fileRef then
-              let fileRef := loc.fileRef
-              have hFound := s₀.fileManager.contains_get_of_getElem? hfound
-              have hOldContainsFileRef := hFound.1
-              have hgetval := hFound.2
-              have hmem : (fileRef, modifiedFileState) ∈ s₀.fileManager.state.toList :=
-                Std.HashMap.mem_toList_iff_getElem?_eq_some.mpr hfound
+            let fileRef := loc.fileRef
+            have hFound := s₀.fileManager.contains_get_of_getElem? hfound
+            have hOldContainsFileRef := hFound.1
+            have hgetval := hFound.2
+            have hmem : (fileRef, modifiedFileState) ∈ s₀.fileManager.state.toList :=
+              Std.HashMap.mem_toList_iff_getElem?_eq_some.mpr hfound
 
-              -- `topLevelThreads` is untouched by a file-scoped comment; only `comments` grows.
-              have hTopLevelThreadsPublished₁ := s₀.commentManager.hTopLevelThreadsPublished_of_preserve hPreservePublished
+            -- `ModifiedFileManager.hStateKeyedByRef` guarantees any value found by a direct key
+            -- lookup really is stored under its own `.ref`, so the looked-up value's `.ref`
+            -- trivially matches the lookup key -- no separate runtime check needed.
+            have hpred : modifiedFileState.ref == loc.fileRef := by
+              rw [beq_iff_eq, ← hgetval]
+              exact s₀.fileManager.hStateKeyedByRef fileRef hOldContainsFileRef
 
-              have hparentFile : ∀ parentId, comment₂.parent = some parentId →
-                  parentId ∈ (match loc.version with
-                    | .base => modifiedFileState.baseThreads
-                    | .current => modifiedFileState.currentThreads).serverCommentIds := by
-                intro parentId hp
-                have hp0 := hparent0 parentId hp
-                rw [hloc] at hp0
-                exact hp0 fileRef modifiedFileState hmem hpred
+            -- `topLevelThreads` is untouched by a file-scoped comment; only `comments` grows.
+            have hTopLevelThreadsPublished₁ := s₀.commentManager.hTopLevelThreadsPublished_of_preserve hPreservePublished
 
-              have hcommentTop : comment₂.location.asThreadLocation.isTopLevel = false :=
-                hloc ▸ CommentLocation.fileLocation_asThreadLocation_isTopLevel loc
+            have hparentFile : ∀ parentId, comment₂.parent = some parentId →
+                parentId ∈ (match loc.version with
+                  | .base => modifiedFileState.baseThreads
+                  | .current => modifiedFileState.currentThreads).serverCommentIds := by
+              intro parentId hp
+              have hp0 := hparent0 parentId hp
+              rw [hloc] at hp0
+              exact hp0 fileRef modifiedFileState hmem hpred
 
-              Result.mk (Except.ok comment₂) (completeCommentWithContent.finalizeFileScoped s₀ comment₀ comment₂
-                fileRef modifiedFileState hOldContainsFileRef hgetval hHasBackendId href2 hbackendId2 hFresh0
-                loc.version hparentFile hcommentTop hTopLevelThreadsPublished₁)
-            else
-              Result.mk (Except.error "Unexpected file") s₀
+            have hcommentTop : comment₂.location.asThreadLocation.isTopLevel = false :=
+              hloc ▸ CommentLocation.fileLocation_asThreadLocation_isTopLevel loc
+
+            Result.mk (Except.ok comment₂) (completeCommentWithContent.finalizeFileScoped s₀ comment₀ comment₂
+              fileRef modifiedFileState hOldContainsFileRef hgetval hHasBackendId href2 hbackendId2 hFresh0
+              loc.version hparentFile hcommentTop hTopLevelThreadsPublished₁)
 
 private theorem completeCommentWithContent.rejectsEmptyContent (s₀ : State)
   (result : Result (Except String Comment))
@@ -879,9 +933,7 @@ private theorem completeCommentWithContent.preservesStateOnError (s₀ : State) 
           · left; rfl
           · split
             · right; rfl
-            · split
-              · left; rfl
-              · right; rfl
+            · left; rfl
 
 private theorem completeCommentWithContent.failsWithNoCurrentEditedComment (s₀ : State)
   (input : String)

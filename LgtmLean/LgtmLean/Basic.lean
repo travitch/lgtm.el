@@ -501,6 +501,14 @@ public structure ModifiedFileManager where
   /-- Invariant: Each modified file ref has an entry in `state`. -/
   hConsistentState : ∀ modifiedFile, modifiedFile ∈ modifiedFiles ↔ state.contains modifiedFile
 
+  /-- Invariant: `state` is keyed consistently with its own values -- the file state stored at a
+  ref really is the file state with that ref. This is the `ModifiedFileManager` counterpart of
+  `CommentManager.hCommentsKeyedByRef`, and is what lets a direct lookup of `state` by key (rather
+  than a scan of `state.toList` for a matching `.ref`) recover the looked-up value's own `.ref` for
+  free -- used by `completeCommentWithContent` to satisfy `CommentBeingEditedWellFormed`'s
+  file-scoped obligation without a separate runtime check. -/
+  hStateKeyedByRef : ∀ ref (h : state.contains ref), (state.get ref h).ref = ref
+
 /-- Recovers proof-carrying `contains`/`get` facts from a successful direct lookup by key -- used
 by `completeCommentWithContent` to look up the `ModifiedFileState` for a comment's file location,
 now that the lookup key (`loc.fileRef`) is known upfront and doesn't need to be found by scanning
@@ -536,19 +544,67 @@ public theorem ModifiedFileManager.hConsistentState_insert (fileManager : Modifi
     · rw [← heq]; exact (fileManager.hConsistentState fileRef).mpr hOldContains
     · exact (fileManager.hConsistentState modifiedFile).mpr hc
 
+/-- Inserting a file state at the ref it claims as its own preserves `hStateKeyedByRef`: the
+freshly-inserted entry reports back the key it was inserted at, and every other entry is untouched
+(delegating to the old invariant). The `ModifiedFileManager` counterpart of
+`CommentManager.hCommentsKeyedByRef_insert`. -/
+public theorem ModifiedFileManager.hStateKeyedByRef_insert (fileManager : ModifiedFileManager)
+    (fileRef : ModifiedFileRef) (newFileState : ModifiedFileState) (href : newFileState.ref = fileRef) :
+    ∀ ref' (h : (fileManager.state.insert fileRef newFileState).contains ref'),
+      ((fileManager.state.insert fileRef newFileState).get ref' h).ref = ref' := by
+  intro ref' h
+  by_cases heq : fileRef = ref'
+  · subst heq
+    rw [Std.HashMap.get_insert_self, href]
+  · have hne : ¬ (fileRef == ref') := by simpa [beq_iff_eq] using heq
+    have hc : fileManager.state.contains ref' := by
+      have h' := h
+      rw [Std.HashMap.contains_insert, Bool.or_eq_true, beq_iff_eq] at h'
+      rcases h' with h1 | h1
+      · exact absurd h1 heq
+      · exact h1
+    rw [Std.HashMap.get_insert_of_ne hne h hc]
+    exact fileManager.hStateKeyedByRef ref' hc
+
+/-- The per-file update `ModifiedFileManager.resetCommentState` applies to every tracked file: clear
+the selected comment and both thread pools. Factored out to its own declaration (rather than an
+inline lambda) so it fully elaborates -- proof obligations included -- before `resetCommentState`
+reasons about it; an inline lambda's `by simp` fields would still be pending synthetic metavariables
+at that point, which breaks the `.ref`-preservation proof below. -/
+private def ModifiedFileManager.resetFileState (fileState : ModifiedFileState) : ModifiedFileState :=
+  {fileState with selectedComment := none,
+                  baseThreads := CommentThreads.empty,
+                  currentThreads := CommentThreads.empty,
+                  hSelectedCommentWellFormed := by simp,
+                  hBaseThreadsFileScoped := by simp [CommentThreads.empty],
+                  hCurrentThreadsFileScoped := by simp [CommentThreads.empty]}
+
+/-- `resetFileState` only touches `selectedComment`/`baseThreads`/`currentThreads`, so it leaves
+`.ref` untouched. -/
+private theorem ModifiedFileManager.resetFileState_ref (fileState : ModifiedFileState) :
+    (ModifiedFileManager.resetFileState fileState).ref = fileState.ref := rfl
+
 public def ModifiedFileManager.resetCommentState (fileManager : ModifiedFileManager) : ModifiedFileManager :=
-  let updatedState := fileManager.state.map (fun modifiedFileRef fileState =>
-    {fileState with selectedComment := none,
-                    baseThreads := CommentThreads.empty,
-                    currentThreads := CommentThreads.empty,
-                    hSelectedCommentWellFormed := by simp,
-                    hBaseThreadsFileScoped := by simp [CommentThreads.empty],
-                    hCurrentThreadsFileScoped := by simp [CommentThreads.empty]})
+  let updatedState : Std.HashMap ModifiedFileRef ModifiedFileState :=
+    fileManager.state.map (fun _ fileState => ModifiedFileManager.resetFileState fileState)
   have hConsistent : ∀ modifiedFile, modifiedFile ∈ fileManager.modifiedFiles ↔ updatedState.contains modifiedFile := by
     intro modifiedFile
     simp only [updatedState, Std.HashMap.contains_map]
     exact fileManager.hConsistentState modifiedFile
-  { fileManager with state := updatedState, hConsistentState := hConsistent }
+  have hStateKeyedByRef : ∀ ref (h : updatedState.contains ref), (Std.HashMap.get updatedState ref h).ref = ref := by
+    intro ref h
+    have hOld : fileManager.state.contains ref := by simpa [updatedState, Std.HashMap.contains_map] using h
+    have hfound : fileManager.state[ref]? = some (Std.HashMap.get fileManager.state ref hOld) :=
+      Std.HashMap.getElem?_eq_some_iff.mpr ⟨hOld, Std.HashMap.get_eq_getElem.symm⟩
+    have hupdated? : updatedState[ref]? =
+        some (ModifiedFileManager.resetFileState (Std.HashMap.get fileManager.state ref hOld)) := by
+      simp only [updatedState, Std.HashMap.getElem?_map, hfound, Option.map_some]
+    obtain ⟨_, hEq⟩ := Std.HashMap.getElem?_eq_some_iff.mp hupdated?
+    have hget : Std.HashMap.get updatedState ref h =
+        ModifiedFileManager.resetFileState (Std.HashMap.get fileManager.state ref hOld) := hEq
+    rw [hget, ModifiedFileManager.resetFileState_ref]
+    exact fileManager.hStateKeyedByRef ref hOld
+  { fileManager with state := updatedState, hConsistentState := hConsistent, hStateKeyedByRef := hStateKeyedByRef }
 
 /-- After resetting comment state, every file's `baseThreads`/`currentThreads` are empty
 (`CommentThreads.empty`), so any "every registered ref is published" obligation holds of them
@@ -564,13 +620,11 @@ public theorem ModifiedFileManager.hFileThreadsPublished_resetCommentState (file
         ∃ h' : comments.contains ref, (comments.get ref h').backendId.isSome) := by
   intro modifiedFileRef h
   have hget : fileManager.resetCommentState.state.get modifiedFileRef h =
-      { (fileManager.state.get modifiedFileRef (by simpa [ModifiedFileManager.resetCommentState] using h)) with
-        selectedComment := none, baseThreads := CommentThreads.empty, currentThreads := CommentThreads.empty,
-        hSelectedCommentWellFormed := by simp, hBaseThreadsFileScoped := by simp [CommentThreads.empty],
-        hCurrentThreadsFileScoped := by simp [CommentThreads.empty] } := by
+      ModifiedFileManager.resetFileState
+        (fileManager.state.get modifiedFileRef (by simpa [ModifiedFileManager.resetCommentState] using h)) := by
     simp only [ModifiedFileManager.resetCommentState]
     rw [Std.HashMap.get_eq_getElem, Std.HashMap.get_eq_getElem, Std.HashMap.getElem_map]
-  simp only [hget]
+  simp only [hget, ModifiedFileManager.resetFileState]
   simp [CommentThreads.empty]
 
 /-- The comment currently being edited is fresh (not yet registered in `comments` -- it's only
