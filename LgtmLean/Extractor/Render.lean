@@ -92,6 +92,7 @@ structure SExprEnv where
   currentFunction : Option String
 
 structure SExprState where
+  /-- Each constant has an entry in the map that is the set of other constants it depends on -/
   calledGlobalNames : Std.HashMap String (Std.HashSet String)
 
 def emptyState : SExprState := ⟨Std.HashMap.emptyWithCapacity⟩
