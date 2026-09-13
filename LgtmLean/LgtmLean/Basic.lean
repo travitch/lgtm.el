@@ -571,7 +571,7 @@ the selected comment and both thread pools. Factored out to its own declaration 
 inline lambda) so it fully elaborates -- proof obligations included -- before `resetCommentState`
 reasons about it; an inline lambda's `by simp` fields would still be pending synthetic metavariables
 at that point, which breaks the `.ref`-preservation proof below. -/
-private def ModifiedFileManager.resetFileState (fileState : ModifiedFileState) : ModifiedFileState :=
+public def ModifiedFileManager.resetFileState (fileState : ModifiedFileState) : ModifiedFileState :=
   {fileState with selectedComment := none,
                   baseThreads := CommentThreads.empty,
                   currentThreads := CommentThreads.empty,
