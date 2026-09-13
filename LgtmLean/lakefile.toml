@@ -1,6 +1,7 @@
 name = "LgtmLean"
 version = "0.1.0"
 defaultTargets = ["lgtmlean", "extractor"]
+testDriver = "test"
 
 [[lean_lib]]
 name = "LgtmLean"
@@ -14,5 +15,10 @@ root = "Main"
 
 [[lean_exe]]
 name = "extractor"
-root = "Extractor"
+root = "ExtractorMain"
+supportInterpreter = true
+
+[[lean_exe]]
+name = "test"
+root = "Test"
 supportInterpreter = true

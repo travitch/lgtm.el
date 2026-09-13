@@ -94,8 +94,14 @@ structure SExprEnv where
 structure SExprState where
   /-- Each constant has an entry in the map that is the set of other constants it depends on -/
   calledGlobalNames : Std.HashMap String (Std.HashSet String)
+  /-- Names of callees (or constants) that are referenced but never produced during the translation.
 
-def emptyState : SExprState := ⟨Std.HashMap.emptyWithCapacity⟩
+  This is in place to catch calls to standard library functions that need to be added to the translator. -/
+  unhandledGlobalNames : Std.HashSet String
+  /-- Encountered `opaque` values that will require fixes to the extractor or code. -/
+  opaqueValues : List String
+
+def emptyState : SExprState := ⟨Std.HashMap.emptyWithCapacity, Std.HashSet.emptyWithCapacity, []⟩
 
 abbrev SExprM α := StateT SExprState (ReaderM SExprEnv) α
 
@@ -396,7 +402,9 @@ partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=
     match sDiscrs with
     | [d] => pure (SExpr.block [SExpr.atom "pcase", d] (← indentBy) sAlts)
     | ds => pure (SExpr.block [SExpr.atom "pcase", SExpr.list (SExpr.atom "list" :: ds)] (← indentBy) sAlts)
-  | .opaque reason => pure (SExpr.list [SExpr.atom "error", SExpr.string reason])
+  | .opaque reason => do
+    modifyGet (λ s => ((), { s with opaqueValues := reason :: s.opaqueValues }))
+    pure (SExpr.list [SExpr.atom "error", SExpr.string reason])
 
 end
 
