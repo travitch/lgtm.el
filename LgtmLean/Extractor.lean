@@ -307,17 +307,48 @@ partial def translateApp (varNames : Std.HashMap FVarId String) (e : Expr) : Met
       match matcherResult? with
       | some r => pure r
       | none => do
-        let fnL ← translateExpr varNames fn
-        let mut keptArgs : List LExpr := []
-        for a in args do
-          if ← isErasableValue a then
-            pure ()
-          else
-            keptArgs := keptArgs ++ [← translateExpr varNames a]
-        match fn, keptArgs with
-        | .const cName _, [c, t, eBr] =>
-          if cName == ``cond || cName == ``ite then pure (.ite c t eBr) else pure (mkLApp fnL keptArgs)
-        | _, _ => pure (mkLApp fnL keptArgs)
+        -- A field whose own value is itself a function (e.g. `Configuration.createComment :
+        -- Configuration → Comment → Option ServerId`) can appear applied to more arguments than
+        -- just the structure instance: `config.createComment comment`. Lean's currying makes this
+        -- indistinguishable, at the `Expr` level, from an ordinary two-parameter function
+        -- application -- but the elisp target isn't: `Configuration.createComment` compiles to a
+        -- `cl-defstruct` accessor of arity exactly one. Splitting off the field access from the
+        -- extra arguments (which get funcall'd onto the result, see `LExpr.toSExpr`'s `.proj` case
+        -- in `Render.lean`) keeps that arity correct. Class-method projections (`BEq.beq` and
+        -- friends) are excluded since those are already special-cased whole in
+        -- `translatePrimitives`, which expects them pre-flattened.
+        let projResult? ← match fn with
+          | .const cName _ => do
+            match ← getProjectionFnInfo? cName with
+            | some info =>
+              if !info.fromClass && info.numParams + 1 < args.size then
+                let structName := info.ctorName.getPrefix
+                let projL ← translateExpr varNames (.proj structName info.i args[info.numParams]!)
+                let mut keptExtra : List LExpr := []
+                for a in args.extract (info.numParams + 1) args.size do
+                  if ← isErasableValue a then
+                    pure ()
+                  else
+                    keptExtra := keptExtra ++ [← translateExpr varNames a]
+                pure (some (mkLApp projL keptExtra))
+              else
+                pure none
+            | none => pure none
+          | _ => pure none
+        match projResult? with
+        | some r => pure r
+        | none => do
+          let fnL ← translateExpr varNames fn
+          let mut keptArgs : List LExpr := []
+          for a in args do
+            if ← isErasableValue a then
+              pure ()
+            else
+              keptArgs := keptArgs ++ [← translateExpr varNames a]
+          match fn, keptArgs with
+          | .const cName _, [c, t, eBr] =>
+            if cName == ``cond || cName == ``ite then pure (.ite c t eBr) else pure (mkLApp fnL keptArgs)
+          | _, _ => pure (mkLApp fnL keptArgs)
 
 /-- Overwrite the node at `path` (a chain of `ctor`-field indices, root-to-leaf) within `pat` with
 `sub`. Each row only ever inserts a shallower entry before any of its deeper extensions (see

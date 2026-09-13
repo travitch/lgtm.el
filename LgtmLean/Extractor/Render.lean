@@ -368,6 +368,12 @@ partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=
       | .lam _ _ => do
         let sFunc ← fn.toSExpr
         pure (.list (sFunc :: sArgs))
+      | .proj .. => do
+        -- The struct-field accessor call itself evaluates to a function value (see the
+        -- `Extractor.lean` `translateApp` comment on projection-typed fields), so, like a `.var`
+        -- head, it needs `funcall` rather than being spliced directly into the call position.
+        let sFunc ← fn.toSExpr
+        pure (.list (.atom "funcall" :: sFunc :: sArgs))
       | callee => pure (.list [.atom "error", .string s!"Unsupported callee {reprStr callee}"])
   | .letE name e body => do
     pure (.block [.atom "let", .list [.list [.atom (toLispName name), ← e.toSExpr]]] (← indentBy) [← body.toSExpr])

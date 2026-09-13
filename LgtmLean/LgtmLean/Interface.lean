@@ -835,8 +835,7 @@ public def completeCommentWithContent (s₀ : State) (newContent : String) : Res
     | none => Result.mk (Except.error "No active comment") s₀
     | some comment₀ =>
       let comment₁ := { comment₀ with content := newContent }
-      let createCommentFunc := s₀.configuration.createComment
-      match createCommentFunc comment₁ with
+      match s₀.configuration.createComment comment₁ with
       | none => Result.mk (Except.error "Failed to create the comment on the server") s₀
       | some serverId =>
         let comment₂ : Comment := { comment₁ with backendId := serverId }
