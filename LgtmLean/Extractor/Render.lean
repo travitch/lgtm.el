@@ -60,14 +60,18 @@ structure SExprEnv where
 structure SExprState where
   /-- Each constant has an entry in the map that is the set of other constants it depends on -/
   calledGlobalNames : Std.HashMap String (Std.HashSet String)
-  /-- Names of callees (or constants) that are referenced but never produced during the translation.
+  /-- The list of function names defined at the top-level -/
+  definedFunctionNames : List String
+  /-- Names of callees (or constants) that are referenced.
 
-  This is in place to catch calls to standard library functions that need to be added to the translator. -/
-  unhandledGlobalNames : Std.HashSet String
+  This is in place to catch calls to standard library functions that need to be added to the
+  translator. This does not include names that are translated to elisp primitives or prelude
+  definitions. -/
+  referencedGlobalNames : Std.HashSet String
   /-- Encountered `opaque` values that will require fixes to the extractor or code. -/
   opaqueValues : List String
 
-def emptyState : SExprState := ⟨Std.HashMap.emptyWithCapacity, Std.HashSet.emptyWithCapacity, []⟩
+def emptyState : SExprState := ⟨Std.HashMap.emptyWithCapacity, [], Std.HashSet.emptyWithCapacity, []⟩
 
 abbrev SExprM α := StateT SExprState (ReaderM SExprEnv) α
 
@@ -99,8 +103,13 @@ def SExprM.run (indentation : Nat) (translations : Translations String) (s : SEx
   Id.run (ReaderT.run (StateT.run s emptyState) env)
 
 def LStructureDefinition.toSExpr (d : LStructureDefinition) : SExprM SExpr := do
-  let fields := List.map (λ field => SExpr.list [SExpr.atom (toLispName field), SExpr.atom "nil", SExpr.atom ":read-only", SExpr.atom "t"]) d.fields
-  pure (.block [.atom "cl-defstruct", .atom (toLgtmName d.name)] (← indentBy) fields)
+  let structName := toLgtmName d.name
+  let fields ← d.fields.mapM (λ field => do
+    let fieldName := toLispName field
+    modifyGet (λ s => ((), { s with definedFunctionNames := s!"{structName}-{fieldName}" :: s.definedFunctionNames }))
+    pure (SExpr.list [SExpr.atom fieldName, SExpr.atom "nil", SExpr.atom ":read-only", SExpr.atom "t"]))
+
+  pure (.block [.atom "cl-defstruct", .atom structName] (← indentBy) fields)
 
 /-- Global names from Lean are namespaced, so translate appropriately -/
 def translateGlobalName (name : String) : String :=
@@ -298,6 +307,7 @@ partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=
   | .global "Prod.snd" => pure (.atom "#'lgtm--pair-snd")
   | .global name => do
     recordUsedNameInContext name
+    modifyGet (λ s => ((), { s with referencedGlobalNames := s.referencedGlobalNames.insert (translateGlobalName name) }))
     match (← read).translations.functions[name]? with
     | some lfunc => match lfunc.parameters with
       | [] => pure (SExpr.atom (translateGlobalName name))
@@ -310,8 +320,10 @@ partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=
   | .ctorRef name => do
     match ← isInductiveConstructor name with
     | false =>
+      let conName := "make-" ++ toLgtmName (toLispName (name.dropEnd 3).toString)
+      modifyGet (λ s => ((), { s with referencedGlobalNames := s.referencedGlobalNames.insert conName }))
       -- Constructors in Lean have a `.mk` suffix. Drop that and replace with the equivalent prefix for cl-defstruct.
-      pure (SExpr.atom ("#'make-" ++ toLgtmName (toLispName (name.dropEnd 3).toString)))
+      pure (SExpr.atom ("#'" ++ conName))
     | true => pure (SExpr.atom ("'" ++ translateGlobalName name))
   | .lit l => pure l.toSExpr
   | .lam params body => do
@@ -323,6 +335,7 @@ partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=
       let sArgs ← args.mapM LExpr.toSExpr
       match fn with
       | .global name => do
+        modifyGet (λ s => ((), { s with referencedGlobalNames := s.referencedGlobalNames.insert (translateGlobalName name) }))
         let sFunc := SExpr.atom (translateGlobalName name)
         pure (.list (sFunc :: sArgs))
       | .var name => do
@@ -334,8 +347,10 @@ partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=
           let tag := SExpr.atom ("'" ++ translateGlobalName name)
           pure (.block [sFunc] (← indentBy) (tag :: sArgs))
         else do
+          let conName := "make-" ++ toLgtmName (toLispName (name.dropEnd 3).toString)
+          modifyGet (λ s => ((), { s with referencedGlobalNames := s.referencedGlobalNames.insert conName }))
           -- Special case the rendering of these because they usually have many arguments
-          let sFunc := SExpr.atom ("make-" ++ toLgtmName (toLispName (name.dropEnd 3).toString))
+          let sFunc := SExpr.atom conName
           pure (.block [sFunc] (← indentBy) sArgs)
       | .lam _ _ => do
         let sFunc ← fn.toSExpr
@@ -378,6 +393,7 @@ def LFunction.toSExpr (f : LFunction) : SExprM SExpr := withReader (fun e => if 
   -- Names of Lgtm functions look like Lgtm.foo, so translate to Lgtm-foo so that the rest of the
   -- transformations turn them into a reasonable elisp name
   let name := translateGlobalName f.name
+  modifyGet (λ s => ((), { s with definedFunctionNames := name :: s.definedFunctionNames }))
   let body ← f.body.toSExpr
   match f.parameters with
   | [] => pure (SExpr.block [SExpr.atom "defconst", SExpr.atom name] (← indentBy) [body])
