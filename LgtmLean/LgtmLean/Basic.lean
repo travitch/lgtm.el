@@ -501,24 +501,18 @@ public structure ModifiedFileManager where
   /-- Invariant: Each modified file ref has an entry in `state`. -/
   hConsistentState : ∀ modifiedFile, modifiedFile ∈ modifiedFiles ↔ state.contains modifiedFile
 
-/-- Recovers proof-carrying `contains`/`get` facts from a successful `List.find?` over
-`state.toList` -- used by `completeCommentWithContent` to look up the `ModifiedFileState` for a
-comment's file location (found by matching on `.fileRef`, since the `ModifiedFileRef` key itself
-isn't known upfront). -/
-public theorem ModifiedFileManager.contains_get_of_find? (fileManager : ModifiedFileManager)
+/-- Recovers proof-carrying `contains`/`get` facts from a successful direct lookup by key -- used
+by `completeCommentWithContent` to look up the `ModifiedFileState` for a comment's file location,
+now that the lookup key (`loc.fileRef`) is known upfront and doesn't need to be found by scanning
+`state.toList` for a matching `.ref`. -/
+public theorem ModifiedFileManager.contains_get_of_getElem? (fileManager : ModifiedFileManager)
     {fileRef : ModifiedFileRef} {modifiedFileState : ModifiedFileState}
-    {p : ModifiedFileRef × ModifiedFileState → Bool}
-    (hfound : fileManager.state.toList.find? p = some (fileRef, modifiedFileState)) :
-    ∃ h : fileManager.state.contains fileRef, fileManager.state.get fileRef h = modifiedFileState ∧
-      p (fileRef, modifiedFileState) := by
-  have hmem : (fileRef, modifiedFileState) ∈ fileManager.state.toList := List.mem_of_find?_eq_some hfound
-  have hpred := List.find?_some hfound
-  have hgetElem? : fileManager.state[fileRef]? = some modifiedFileState :=
-    (Std.HashMap.mem_toList_iff_getElem?_eq_some).mp hmem
+    (hfound : fileManager.state[fileRef]? = some modifiedFileState) :
+    ∃ h : fileManager.state.contains fileRef, fileManager.state.get fileRef h = modifiedFileState := by
   have hContainsFileRef : fileManager.state.contains fileRef := by
-    rw [Std.HashMap.contains_eq_isSome_getElem?, hgetElem?]; rfl
-  refine ⟨hContainsFileRef, ?_, hpred⟩
-  obtain ⟨_, hval⟩ := Std.HashMap.getElem?_eq_some_iff.mp hgetElem?
+    rw [Std.HashMap.contains_eq_isSome_getElem?, hfound]; rfl
+  refine ⟨hContainsFileRef, ?_⟩
+  obtain ⟨_, hval⟩ := Std.HashMap.getElem?_eq_some_iff.mp hfound
   exact hval
 
 /-- Inserting at an already-`contains`ed key preserves `hConsistentState`: the key set of `state`

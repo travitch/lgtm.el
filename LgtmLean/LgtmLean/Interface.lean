@@ -675,7 +675,7 @@ which still has to name `State.hFileThreadsPublished_insert_base` / `_insert_cur
 since those remain separate theorems (each asserting the *other* field is unchanged in a way that's
 tied to the concrete field name, not expressible through `threadsFor` alone). `comments₁` is
 recomputed rather than taken as a parameter, for the same reason as in `finalizeTopLevel`. -/
-def completeCommentWithContent.finalizeFileScoped (s₀ : State) (comment₀ comment₂ : Comment)
+public def completeCommentWithContent.finalizeFileScoped (s₀ : State) (comment₀ comment₂ : Comment)
     {serverId : ServerId} (fileRef : ModifiedFileRef) (modifiedFileState : ModifiedFileState)
     (hOldContainsFileRef : s₀.fileManager.state.contains fileRef)
     (hgetval : s₀.fileManager.state.get fileRef hOldContainsFileRef = modifiedFileState)
@@ -780,7 +780,8 @@ public def completeCommentWithContent (s₀ : State) (newContent : String) : Res
     | none => Result.mk (Except.error "No active comment") s₀
     | some comment₀ =>
       let comment₁ := { comment₀ with content := newContent }
-      match s₀.configuration.createComment comment₁ with
+      let createCommentFunc := s₀.configuration.createComment
+      match createCommentFunc comment₁ with
       | none => Result.mk (Except.error "Failed to create the comment on the server") s₀
       | some serverId =>
         let comment₂ : Comment := { comment₁ with backendId := serverId }
@@ -813,34 +814,42 @@ public def completeCommentWithContent (s₀ : State) (newContent : String) : Res
           Result.mk (Except.ok comment₂) (completeCommentWithContent.finalizeTopLevel s₀ comment₀ comment₂
             hloc hHasBackendId href2 hFresh0 hparent2 hFileThreadsPublished₁)
         | .fileLocation loc =>
-          -- FIXME: Change this from a find to a lookup of the modifiedFileState.ref instead
-          match hfound : s₀.fileManager.state.toList.find? (λ (_, modifiedFileState) => modifiedFileState.ref == loc.fileRef) with
+          match hfound : s₀.fileManager.state.get? loc.fileRef with
           | none => Result.mk (Except.error "Unexpected file") s₀
-          | some (fileRef, modifiedFileState) =>
-            have hFound := s₀.fileManager.contains_get_of_find? hfound
-            have hOldContainsFileRef := hFound.1
-            have hgetval := hFound.2.1
-            have hpred := hFound.2.2
-            have hmem : (fileRef, modifiedFileState) ∈ s₀.fileManager.state.toList := List.mem_of_find?_eq_some hfound
+          | some modifiedFileState =>
+            -- The direct lookup is by key, but `CommentBeingEditedWellFormed` (and hence
+            -- `hparent0` below) is stated purely in terms of a stored value's own `.ref` field, so
+            -- we still have to check it matches the location's `fileRef` explicitly -- nothing
+            -- about the `Std.HashMap` lookup itself guarantees a value is stored under its own
+            -- `.ref`.
+            if hpred : modifiedFileState.ref == loc.fileRef then
+              let fileRef := loc.fileRef
+              have hFound := s₀.fileManager.contains_get_of_getElem? hfound
+              have hOldContainsFileRef := hFound.1
+              have hgetval := hFound.2
+              have hmem : (fileRef, modifiedFileState) ∈ s₀.fileManager.state.toList :=
+                Std.HashMap.mem_toList_iff_getElem?_eq_some.mpr hfound
 
-            -- `topLevelThreads` is untouched by a file-scoped comment; only `comments` grows.
-            have hTopLevelThreadsPublished₁ := s₀.commentManager.hTopLevelThreadsPublished_of_preserve hPreservePublished
+              -- `topLevelThreads` is untouched by a file-scoped comment; only `comments` grows.
+              have hTopLevelThreadsPublished₁ := s₀.commentManager.hTopLevelThreadsPublished_of_preserve hPreservePublished
 
-            have hparentFile : ∀ parentId, comment₂.parent = some parentId →
-                parentId ∈ (match loc.version with
-                  | .base => modifiedFileState.baseThreads
-                  | .current => modifiedFileState.currentThreads).serverCommentIds := by
-              intro parentId hp
-              have hp0 := hparent0 parentId hp
-              rw [hloc] at hp0
-              exact hp0 fileRef modifiedFileState hmem hpred
+              have hparentFile : ∀ parentId, comment₂.parent = some parentId →
+                  parentId ∈ (match loc.version with
+                    | .base => modifiedFileState.baseThreads
+                    | .current => modifiedFileState.currentThreads).serverCommentIds := by
+                intro parentId hp
+                have hp0 := hparent0 parentId hp
+                rw [hloc] at hp0
+                exact hp0 fileRef modifiedFileState hmem hpred
 
-            have hcommentTop : comment₂.location.asThreadLocation.isTopLevel = false :=
-              hloc ▸ CommentLocation.fileLocation_asThreadLocation_isTopLevel loc
+              have hcommentTop : comment₂.location.asThreadLocation.isTopLevel = false :=
+                hloc ▸ CommentLocation.fileLocation_asThreadLocation_isTopLevel loc
 
-            Result.mk (Except.ok comment₂) (completeCommentWithContent.finalizeFileScoped s₀ comment₀ comment₂
-              fileRef modifiedFileState hOldContainsFileRef hgetval hHasBackendId href2 hbackendId2 hFresh0
-              loc.version hparentFile hcommentTop hTopLevelThreadsPublished₁)
+              Result.mk (Except.ok comment₂) (completeCommentWithContent.finalizeFileScoped s₀ comment₀ comment₂
+                fileRef modifiedFileState hOldContainsFileRef hgetval hHasBackendId href2 hbackendId2 hFresh0
+                loc.version hparentFile hcommentTop hTopLevelThreadsPublished₁)
+            else
+              Result.mk (Except.error "Unexpected file") s₀
 
 private theorem completeCommentWithContent.rejectsEmptyContent (s₀ : State)
   (result : Result (Except String Comment))
@@ -870,7 +879,9 @@ private theorem completeCommentWithContent.preservesStateOnError (s₀ : State) 
           · left; rfl
           · split
             · right; rfl
-            · left; rfl
+            · split
+              · left; rfl
+              · right; rfl
 
 private theorem completeCommentWithContent.failsWithNoCurrentEditedComment (s₀ : State)
   (input : String)

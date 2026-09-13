@@ -341,7 +341,17 @@ recover, per leaf, which discriminants were scrutinized -- to what nested depth,
 constructors -- to reach it; the real per-alternative bodies (with real bound-variable names) are
 then read off of `args` at the corresponding position, not out of the generic tree. Returns `none`
 (falling back to ordinary call translation) if `matcherName` isn't actually a matcher-shaped
-definition, e.g. because it doesn't delta-reduce to a recognizable `casesOn` tree at all. -/
+definition, e.g. because it doesn't delta-reduce to a recognizable `casesOn` tree at all.
+
+A discriminant position whose *type* is erasable (e.g. a `Prop` destructured purely to unpack proof
+obligations, as in `let ⟨hFound, ...⟩ := hAll entry mem⟩`) is dropped from the emitted pattern
+rather than rendered as a real `pcase` branch: Lean's kernel only allows eliminating a `Prop` into a
+data-sorted result -- which is exactly what's happening here, since the matcher produces this
+function's real return value -- when the eliminated type is a subsingleton (at most one
+constructor), so every row sharing that position is definitionally forced to the same shape. If
+*every* discriminant turns out to be erasable this way, there is (by the same argument) exactly one
+reachable row, so the whole match collapses to that row's body translated directly, with no `pcase`
+at all. -/
 partial def tryDecodeMatcher (varNames : Std.HashMap FVarId String) (matcherName : Name) (args : Array Expr) :
     Meta.MetaM (Option LExpr) := do
   let some ci := (← getEnv).find? matcherName | return none
@@ -357,31 +367,52 @@ partial def tryDecodeMatcher (varNames : Std.HashMap FVarId String) (matcherName
     if rows.isEmpty then return none
     let allPositions := ((rows.flatMap (fun (assoc, _) => assoc.map (·.1))).eraseDups).mergeSort (· ≤ ·)
     if allPositions.isEmpty then return none
-    let discrExprs ← allPositions.mapM (fun p => translateExpr varNames args[p]!)
-    let mut alts : List (List LPat × LExpr) := []
-    for (assoc, altFv) in rows do
-      let some altPos := topPos[altFv]? | continue
-      let altArgExpr := args[altPos]!
-      let clause ← Meta.lambdaTelescope altArgExpr fun realXs realBody => do
+    let mut keptPositions : List Nat := []
+    for p in allPositions do
+      unless ← isErasableValue args[p]! do
+        keptPositions := keptPositions ++ [p]
+    if keptPositions.isEmpty then
+      -- Every discriminant is erasable, so there is exactly one reachable row -- translate its body
+      -- directly instead of emitting a meaningless `pcase` over dead, proof-irrelevant data.
+      let (_, altFv) := rows.head!
+      let some altPos := topPos[altFv]? | return none
+      Meta.lambdaTelescope args[altPos]! fun realXs realBody => do
         let mut varNames' := varNames
-        let mut nameStrs : List String := []
         for rx in realXs do
           let ld ← rx.fvarId!.getDecl
-          let nm := toString ld.userName
-          varNames' := varNames'.insert rx.fvarId! nm
-          nameStrs := nameStrs ++ [nm]
-        let bodyL ← translateExpr varNames' realBody
-        -- Several entries in `assoc` can share the same root position `p` -- one per depth of
-        -- nesting scrutinized under it -- so fold them into `p`'s pattern shallowest-first,
-        -- inserting each deeper `ctor` into the placeholder its immediate parent already reserved.
-        let rawPats := allPositions.map (fun p =>
-          let entries := (assoc.filter (·.1 == p)).map (fun (_, path, pat) => (path, pat))
-          let sorted := entries.mergeSort (fun a b => a.1.length ≤ b.1.length)
-          sorted.foldl (fun acc (path, pat) => insertAtPath acc path pat) (.var "_"))
-        let (labeledPats, _) := relabelPats rawPats nameStrs
-        pure (labeledPats, bodyL)
-      alts := alts ++ [clause]
-    return some (.matchE discrExprs alts)
+          varNames' := varNames'.insert rx.fvarId! (toString ld.userName)
+        some <$> translateExpr varNames' realBody
+    else
+      let discrExprs ← keptPositions.mapM (fun p => translateExpr varNames args[p]!)
+      let mut alts : List (List LPat × LExpr) := []
+      for (assoc, altFv) in rows do
+        let some altPos := topPos[altFv]? | continue
+        let altArgExpr := args[altPos]!
+        let clause ← Meta.lambdaTelescope altArgExpr fun realXs realBody => do
+          let mut varNames' := varNames
+          let mut nameStrs : List String := []
+          for rx in realXs do
+            let ld ← rx.fvarId!.getDecl
+            let nm := toString ld.userName
+            varNames' := varNames'.insert rx.fvarId! nm
+            nameStrs := nameStrs ++ [nm]
+          let bodyL ← translateExpr varNames' realBody
+          -- Several entries in `assoc` can share the same root position `p` -- one per depth of
+          -- nesting scrutinized under it -- so fold them into `p`'s pattern shallowest-first,
+          -- inserting each deeper `ctor` into the placeholder its immediate parent already reserved.
+          -- Relabeling walks *every* position (not just the kept ones) in the same order the names
+          -- were bound in, so the queue stays aligned; only afterwards do we drop the erased
+          -- positions' (now-irrelevant) patterns from what's actually emitted.
+          let rawPats := allPositions.map (fun p =>
+            let entries := (assoc.filter (·.1 == p)).map (fun (_, path, pat) => (path, pat))
+            let sorted := entries.mergeSort (fun a b => a.1.length ≤ b.1.length)
+            sorted.foldl (fun acc (path, pat) => insertAtPath acc path pat) (.var "_"))
+          let (labeledPats, _) := relabelPats rawPats nameStrs
+          let keptPats := (allPositions.zip labeledPats).filterMap
+            (fun (p, pat) => if keptPositions.contains p then some pat else none)
+          pure (keptPats, bodyL)
+        alts := alts ++ [clause]
+      return some (.matchE discrExprs alts)
 
 /-- Walk a matcher's own generic `casesOn` tree. Returns one row per leaf reached: the assoc-list
 of (root discriminant position, path of ctor-field indices from that root, constructor pattern at
