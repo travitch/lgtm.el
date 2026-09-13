@@ -88,13 +88,24 @@ The extractor traverses function and type definitions to render them as elisp fu
 /-! ## Erasure -/
 
 /-- Whether a value of type `ty` has no run-time representation: `ty` is a `Prop` (so the value is
-a proof), or `ty` is itself a `Sort` (so the value is a type, e.g. an implicit `{α : Type}`
-argument). Defensively returns `false` (i.e. "keep it") if type inference gets stuck, rather than
-taking down the whole translation. -/
+a proof), `ty` is itself a `Sort` (so the value is a type, e.g. an implicit `{α : Type}` argument),
+or `ty` is a type class other than `Decidable` (so the value is a typeclass dictionary, e.g. `[BEq
+α]`/`[Hashable α]`). `Decidable` is deliberately excluded: elsewhere in the pipeline (`Decidable.decide`,
+the `if`/`ite`/`cond` lifting of Prop-valued conditions to `Bool`) a `Decidable p` value is treated
+as the actual computed answer, not a dispatch table, so erasing it would delete the very data those
+call sites need. Every other class in this codebase (`BEq`, `Hashable`, `Min`, `Max`, `HAdd`, ...)
+is used purely for dispatch -- the special-cased builtins in `Render.lean` that need one of its
+methods (e.g. `BEq.beq`, `Std.HashMap.insert`) call straight through to elisp's own structural
+equality/hashing instead, so the dictionary itself never needs to survive to the rendered output.
+Defensively returns `false` (i.e. "keep it") if type inference gets stuck, rather than taking down
+the whole translation. -/
 def isErasableType (ty : Expr) : Meta.MetaM Bool := do
   try
     if ← Meta.isProp ty then
       return true
+    if let some className ← Meta.isClass? ty then
+      if className != ``Decidable then
+        return true
     return (← Meta.whnf ty).isSort
   catch _ =>
     return false
@@ -196,11 +207,14 @@ where
       pure (.ctor (toString cName) fields)
     | _ => pure .wildcard
 
-/-- Whether `n` was invented by the elaborator rather than written by the user. This happens
-exactly when a function parameter is bound via a pattern instead of a plain name (e.g.
-`def f : Nat → Nat | 0 => .. | n+1 => ..`), since Lean still needs *some* name for the parameter
-in `f`'s own type. `translateFunction` uses this to reject the pattern-bound function definition
-form, which `LFunction`'s flat `parameters : List String` cannot represent. -/
+/-- Whether `n` was invented by the elaborator rather than written by the user. This happens when a
+function parameter is bound via a pattern instead of a plain name (e.g. `def f : Nat → Nat | 0 =>
+.. | n+1 => ..`), since Lean still needs *some* name for the parameter in `f`'s own type --
+`translateFunction` uses this to reject that pattern-bound function definition form, which
+`LFunction`'s flat `parameters : List String` cannot represent. It also happens, harmlessly, for an
+anonymous instance-implicit binder (e.g. `[BEq α]`), but `translateFunction` never checks this
+function against those: `isErasableType` erases every instance-implicit parameter before its name
+would ever be examined. -/
 def isElaboratorGeneratedName (n : Name) : Bool :=
   n.hasMacroScopes
 
@@ -501,9 +515,12 @@ def isTrivialClause (pats : List LPat) (params : List String) : Bool :=
 
 /-- Translate a single top-level `LgtmLean` function into its `LFunction` representation.
 
-Reads the function's parameter names directly off its own declared type, throwing if any of them
-was invented by the elaborator rather than written by the user (see `isElaboratorGeneratedName`) --
-that only happens for the pattern-bound function definition form, which `LgtmLean` no longer uses.
+Reads the function's parameter names directly off its own declared type, throwing if any *kept*
+(non-erasable, see `isErasableType`) parameter's name was invented by the elaborator rather than
+written by the user (see `isElaboratorGeneratedName`) -- that only happens for the pattern-bound
+function definition form, which `LgtmLean` no longer uses. An *erasable* parameter's name doesn't
+matter (it's dropped either way), so an anonymous instance-implicit binder like `[BEq α]` -- whose
+elaborator-invented name would otherwise also trip this guard -- never reaches the check at all.
 The body then prefers Lean's auto-generated equation lemmas (one clause per equation) -- this is
 what lets recursive functions come through as ordinary pattern matching instead of the raw
 well-founded/structural recursion combinators they actually compile to -- falling back to directly
@@ -518,9 +535,9 @@ def translateFunction (name : Name) : Meta.MetaM LFunction := do
     let mut names : List String := []
     for x in xs do
       let ld ← x.fvarId!.getDecl
-      if isElaboratorGeneratedName ld.userName then
-        throwError s!"{name} binds a parameter via a pattern instead of a name"
       unless ← isErasableType ld.type do
+        if isElaboratorGeneratedName ld.userName then
+          throwError s!"{name} binds a parameter via a pattern instead of a name"
         names := names ++ [toString ld.userName]
     pure names
   match ← Meta.getEqnsFor? name with

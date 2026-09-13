@@ -31,34 +31,34 @@ public structure CommentBootstrapState where
   currentComments : Std.HashMap ModifiedFileRef (List Comment)
   hCurrentCommentsHaveCurrentVersion : ∀ entry, entry ∈ currentComments.toList → (∀ c, c ∈ Prod.snd entry → ∃ loc, c.location = .fileLocation loc ∧ loc.version = .current)
 
-private def insertSingletonOrAppend (value : α) (current : Option (List α)) : Option (List α) :=
-  match current with
-  | none => some [value]
-  | some values => some (value :: values)
-
 /-- Inserting a comment located at `loc` (of version `version`) into the bucket keyed by
 `loc.fileRef` preserves the invariant that every comment in the bucket has version `version`,
 given that it held before the insertion. Shared by the `.base` and `.current` cases of
 `groupComments.go`, which differ only in which field of `CommentBootstrapState` and which
 `FileVersion` they instantiate this with. -/
-private theorem alter_preserves_versionInvariant
+private theorem addToListAt_preserves_versionInvariant
     {version : FileVersion} {m : Std.HashMap ModifiedFileRef (List Comment)}
     (hInv : ∀ entry, entry ∈ m.toList →
       ∀ c, c ∈ Prod.snd entry → ∃ loc, c.location = .fileLocation loc ∧ loc.version = version)
     {c : Comment} {loc : CommentFileLocation}
     (hloc : c.location = .fileLocation loc) (hver : loc.version = version) :
-    ∀ entry, entry ∈ (m.alter loc.fileRef (insertSingletonOrAppend c)).toList →
+    ∀ entry, entry ∈ (addToListAt loc.fileRef c m).toList →
       ∀ c', c' ∈ Prod.snd entry → ∃ loc', c'.location = .fileLocation loc' ∧ loc'.version = version := by
   rintro ⟨k, v⟩ hentry c' hc'
-  rw [Std.HashMap.mem_toList_iff_getElem?_eq_some, Std.HashMap.getElem?_alter] at hentry
+  rw [Std.HashMap.mem_toList_iff_getElem?_eq_some, addToListAt_eq_insert, Std.HashMap.getElem?_insert] at hentry
   split at hentry
-  · unfold insertSingletonOrAppend at hentry
-    split at hentry <;> cases hentry <;> rw [List.mem_cons] at hc' <;> rcases hc' with rfl | hc'
+  · next hbeq =>
+    obtain rfl := beq_iff_eq.mp hbeq
+    cases hentry
+    rw [List.mem_cons] at hc'
+    rcases hc' with rfl | hc'
     · exact ⟨loc, hloc, hver⟩
-    · nomatch hc'
-    · exact ⟨loc, hloc, hver⟩
-    · exact hInv (loc.fileRef, _) (by rw [Std.HashMap.mem_toList_iff_getElem?_eq_some]; assumption) c' hc'
-  · exact hInv (k, v) (by rw [Std.HashMap.mem_toList_iff_getElem?_eq_some]; exact hentry) c' hc'
+    · rw [Std.HashMap.getD_eq_getD_getElem?] at hc'
+      rcases hget : m[loc.fileRef]? with _ | values
+      · simp [hget] at hc'
+      · rw [hget, Option.getD_some] at hc'
+        exact hInv (loc.fileRef, values) (Std.HashMap.mem_toList_iff_getElem?_eq_some.mpr hget) c' hc'
+  · exact hInv (k, v) (Std.HashMap.mem_toList_iff_getElem?_eq_some.mpr hentry) c' hc'
 
 public def groupComments.go (comments : List Comment) (bootstrapState : CommentBootstrapState) : CommentBootstrapState :=
 match comments with
@@ -78,14 +78,14 @@ match comments with
     match hver : loc.version with
     | .base =>
       groupComments.go cs { bootstrapState with
-        baseComments := bootstrapState.baseComments.alter loc.fileRef (insertSingletonOrAppend c)
+        baseComments := addToListAt loc.fileRef c bootstrapState.baseComments
         hBaseCommentsHaveBaseVersion :=
-          alter_preserves_versionInvariant bootstrapState.hBaseCommentsHaveBaseVersion hloc hver }
+          addToListAt_preserves_versionInvariant bootstrapState.hBaseCommentsHaveBaseVersion hloc hver }
     | .current =>
       groupComments.go cs { bootstrapState with
-        currentComments := bootstrapState.currentComments.alter loc.fileRef (insertSingletonOrAppend c)
+        currentComments := addToListAt loc.fileRef c bootstrapState.currentComments
         hCurrentCommentsHaveCurrentVersion :=
-          alter_preserves_versionInvariant bootstrapState.hCurrentCommentsHaveCurrentVersion hloc hver }
+          addToListAt_preserves_versionInvariant bootstrapState.hCurrentCommentsHaveCurrentVersion hloc hver }
 
 /-- Group COMMENTS by the file containing them (or as top levels).
 

@@ -214,8 +214,8 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
     let l ← LExpr.toSExpr args[0]!
     pure (some l)
   | .global "List.idxOf" => do
-    let elt ← LExpr.toSExpr args[1]!
-    let lst ← LExpr.toSExpr args[2]!
+    let elt ← LExpr.toSExpr args[0]!
+    let lst ← LExpr.toSExpr args[1]!
     pure (some (.list [.atom "lgtm--list-idx-of", elt, lst]))
   | .global "List.findIdx?" => do
     let p ← LExpr.toSExpr args[0]!
@@ -230,23 +230,23 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
     pure (some (.list [.atom "string-empty-p", s]))
   | .global "Std.HashMap.emptyWithCapacity" => pure (some (.list [.atom "make-hash-table"]))
   | .global "Std.HashMap.toList" => do
-    let m ← LExpr.toSExpr args[2]!
+    let m ← LExpr.toSExpr args[0]!
     pure (some (.list [.atom "lgtm--hash-map-to-list", m]))
   | .global "Std.HashMap.map" => do
-    let func ← LExpr.toSExpr args[2]!
-    let map ← LExpr.toSExpr args[3]!
+    let func ← LExpr.toSExpr args[0]!
+    let map ← LExpr.toSExpr args[1]!
     pure (some (.list [.atom "lgtm--hash-map-map", func, map]))
   | .global "Std.HashMap.insert" => do
-    let m ← LExpr.toSExpr args[2]!
-    let key ← LExpr.toSExpr args[3]!
-    let value ← LExpr.toSExpr args[4]!
+    let m ← LExpr.toSExpr args[0]!
+    let key ← LExpr.toSExpr args[1]!
+    let value ← LExpr.toSExpr args[2]!
     pure (some (.list [.atom "lgtm--hash-map-insert", key, value, m]))
   | .global "Std.HashMap.get" => do
-    let m ← LExpr.toSExpr args[2]!
-    let key ← LExpr.toSExpr args[3]!
+    let m ← LExpr.toSExpr args[0]!
+    let key ← LExpr.toSExpr args[1]!
     pure (some (.list [.atom "gethash", key, m]))
   | .global "Std.HashMap.size" => do
-    let m ← LExpr.toSExpr args[2]!
+    let m ← LExpr.toSExpr args[0]!
     pure (some (.list [.atom "hash-table-count", m]))
   | .global "Prod.fst" => do
     let p ← LExpr.toSExpr args[0]!
@@ -256,36 +256,36 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
     pure (some (.list [.atom "lgtm--pair-snd", p]))
   | .global "GetElem?.getElem!" => do
     -- WARNING/TODO: Is there an overload with lists here?
-    let collection ← LExpr.toSExpr args[3]!
-    let idx ← LExpr.toSExpr args[4]!
+    let collection ← LExpr.toSExpr args[1]!
+    let idx ← LExpr.toSExpr args[2]!
     pure (some (.list [.atom "gethash", idx, collection]))
   | .global "GetElem.getElem" => do
-    let collection ← LExpr.toSExpr args[2]!
-    let idx ← LExpr.toSExpr args[3]!
+    let collection ← LExpr.toSExpr args[1]!
+    let idx ← LExpr.toSExpr args[2]!
     pure (some (.list [.atom "seq-elt", collection, idx]))
   | .global "GetElem?.getElem?" => do
-    let collection ← LExpr.toSExpr args[2]!
-    let idx ← LExpr.toSExpr args[3]!
+    let collection ← LExpr.toSExpr args[1]!
+    let idx ← LExpr.toSExpr args[2]!
     pure (some (.list [.atom "seq-elt", collection, idx]))
   | .global "Nat.min" => do
     let lhs ← LExpr.toSExpr args[0]!
     let rhs ← LExpr.toSExpr args[1]!
     pure (some (.list [.atom "min", lhs, rhs]))
   | .global "Min.min" => do
-    let lhs ← LExpr.toSExpr args[1]!
-    let rhs ← LExpr.toSExpr args[2]!
+    let lhs ← LExpr.toSExpr args[0]!
+    let rhs ← LExpr.toSExpr args[1]!
     pure (some (.list [.atom "min", lhs, rhs]))
   | .global "Max.max" => do
-    let lhs ← LExpr.toSExpr args[1]!
-    let rhs ← LExpr.toSExpr args[2]!
+    let lhs ← LExpr.toSExpr args[0]!
+    let rhs ← LExpr.toSExpr args[1]!
     pure (some (.list [.atom "max", lhs, rhs]))
   | .global "HAdd.hAdd" => do
-    let lhs ← LExpr.toSExpr args[1]!
-    let rhs ← LExpr.toSExpr args[2]!
+    let lhs ← LExpr.toSExpr args[0]!
+    let rhs ← LExpr.toSExpr args[1]!
     pure (some (.list [.atom "+", lhs, rhs]))
   | .global "HSub.hSub" => do
-    let lhs ← LExpr.toSExpr args[1]!
-    let rhs ← LExpr.toSExpr args[2]!
+    let lhs ← LExpr.toSExpr args[0]!
+    let rhs ← LExpr.toSExpr args[1]!
     pure (some (.list [.atom "-", lhs, rhs]))
   | .global "Subtype.val" => do
     -- Since we ignore the proof component of Subtype values, we just represent them with the bare variable
@@ -313,8 +313,8 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
     let v₂ ← LExpr.toSExpr args[1]!
     pure (some (.list [.atom "<", v₁, v₂]))
   | .global "BEq.beq" => do
-    let v₁ ← LExpr.toSExpr args[1]!
-    let v₂ ← LExpr.toSExpr args[2]!
+    let v₁ ← LExpr.toSExpr args[0]!
+    let v₂ ← LExpr.toSExpr args[1]!
     pure (some (.list [.atom "equal", v₁, v₂]))
   | _ => pure none
 

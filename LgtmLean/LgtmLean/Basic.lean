@@ -834,3 +834,17 @@ public theorem State.hFileThreadsPublished_insert_current (s : State)
       exact hPreserve ref hc' hpub'
     · obtain ⟨hc', hpub'⟩ := hCurrent ref hc
       exact hPreserve ref hc' hpub'
+
+public def addToListAt [BEq α] [Hashable α] (key : α) (value : β) (m : Std.HashMap α (List β)) : Std.HashMap α (List β) :=
+  match m[key]? with
+  | none => m.insert key [value]
+  | some lst => m.insert key (value :: lst)
+
+public theorem addToListAt_eq_insert [BEq α] [Hashable α] [EquivBEq α] [LawfulHashable α]
+    (key : α) (value : β) (m : Std.HashMap α (List β)) :
+    addToListAt key value m = m.insert key (value :: m.getD key []) := by
+  unfold addToListAt
+  rw [Std.HashMap.getD_eq_getD_getElem?]
+  cases m[key]? with
+  | none => rfl
+  | some lst => rfl
