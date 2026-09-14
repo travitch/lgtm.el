@@ -301,6 +301,24 @@ partial def translateApp (varNames : Std.HashMap FVarId String) (e : Expr) : Met
       pure (.lam tailNames bodyL)
   else
     e.withApp fun fn args => do
+      -- `if h : c then t else e` (as opposed to the non-dependent `if c then t else e`) elaborates
+      -- to `dite (α := _) c inst t e`, where `t : c → α` and `e : ¬c → α` are functions of the
+      -- (erased) decidability proof rather than plain values of `α` -- unlike `ite`/`cond`, whose
+      -- branches already are `α`-valued and so fall out of the generic `keptArgs` handling below as
+      -- an `.ite` once `c`/`α` erase away. Translating `dite` the same generic way would instead
+      -- leave its two branches as zero-argument thunks (since the proof parameter erases) passed to
+      -- a literal, undefined `dite`/`lgtm-dite` call. Lambda-telescoping `t`/`e` directly here -- the
+      -- same move `decomposeCasesOn`'s minors and `decomposeDiteLiteral`'s `elseBranch` use -- yields
+      -- their bodies straight off, which become `.ite`'s branches with `inst` (the actual computed
+      -- decision, per `isErasableValue`'s `Decidable` carve-out) as the condition.
+      let isDite := match fn with
+        | .const ``dite _ => args.size == 5
+        | _ => false
+      if isDite then
+        let instL ← translateExpr varNames args[2]!
+        let thenL ← Meta.lambdaTelescope args[3]! fun _ body => translateExpr varNames body
+        let elseL ← Meta.lambdaTelescope args[4]! fun _ body => translateExpr varNames body
+        return .ite instL thenL elseL
       let matcherResult? ← match fn with
         | .const cName _ =>
           if isLikelyMatcherName cName then tryDecodeMatcher varNames cName args else pure none
