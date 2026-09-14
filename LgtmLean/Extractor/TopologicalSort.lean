@@ -43,8 +43,8 @@ provable without threading an extra membership hypothesis through the signature.
 private def visitConstantForTopoSort (calledGlobalNames : Std.HashMap String (Std.HashSet String))
     (constantNames : Std.HashSet String) (name : String) (visiting : Std.HashSet String)
     (visited : Std.HashSet String) (acc : List String) : Std.HashSet String × List String :=
-  if hcn : constantNames.contains name then
-    if hvv : visited.contains name || visiting.contains name then
+  if _hcn : constantNames.contains name then
+    if _hvv : visited.contains name || visiting.contains name then
       (visited, acc)
     else
       let deps := (calledGlobalNames.getD name Std.HashSet.emptyWithCapacity).toList.filter constantNames.contains
@@ -55,9 +55,9 @@ private def visitConstantForTopoSort (calledGlobalNames : Std.HashMap String (St
     (visited, acc)
 termination_by (remaining constantNames visiting, 0)
 decreasing_by
-  simp only [Bool.or_eq_true, not_or] at hvv
-  have hMem : name ∈ constantNames := Std.HashSet.mem_iff_contains.mpr hcn
-  have hNotVisiting : ¬ visiting.contains name := by simpa using hvv.2
+  simp only [Bool.or_eq_true, not_or] at _hvv
+  have hMem : name ∈ constantNames := Std.HashSet.mem_iff_contains.mpr _hcn
+  have hNotVisiting : ¬ visiting.contains name := by simpa using _hvv.2
   have := remaining_insert_lt constantNames visiting name hMem hNotVisiting
   simp_all
   omega
