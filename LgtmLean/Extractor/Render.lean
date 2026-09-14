@@ -104,6 +104,7 @@ def SExprM.run (indentation : Nat) (translations : Translations String) (s : SEx
 
 def LStructureDefinition.toSExpr (d : LStructureDefinition) : SExprM SExpr := do
   let structName := toLgtmName d.name
+  modifyGet (λ s => ((), { s with definedFunctionNames := s!"make-{structName}" :: s.definedFunctionNames }))
   let fields ← d.fields.mapM (λ field => do
     let fieldName := toLispName field
     modifyGet (λ s => ((), { s with definedFunctionNames := s!"{structName}-{fieldName}" :: s.definedFunctionNames }))
