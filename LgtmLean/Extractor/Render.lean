@@ -367,6 +367,44 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
     let a ← LExpr.toSExpr args[1]!
     let b ← LExpr.toSExpr args[2]!
     pure (some (.list [.atom "lgtm--option-decidable-eq", eqInst, a, b]))
+  | .global "instDecidableEqNat" => do
+    let v₁ ← LExpr.toSExpr args[0]!
+    let v₂ ← LExpr.toSExpr args[1]!
+    -- `equal` (not `=`) on purpose: a `deriving DecidableEq` enum (see `.ctorIdx` below) compares
+    -- its own constructor tag through this same instance, and tags render as vectors/atoms, not
+    -- numbers -- `equal` handles both correctly, unlike `=`, which errors on a non-number.
+    pure (some (.list [.atom "equal", v₁, v₂]))
+  | .global "instDecidableEqString" => do
+    let v₁ ← LExpr.toSExpr args[0]!
+    let v₂ ← LExpr.toSExpr args[1]!
+    pure (some (.list [.atom "string-equal", v₁, v₂]))
+  | .global "System.instDecidableEqFilePath" => do
+    -- `System.FilePath` has no `cl-defstruct` of its own (it's a foreign, non-`LgtmLean` type, so
+    -- `isLgtmLeanDecl` never lets its `deriving`-generated instance extract) -- by convention it's
+    -- passed through the whole pipeline as the bare elisp string callers construct it from, so
+    -- string equality on the two raw values *is* `FilePath` equality here.
+    let v₁ ← LExpr.toSExpr args[0]!
+    let v₂ ← LExpr.toSExpr args[1]!
+    pure (some (.list [.atom "string-equal", v₁, v₂]))
+  -- `Eq.ndrec {α} {a} {motive} (m : motive a) {b} (h : a = b) : motive b` is how a `deriving
+  -- DecidableEq` body threads one field's just-proven equality into the *type* of the recursively-
+  -- computed answer for the remaining fields (see `instDecidableEqRepositoryRef.decEq`'s nested
+  -- `Eq.ndrec` chain, one per field). `h` is an erased proof and `m` is already the exact value
+  -- `motive b` needs (propositionally, `a` and `b` are the same value here) -- so at the value
+  -- level this is a pure no-op that just forwards `m` (`args[2]`); `α`/`b` are unused and `motive`
+  -- (`args[1]`, a `Sort`-valued type family, not a real value) is actively garbage if translated --
+  -- see `isPropQuick`'s arrow-into-a-bare-`Sort` blind spot, documented above `List.decidableBAll`,
+  -- for why it isn't erased on its own.
+  | .global "Eq.ndrec" => some <$> LExpr.toSExpr args[2]!
+  -- `<Enum>.ctorIdx` (excluded from ordinary extraction by `isCompilerGenerated`, see
+  -- `Extractor.lean`) returns a nullary constructor's declaration-order index -- meaningless on its
+  -- own here, since enum values render as constructor-tag atoms/vectors rather than integers. Its
+  -- *only* use in this codebase is a `deriving DecidableEq` enum comparing two of these indices for
+  -- equality (via `instDecidableEqNat` above), which -- since two nullary constructors are equal
+  -- exactly when their whole (tag-only) values are `equal` -- is already correctly decided by
+  -- passing the tagged value straight through unchanged.
+  | .global name =>
+    if name.endsWith ".ctorIdx" then some <$> LExpr.toSExpr args[0]! else pure none
   | _ => pure none
 
 partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=

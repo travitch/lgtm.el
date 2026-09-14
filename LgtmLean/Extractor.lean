@@ -711,6 +711,19 @@ def translateFunction (name : Name) : Meta.MetaM LFunction := do
           let bodyL ← translateExpr varNames rhs
           pure (pats, bodyL)
       clauses := clauses ++ [clause]
+    -- `paramNames` (from `info.type`'s telescope) can come back shorter than the equations'
+    -- own arity -- observed for a `deriving DecidableEq` enum's *own* instance (as opposed to a
+    -- `.decEq` helper it delegates to, see `instDecidableEqRepositoryRef.decEq` above): its
+    -- declared type is the bare application `DecidableEq FileVersion`, and `forallTelescope`
+    -- doesn't peel through that abbreviation to the `(a b : FileVersion) → ..` it actually stands
+    -- for, so `paramNames` comes back empty while the equations still bind two real parameters.
+    -- These outer names are purely cosmetic scrutinee bindings for the `matchE` below (the
+    -- equations' *own* bound names, captured separately in each clause's own `LPat`s, are what
+    -- actually drives translation) -- so falling back to a synthetic name per clause parameter is
+    -- safe whenever the arities disagree.
+    let arity := (clauses.headD ([], LExpr.opaque "")).1.length
+    let paramNames := if paramNames.length == arity then paramNames else
+      (List.range arity).map (s!"arg{·}")
     let body := match clauses with
       | [(pats, bodyL)] =>
         if isTrivialClause pats paramNames then bodyL else .matchE (paramNames.map LExpr.var) clauses
