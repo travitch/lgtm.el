@@ -45,6 +45,36 @@ def isInductiveDecl (env : Environment) (name : Name) : ConstantInfo → Bool
   | .inductInfo _ => !Lean.isStructure env name
   | _ => false
 
+/-- Whether `name`'s declared type, once its arrow telescope is peeled off, is literally
+`Decidable _` -- i.e. `name` is an instance that actually computes a yes/no answer (`isTrue`/
+`isFalse`) rather than a plain dispatch dictionary (`BEq`, `Hashable`, ...). Purely syntactic (no
+`Meta.forallTelescope`) so it stays usable from the non-monadic `isCompilerGenerated`.
+
+Mirrors the `Decidable` carve-out `isErasableType` applies to *values*, but at the
+declaration-filtering layer: without this, a hand-derived decision procedure like
+`allCommentsHaveBackendId.decidable` (`Decidable (allCommentsHaveBackendId comments)`, i.e. a
+`Comment → Decidable ..` telescope once uncurried) or an auto-derived `DecidableEq` instance for one
+of `LgtmLean`'s own types (`(a b : α) → Decidable (a = b)`) would be swept up by
+`isCompilerGenerated`'s instance/name-shape heuristics below and never get a body -- even though
+`translateApp`'s dependent-`if`/`dite` handling keeps referencing it as a real, called value. -/
+partial def returnsDecidable (env : Environment) (name : Name) : Bool :=
+  let rec peel : Expr → Expr
+    | .forallE _ _ b _ => peel b
+    | e => e
+  match env.find? name with
+  | some info =>
+    match (peel info.type).getAppFn with
+    | .const ``Decidable _ => true
+    -- `DecidableEq`/`DecidablePred` are reducible abbreviations for a further `Decidable`-headed
+    -- Pi type (`DecidableEq α := (a b : α) → Decidable (a = b)`), so an auto-`deriving DecidableEq`
+    -- instance's *declared* type peels to one of these names, not literally `Decidable` -- checked
+    -- by name rather than by unfolding, since `returnsDecidable` stays a plain, non-monadic `Bool`
+    -- so it's usable from `isCompilerGenerated`.
+    | .const ``DecidableEq _ => true
+    | .const ``DecidablePred _ => true
+    | _ => false
+  | none => false
+
 /-- Whether `name` is a declaration the compiler generated on our behalf (structure/inductive
 machinery, equation lemmas, proof-irrelevant subterms, etc.) rather than something a person wrote.
 
@@ -53,6 +83,9 @@ inspects the *prefix* for numeric components) -- under the module system, an ord
 (non-`public`) declaration is itself stored with a numeric component in its prefix (see
 `isLgtmLeanDecl`), which would make `isInternalDetail` flag every such declaration as generated. -/
 def isCompilerGenerated (env : Environment) (name : Name) : Bool :=
+  if returnsDecidable env name then
+    false
+  else
   let hasBadLastComponent :=
     match name with
     | .str _ s =>
@@ -226,6 +259,28 @@ don't come from any real source-level binder. -/
 def paramNameOrFallback (n : Name) (idx : Nat) : String :=
   if isElaboratorGeneratedName n then s!"etaArg{idx}" else toString n
 
+/-- Extend `varNames` with `fvarId ↦ candidate`, appending `fvarId`'s own unique internal id to
+`candidate` first if that name is already bound to some *other* fvar still in scope.
+
+Lean's own binder names aren't required to be distinct across nested scopes -- ordinary lexical
+shadowing is fine there, since real references resolve by `FVarId`, not by surface name -- but
+several of the library's own `Decidable` combinators (`DecidablePred`'s per-element instance
+argument, the callbacks `List.decidableBAll`/`decidableBEx`/`Option.decidableForallMem` synthesize,
+..) all reuse the exact same generic surface name (`a`, `a_1`, ..) for their bound variable
+regardless of call site, so nesting several of them (as `allParentsInComments`/
+`parentsCreatedBefore`'s guards in `Interface.lean` do) puts multiple, genuinely different,
+simultaneously in-scope binders under identical names. Since the rendered elisp is flat and
+resolves purely lexically, emitting two such binders under the same identifier would let the inner
+one silently capture references meant for the outer one. -/
+def bindFresh (varNames : Std.HashMap FVarId String) (fvarId : FVarId) (candidate : String) :
+    Std.HashMap FVarId String × String :=
+  let nm :=
+    if varNames.toList.any (fun (fv, n) => fv != fvarId && n == candidate) then
+      candidate ++ "-" ++ toString (hash fvarId.name)
+    else
+      candidate
+  (varNames.insert fvarId nm, nm)
+
 mutual
 
 partial def translateConstRef (n : Name) : Meta.MetaM LExpr := do
@@ -253,21 +308,21 @@ partial def translateExpr (varNames : Std.HashMap FVarId String) (e : Expr) : Me
   | .letE n ty v b _ => do
     let erase ← isErasableType ty
     Meta.withLetDecl n ty v fun fvar => do
-      let varNames' := varNames.insert fvar.fvarId! (toString n)
+      let (varNames', nm) := bindFresh varNames fvar.fvarId! (toString n)
       let bL ← translateExpr varNames' (b.instantiate1 fvar)
       if erase then
         pure bL
       else
         let vL ← translateExpr varNames v
-        pure (.letE (toString n) vL bL)
+        pure (.letE nm vL bL)
   | .lam .. =>
     Meta.lambdaTelescope e fun xs body => do
       let mut varNames' := varNames
       let mut paramNames : List String := []
       for x in xs do
         let ld ← x.fvarId!.getDecl
-        let nm := toString ld.userName
-        varNames' := varNames'.insert x.fvarId! nm
+        let (vn, nm) := bindFresh varNames' x.fvarId! (toString ld.userName)
+        varNames' := vn
         if !(← isErasableType ld.type) then
           paramNames := paramNames ++ [nm]
       let bodyL ← translateExpr varNames' body
@@ -294,8 +349,8 @@ partial def translateApp (varNames : Std.HashMap FVarId String) (e : Expr) : Met
       for x in tailXs do
         let ld ← x.fvarId!.getDecl
         unless ← isErasableType ld.type do
-          let nm := paramNameOrFallback ld.userName tailNames.length
-          varNames' := varNames'.insert x.fvarId! nm
+          let (vn, nm) := bindFresh varNames' x.fvarId! (paramNameOrFallback ld.userName tailNames.length)
+          varNames' := vn
           tailNames := tailNames ++ [nm]
       let bodyL ← translateApp varNames' (mkAppN e tailXs)
       pure (.lam tailNames bodyL)
@@ -612,16 +667,29 @@ into one `LExpr.matchE` over the declared parameters. -/
 def translateFunction (name : Name) : Meta.MetaM LFunction := do
   let info ← getConstInfo name
   let docstring ← findDocString? (← getEnv) name
+  let eqns? ← Meta.getEqnsFor? name
+  -- When equations exist, the real per-clause patterns are read off separately below (via
+  -- `exprToPat`, from each equation lemma's own LHS), so this telescope's names only need to be
+  -- *some* stable, distinct, Lisp-safe identifiers to serve as `LFunction.parameters`/the
+  -- top-level `matchE` scrutinee list -- unlike the no-equations branch below (a genuinely
+  -- pattern-bound hand-written `def`, which `LgtmLean` no longer uses), a synthetic fallback name
+  -- is safe here rather than a hard failure. This is what lets a compiler-`deriving`-generated
+  -- instance like `instDecidableEqCommentRef.decEq` (whose *declared type*, unlike its equations,
+  -- names its parameters via elaborator-invented patterns) translate at all.
   let paramNames ← Meta.forallTelescope info.type fun xs _ => do
     let mut names : List String := []
     for x in xs do
       let ld ← x.fvarId!.getDecl
       unless ← isErasableType ld.type do
         if isElaboratorGeneratedName ld.userName then
-          throwError s!"{name} binds a parameter via a pattern instead of a name"
-        names := names ++ [toString ld.userName]
+          if eqns?.isSome then
+            names := names ++ [paramNameOrFallback ld.userName names.length]
+          else
+            throwError s!"{name} binds a parameter via a pattern instead of a name"
+        else
+          names := names ++ [toString ld.userName]
     pure names
-  match ← Meta.getEqnsFor? name with
+  match eqns? with
   | some eqns => do
     let mut clauses : List (List LPat × LExpr) := []
     for eqnName in eqns do

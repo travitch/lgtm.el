@@ -34,6 +34,16 @@ Returns nil if none is found."
   (let ((item (seq-find (lambda (item) (funcall p (elt item 0))) (seq-map-indexed #'list lst))))
     (if item (elt item 1) nil)))
 
+(defun lgtm--list-nodup-p (eq-fn lst)
+  "Whether no two elements of LST are equal according to EQ-FN."
+  (= (length lst) (length (seq-uniq lst eq-fn))))
+
+(defun lgtm--option-decidable-eq (eq-fn a b)
+  "Whether option-represented values A and B (nil for none) are equal.
+
+Compares the payloads via EQ-FN when both are present; otherwise equal only if both are absent."
+  (if (and a b) (funcall eq-fn a b) (not (or a b))))
+
 ;; Tuples (including pairs) are represented as vectors in the translation
 
 (defun lgtm--pair-fst (p)

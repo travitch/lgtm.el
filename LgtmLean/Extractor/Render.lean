@@ -130,13 +130,16 @@ partial def LPat.toQPat : LPat → String
   | .var name => "," ++ toLispName name
   | .wildcard => ",_"
   | .lit l => SExpr.render l.toSExpr
-  -- `Option.none`/`Option.some` are special-cased to `nil`/the bare value, and `Bool.true`/
-  -- `Bool.false` to `t`/`nil`, rather than the usual symbol/vector encoding. See
-  -- [ref:inductive-type-representation].
+  -- `Option.none`/`Option.some` are special-cased to `nil`/the bare value, `Bool.true`/
+  -- `Bool.false` to `t`/`nil`, and `Decidable.isTrue`/`Decidable.isFalse` (whose sole field is
+  -- always an erased proof) likewise to `t`/`nil`, rather than the usual symbol/vector encoding.
+  -- See [ref:inductive-type-representation].
   | .ctor "Option.none" [] => "nil"
   | .ctor "Option.some" [p] => p.toQPat
   | .ctor "Bool.true" [] => "t"
   | .ctor "Bool.false" [] => "nil"
+  | .ctor "Decidable.isTrue" [] => "t"
+  | .ctor "Decidable.isFalse" [] => "nil"
   | .ctor name [] => translateConstructorTag name
   | .ctor name fields =>
     "[" ++ String.intercalate " " (translateConstructorTag name :: fields.map LPat.toQPat) ++ "]"
@@ -297,6 +300,73 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
     let v₁ ← LExpr.toSExpr args[0]!
     let v₂ ← LExpr.toSExpr args[1]!
     pure (some (.list [.atom "equal", v₁, v₂]))
+  -- `id`/`inferInstance` are the wrappers `unfold ..; infer_instance` leaves behind around a
+  -- hand-derived `Decidable` instance's real value (see `returnsDecidable` in `Extractor.lean`,
+  -- which is what lets such an instance's body reach here at all) -- both are plain identity
+  -- functions over their single kept argument (their `Sort`/instance-implicit type argument
+  -- erases), so just pass the argument through.
+  | .global "id" => some <$> LExpr.toSExpr args[0]!
+  | .global "inferInstance" => some <$> LExpr.toSExpr args[0]!
+  | .global "instDecidableAnd" => do
+    let p ← LExpr.toSExpr args[0]!
+    let q ← LExpr.toSExpr args[1]!
+    pure (some (.list [.atom "and", p, q]))
+  -- `List.decidableBAll`/`List.decidableBEx`/`Option.decidableForallMem`/`forall_prop_decidable`
+  -- below all take an explicit `(p : _ → Prop)` (or, for `forall_prop_decidable`, `(P : p → Prop)`)
+  -- argument ahead of the actual `Decidable`/`DecidablePred` dictionary. `isErasableType` fails to
+  -- erase it: `Meta.isProp`'s fast path (`isPropQuick`) recurses into an arrow type's *codomain*
+  -- looking for a bare `Sort` literal, and short-circuits to `false` the moment it finds one --
+  -- without ever computing the `imax` that would reveal `_ → Prop` is itself `Prop`-sorted. So
+  -- `args[0]` here is always that untranslatable proposition value (harmless as long as nothing
+  -- below reads it -- it decodes to `LExpr.opaque "unsupported term shape"` whenever the
+  -- proposition contains `∀`/`∃`/`∧` and isn't just erased away), and the dictionary/target
+  -- actually needed are one position later than the combinator's own explicit-argument count would
+  -- suggest.
+  | .global "List.decidableBAll" => do
+    -- Decides `∀ x ∈ l, p x`: `args[1]` is the per-element `DecidablePred p` dictionary (a real,
+    -- callable function -- its own `isTrue`/`isFalse` result renders as a plain boolean, see
+    -- `LExpr.toSExpr`'s `Decidable.isTrue`/`isFalse` cases), `args[2]` is `l`. The `Prop`-valued
+    -- cousin of `List.all` above.
+    let pred ← LExpr.toSExpr args[1]!
+    let lst ← LExpr.toSExpr args[2]!
+    pure (some (.list [.atom "seq-every-p", pred, lst]))
+  | .global "List.decidableBEx" => do
+    -- Decides `∃ x ∈ l, p x`, the existential counterpart of `List.decidableBAll` above.
+    let pred ← LExpr.toSExpr args[1]!
+    let lst ← LExpr.toSExpr args[2]!
+    pure (some (.list [.atom "seq-some", pred, lst]))
+  | .global "Option.decidableForallMem" => do
+    -- Decides `∀ x ∈ o, p x` for `o : Option α`: vacuously true for `none` (rendered `nil`),
+    -- otherwise the decision for the wrapped value.
+    let pred ← LExpr.toSExpr args[1]!
+    let opt ← LExpr.toSExpr args[2]!
+    pure (some (.list [.atom "or", .list [.atom "not", opt], .list [.atom "funcall", pred, opt]]))
+  | .global "forall_prop_decidable" => do
+    -- Decides the dependent implication `∀ h : p, P h`: vacuously true when `p` is false,
+    -- otherwise whatever the `h`-indexed family (`args[2]`, `fun h => ..`) decides. That family is
+    -- itself parametrized by an erased proof (`h : p`, genuinely erased since `p`'s own type is the
+    -- bare `Sort` `Prop`, not an arrow into it), so `translateExpr`'s `.lam` case has already
+    -- stripped its binder down to a niladic `LExpr.lam [] body` -- unwrap straight to `body` rather
+    -- than round-tripping through a pointless `(funcall (lambda () body))`.
+    let pInst ← LExpr.toSExpr args[1]!
+    let familyBody ← match args[2]! with
+      | .lam [] body => LExpr.toSExpr body
+      | other => do
+        let f ← LExpr.toSExpr other
+        pure (.list [.atom "funcall", f])
+    pure (some (.list [.atom "or", .list [.atom "not", pInst], familyBody]))
+  | .global "List.nodupDecidable" => do
+    -- Decides `List.Nodup l` given a `DecidableEq` dictionary for the element type.
+    let eqInst ← LExpr.toSExpr args[0]!
+    let lst ← LExpr.toSExpr args[1]!
+    pure (some (.list [.atom "lgtm--list-nodup-p", eqInst, lst]))
+  | .global "Option.instDecidableEq" => do
+    -- Decides equality of two `Option α` values (`nil`/bare-value encoded) given a `DecidableEq`
+    -- dictionary for `α`.
+    let eqInst ← LExpr.toSExpr args[0]!
+    let a ← LExpr.toSExpr args[1]!
+    let b ← LExpr.toSExpr args[2]!
+    pure (some (.list [.atom "lgtm--option-decidable-eq", eqInst, a, b]))
   | _ => pure none
 
 partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=
@@ -317,6 +387,13 @@ partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=
   | .ctorRef "List.nil" => pure (SExpr.atom "nil")
   | .ctorRef "Bool.true" => pure (SExpr.atom "t")
   | .ctorRef "Bool.false" => pure (SExpr.atom "nil")
+  -- `Decidable`'s own constructors carry nothing but an erased proof by the time they reach here,
+  -- so -- like `Bool.true`/`Bool.false` above -- they're just the plain boolean answer, not a
+  -- tagged value. This is what lets a decision procedure's body (`isTrue h`/`isFalse h`, however
+  -- deeply it's produced -- e.g. via `List.decidableBAll`'s own recursion) render as a real elisp
+  -- boolean instead of an opaque, always-truthy struct.
+  | .ctorRef "Decidable.isTrue" => pure (SExpr.atom "t")
+  | .ctorRef "Decidable.isFalse" => pure (SExpr.atom "nil")
   | .ctorRef name => do
     match ← isInductiveConstructor name with
     | false =>
