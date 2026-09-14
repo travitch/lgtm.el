@@ -16,7 +16,7 @@ unsafe def main : IO UInt32 := do
     IO.eprintln s!"Extraction produced {postState.opaqueValues.length} opaque value(s):"
     for reason in postState.opaqueValues.reverse do
       IO.eprintln s!"  - {reason}"
-    IO.eprintln "The following called functions were not defined"
+    IO.eprintln s!"Extraction produced {undefinedCalledFuncs.size} calls to functions that were not defined"
     for func in undefinedCalledFuncs.toList do
       IO.eprintln s!"  - {func}"
     pure 1
