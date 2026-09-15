@@ -339,62 +339,6 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
     let p ← LExpr.toSExpr args[0]!
     let q ← LExpr.toSExpr args[1]!
     pure (some (.list [.atom "and", p, q]))
-  -- `List.decidableBAll`/`List.decidableBEx`/`Option.decidableForallMem`/`forall_prop_decidable`
-  -- below all take an explicit `(p : _ → Prop)` (or, for `forall_prop_decidable`, `(P : p → Prop)`)
-  -- argument ahead of the actual `Decidable`/`DecidablePred` dictionary. `isErasableType` fails to
-  -- erase it: `Meta.isProp`'s fast path (`isPropQuick`) recurses into an arrow type's *codomain*
-  -- looking for a bare `Sort` literal, and short-circuits to `false` the moment it finds one --
-  -- without ever computing the `imax` that would reveal `_ → Prop` is itself `Prop`-sorted. So
-  -- `args[0]` here is always that untranslatable proposition value (harmless as long as nothing
-  -- below reads it -- it decodes to `LExpr.opaque "unsupported term shape"` whenever the
-  -- proposition contains `∀`/`∃`/`∧` and isn't just erased away), and the dictionary/target
-  -- actually needed are one position later than the combinator's own explicit-argument count would
-  -- suggest.
-  | .global "List.decidableBAll" => do
-    -- Decides `∀ x ∈ l, p x`: `args[1]` is the per-element `DecidablePred p` dictionary (a real,
-    -- callable function -- its own `isTrue`/`isFalse` result renders as a plain boolean, see
-    -- `LExpr.toSExpr`'s `Decidable.isTrue`/`isFalse` cases), `args[2]` is `l`. The `Prop`-valued
-    -- cousin of `List.all` above.
-    let pred ← LExpr.toSExpr args[1]!
-    let lst ← LExpr.toSExpr args[2]!
-    pure (some (.list [.atom "seq-every-p", pred, lst]))
-  | .global "List.decidableBEx" => do
-    -- Decides `∃ x ∈ l, p x`, the existential counterpart of `List.decidableBAll` above.
-    let pred ← LExpr.toSExpr args[1]!
-    let lst ← LExpr.toSExpr args[2]!
-    pure (some (.list [.atom "seq-some", pred, lst]))
-  | .global "Option.decidableForallMem" => do
-    -- Decides `∀ x ∈ o, p x` for `o : Option α`: vacuously true for `none` (rendered `nil`),
-    -- otherwise the decision for the wrapped value.
-    let pred ← LExpr.toSExpr args[1]!
-    let opt ← LExpr.toSExpr args[2]!
-    pure (some (.list [.atom "or", .list [.atom "not", opt], .list [.atom "funcall", pred, opt]]))
-  | .global "forall_prop_decidable" => do
-    -- Decides the dependent implication `∀ h : p, P h`: vacuously true when `p` is false,
-    -- otherwise whatever the `h`-indexed family (`args[2]`, `fun h => ..`) decides. That family is
-    -- itself parametrized by an erased proof (`h : p`, genuinely erased since `p`'s own type is the
-    -- bare `Sort` `Prop`, not an arrow into it), so `translateExpr`'s `.lam` case has already
-    -- stripped its binder down to a niladic `LExpr.lam [] body` -- unwrap straight to `body` rather
-    -- than round-tripping through a pointless `(funcall (lambda () body))`.
-    let pInst ← LExpr.toSExpr args[1]!
-    let familyBody ← match args[2]! with
-      | .lam [] body => LExpr.toSExpr body
-      | other => do
-        let f ← LExpr.toSExpr other
-        pure (.list [.atom "funcall", f])
-    pure (some (.list [.atom "or", .list [.atom "not", pInst], familyBody]))
-  | .global "List.nodupDecidable" => do
-    -- Decides `List.Nodup l` given a `DecidableEq` dictionary for the element type.
-    let eqInst ← LExpr.toSExpr args[0]!
-    let lst ← LExpr.toSExpr args[1]!
-    pure (some (.list [.atom "lgtm--list-nodup-p", eqInst, lst]))
-  | .global "Option.instDecidableEq" => do
-    -- Decides equality of two `Option α` values (`nil`/bare-value encoded) given a `DecidableEq`
-    -- dictionary for `α`.
-    let eqInst ← LExpr.toSExpr args[0]!
-    let a ← LExpr.toSExpr args[1]!
-    let b ← LExpr.toSExpr args[2]!
-    pure (some (.list [.atom "lgtm--option-decidable-eq", eqInst, a, b]))
   | .global "instDecidableEqNat" => do
     let v₁ ← LExpr.toSExpr args[0]!
     let v₂ ← LExpr.toSExpr args[1]!
