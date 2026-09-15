@@ -183,6 +183,9 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
     -- We represent none as nil in elisp, so the value is some if it is not nil
     let theValue ← LExpr.toSExpr args[0]!
     pure (some theValue)
+  | .global "Option.get" => do
+    let v ← LExpr.toSExpr args[0]!
+    pure (some v)
   | .ctorRef "Option.some" => do
     let v ← LExpr.toSExpr args[0]!
     pure (some v)
