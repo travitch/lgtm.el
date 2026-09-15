@@ -46,7 +46,7 @@ Unlike `seq-some', this answers with t rather than with P's own return value."
 Errors if the list is empty."
   (if lst
       (seq-elt lst (- (seq-length lst) 1))
-    (error "Passed an empty list"))
+    (error "Passed an empty list")))
 
 ;; Tuples (including pairs) are represented as vectors in the translation
 
