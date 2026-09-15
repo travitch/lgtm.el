@@ -34,6 +34,12 @@ Returns nil if none is found."
   (let ((item (seq-find (lambda (item) (funcall p (elt item 0))) (seq-map-indexed #'list lst))))
     (if item (elt item 1) nil)))
 
+(defun lgtm--list-any (p lst)
+  "Whether any element of LST satisfies P.
+
+Unlike `seq-some', this answers with t rather than with P's own return value."
+  (if (seq-some p lst) t nil))
+
 (defun lgtm--list-nodup-p (eq-fn lst)
   "Whether no two elements of LST are equal according to EQ-FN."
   (= (length lst) (length (seq-uniq lst eq-fn))))

@@ -21,7 +21,10 @@ def LLit.toSExpr : LLit → SExpr
   | .str s => .string s
   | .char c => .atom (charToLispSyntax c)
 
-/-- Convert names from camel or pascal case to kebab case. -/
+/-- Convert names from camel or pascal case to kebab case.
+
+A trailing (or interior) `'` character is a quote form for the elisp reader, so spell it out as `-prime`
+to avoid introducing syntax errors. -/
 def toLispName (s : String) : String :=
   let cs := s.toList.toArray
   let n := cs.size
@@ -32,6 +35,8 @@ def toLispName (s : String) : String :=
       let c := cs[i]!
       if isSep c then
         acc := '-' :: acc
+      else if c == '\'' then
+        acc := 'e' :: 'm' :: 'i' :: 'r' :: 'p' :: '-' :: acc
       else if c.isUpper then
         let prev? := if i == 0 then none else some cs[i - 1]!
         let nextIsLower := i + 1 < n && (cs[i + 1]!).isLower
@@ -133,14 +138,16 @@ partial def LPat.toQPat : LPat → String
   | .lit l => SExpr.render l.toSExpr
   -- `Option.none`/`Option.some` are special-cased to `nil`/the bare value, `Bool.true`/
   -- `Bool.false` to `t`/`nil`, and `Decidable.isTrue`/`Decidable.isFalse` (whose sole field is
-  -- always an erased proof) likewise to `t`/`nil`, rather than the usual symbol/vector encoding.
-  -- See [ref:inductive-type-representation].
+  -- always an erased proof) likewise to `t`/`nil`.
   | .ctor "Option.none" [] => "nil"
   | .ctor "Option.some" [p] => p.toQPat
   | .ctor "Bool.true" [] => "t"
   | .ctor "Bool.false" [] => "nil"
   | .ctor "Decidable.isTrue" [] => "t"
   | .ctor "Decidable.isFalse" [] => "nil"
+  -- `List` is likewise special-cased, to elisp's own empty list and cons cell
+  | .ctor "List.nil" [] => "nil"
+  | .ctor "List.cons" [head, tail] => "(" ++ head.toQPat ++ " . " ++ tail.toQPat ++ ")"
   | .ctor name [] => translateConstructorTag name
   | .ctor name fields =>
     "[" ++ String.intercalate " " (translateConstructorTag name :: fields.map LPat.toQPat) ++ "]"
@@ -152,10 +159,26 @@ mutual
 If the provided function is not a Lean builtin or standard library function, return none. -/
 partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Option SExpr) :=
   match fn with
+  -- `b = true` arises from a coercion in dependent matches (e.g., `if h : someBool then ...`)
+  -- decides by "truthiness" rather than by equality to `t`.  Be careful with that pattern here
+  -- by translating to `(and thing t)` to achieve a truthy comparison.
   | .global "instDecidableEqBool" => do
     let b₁ ← LExpr.toSExpr args[0]!
     let b₂ ← LExpr.toSExpr args[1]!
-    pure (some (.list [.atom "eq", b₁, b₂]))
+    match b₁, b₂ with
+    | .atom "t", b | b, .atom "t" => pure (some (.list [.atom "and", b, .atom "t"]))
+    | _, _ => pure (some (.list [.atom "eq", b₁, b₂]))
+  | .global "Bool.not" => do
+    let b ← LExpr.toSExpr args[0]!
+    pure (some (.list [.atom "not", b]))
+  | .global "Bool.and" => do
+    let b₁ ← LExpr.toSExpr args[0]!
+    let b₂ ← LExpr.toSExpr args[1]!
+    pure (some (.list [.atom "and", b₁, b₂]))
+  | .global "Bool.or" => do
+    let b₁ ← LExpr.toSExpr args[0]!
+    let b₂ ← LExpr.toSExpr args[1]!
+    pure (some (.list [.atom "or", b₁, b₂]))
   | .global "Option.isSome" => do
     -- We represent none as nil in elisp, so the value is some if it is not nil
     let theValue ← LExpr.toSExpr args[0]!
@@ -180,6 +203,10 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
     let lst ← LExpr.toSExpr args[0]!
     let p ← LExpr.toSExpr args[1]!
     pure (some (.list [.atom "seq-every-p", p, lst]))
+  | .global "List.any" => do
+    let lst ← LExpr.toSExpr args[0]!
+    let p ← LExpr.toSExpr args[1]!
+    pure (some (.list [.atom "lgtm--list-any", p, lst]))
   | .global "List.map" => do
     let func ← LExpr.toSExpr args[0]!
     let lst ← LExpr.toSExpr args[1]!
@@ -574,6 +601,14 @@ def testRender (s : SExprM SExpr) : String := SExpr.render (SExprM.run 2 emptyTr
 #guard_msgs in
 #eval toLispName "__weird__Name__"
 
+/-- info: "s-prime" -/
+#guard_msgs in
+#eval toLispName "s'"
+
+/-- info: "parent-ref-prime" -/
+#guard_msgs in
+#eval toLispName "parentRef'"
+
 /-- info: "(cl-defstruct lgtm-comment-ref\n  (id nil :read-only t))" -/
 #guard_msgs in
 #eval testRender (LStructureDefinition.toSExpr { name := "CommentRef", fields := ["id"] })
@@ -695,6 +730,15 @@ def testRender (s : SExprM SExpr) : String := SExpr.render (SExprM.run 2 emptyTr
     [([.ctor "Bool.true" []], .lit (.str "yes")),
      ([.ctor "Bool.false" []], .lit (.str "no"))]))
 
+-- `List.nil`/`List.cons` patterns are special-cased to match elisp's own empty list and cons cell,
+-- which is how the value side represents a `List`.
+/-- info: "(pcase l\n  (`nil 0)\n  (`(,x . ,xs) x))" -/
+#guard_msgs in
+#eval testRender (LExpr.toSExpr
+  (.matchE [.var "l"]
+    [([.ctor "List.nil" []], .lit (.nat 0)),
+     ([.ctor "List.cons" [.var "x", .var "xs"]], .var "x")]))
+
 -- A `block` nested inside a `list` that's itself a body form of an outer `block` should still
 -- have its own body forms indented cumulatively (outer `indent` + inner `indent`), not just the
 -- inner block's own `indent` in isolation -- exercising `SExpr.renderIndent`'s threaded, rather
@@ -720,5 +764,7 @@ This uniform representation means that no special type declarations are required
 As special cases:
 - Implement Lean's `Option.none` as standard elisp `nil` and `Option.some x` as `x` (i.e., just the value itself)
 - Implement Lean's `Bool.true` and `Bool.false` as elisp `t` and `nil`, respectively
+- Implement Lean's `List` as an elisp list (`List.nil` as `nil` and `List.cons x xs` as a cons cell),
+  so that the `seq-*` functions apply to it directly
 
 -/

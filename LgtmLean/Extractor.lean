@@ -51,10 +51,10 @@ def isInductiveDecl (env : Environment) (name : Name) : ConstantInfo → Bool
 `Meta.forallTelescope`) so it stays usable from the non-monadic `isCompilerGenerated`.
 
 Mirrors the `Decidable` carve-out `isErasableType` applies to *values*, but at the
-declaration-filtering layer: without this, a hand-derived decision procedure like
-`allCommentsHaveBackendId.decidable` (`Decidable (allCommentsHaveBackendId comments)`, i.e. a
-`Comment → Decidable ..` telescope once uncurried) or an auto-derived `DecidableEq` instance for one
-of `LgtmLean`'s own types (`(a b : α) → Decidable (a = b)`) would be swept up by
+declaration-filtering layer: without this, a hand-written decision procedure like
+`existsFileLocationVersion.decidable` (`Decidable (∃ loc, ..)`, i.e. a `Comment → FileVersion →
+Decidable ..` telescope once uncurried) or an auto-derived `DecidableEq` instance for one of
+`LgtmLean`'s own types (`(a b : α) → Decidable (a = b)`) would be swept up by
 `isCompilerGenerated`'s instance/name-shape heuristics below and never get a body -- even though
 `translateApp`'s dependent-`if`/`dite` handling keeps referencing it as a real, called value. -/
 partial def returnsDecidable (env : Environment) (name : Name) : Bool :=
@@ -267,9 +267,9 @@ shadowing is fine there, since real references resolve by `FVarId`, not by surfa
 several of the library's own `Decidable` combinators (`DecidablePred`'s per-element instance
 argument, the callbacks `List.decidableBAll`/`decidableBEx`/`Option.decidableForallMem` synthesize,
 ..) all reuse the exact same generic surface name (`a`, `a_1`, ..) for their bound variable
-regardless of call site, so nesting several of them (as `allParentsInComments`/
-`parentsCreatedBefore`'s guards in `Interface.lean` do) puts multiple, genuinely different,
-simultaneously in-scope binders under identical names. Since the rendered elisp is flat and
+regardless of call site, so nesting several of them puts multiple, genuinely different,
+simultaneously in-scope binders under identical names (as does an auto-derived `DecidableEq` body,
+which names every field's pair of compared values `a`/`b`). Since the rendered elisp is flat and
 resolves purely lexically, emitting two such binders under the same identifier would let the inner
 one silently capture references meant for the outer one. -/
 def bindFresh (varNames : Std.HashMap FVarId String) (fvarId : FVarId) (candidate : String) :

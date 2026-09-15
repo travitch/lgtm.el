@@ -181,27 +181,23 @@ private theorem commentsByRef_contains_of_mem (comments : List Comment) (c : Com
     (commentsByRef comments).contains c.ref :=
   commentsByRef.go_contains_of_mem comments Std.HashMap.emptyWithCapacity c hc
 
-/-- `addRemoteComments` validates a server-provided comment batch against these predicates before
-assembling threads from it, via `if h : ... then ... else ...`. Instance search won't unfold a
-plain `def` on its own (and these `def`s can't be marked `@[expose]`/unfolded from a `public`
-declaration without extra bridge lemmas), so each predicate needs its own `Decidable` instance
-spelled out here; keeping them `private` (rather than adding them to `CreateThreads.lean`) sidesteps
-that entirely, since a private declaration gets full local transparency. -/
-private instance allCommentsHaveBackendId.decidable (comments : List Comment) :
-    Decidable (allCommentsHaveBackendId comments) := by
-  unfold allCommentsHaveBackendId; infer_instance
+/-- `addRemoteComments`'s per-file check: every entry of a `baseComments`/`currentComments` bucket
+names a file that `state` actually tracks, and carries a comment batch that `assembleCommentTrees`
+will accept (`checkCommentBatch`). `Bool`-valued rather than a decided `Prop` for the reasons given
+with the `check..` functions in `CreateThreads.lean`; `checkFileCommentBatches_iff` recovers the
+`Prop` the thread-assembly functions ask for. -/
+public def checkFileCommentBatches (state : Std.HashMap ModifiedFileRef ModifiedFileState)
+    (entries : List (ModifiedFileRef × List Comment)) : Bool :=
+  entries.all (fun entry => state.contains entry.1 && checkCommentBatch entry.2)
 
-private instance allParentsInComments.decidable (comments : List Comment) :
-    Decidable (allParentsInComments comments) := by
-  unfold allParentsInComments; infer_instance
-
-private instance commentRefsNodup.decidable (comments : List Comment) :
-    Decidable (commentRefsNodup comments) := by
-  unfold commentRefsNodup; infer_instance
-
-private instance parentsCreatedBefore.decidable (comments : List Comment) :
-    Decidable (parentsCreatedBefore comments) := by
-  unfold parentsCreatedBefore; infer_instance
+public theorem checkFileCommentBatches_iff (state : Std.HashMap ModifiedFileRef ModifiedFileState)
+    (entries : List (ModifiedFileRef × List Comment)) :
+    checkFileCommentBatches state entries = true ↔
+      ∀ entry, entry ∈ entries → state.contains entry.1 ∧ allCommentsHaveBackendId entry.2 ∧
+        allParentsInComments entry.2 ∧ commentRefsNodup entry.2 ∧ parentsCreatedBefore entry.2 := by
+  rw [checkFileCommentBatches, List.all_eq_true]
+  refine forall_congr' fun entry => imp_congr_right fun _ => ?_
+  rw [Bool.and_eq_true, checkCommentBatch_iff]
 
 /-- `(m.insert k v).contains k'` doesn't depend on `v` when `k` was already present: inserting at an
 already-tracked key can't add or remove any other key (or `k` itself). Used by
@@ -550,18 +546,16 @@ public def addRemoteComments (s₀ : State) : Result (Except String Unit) :=
   | none => Result.mk (Except.ok ()) s₀
   | some comments =>
     let bootstrapState := groupComments comments
-    if hTop : allCommentsHaveBackendId bootstrapState.topLevelComments ∧
-        allParentsInComments bootstrapState.topLevelComments ∧
-        commentRefsNodup bootstrapState.topLevelComments ∧
-        parentsCreatedBefore bootstrapState.topLevelComments then
+    if hTop : checkCommentBatch bootstrapState.topLevelComments = true then
       let noCommentFileManager := s₀.fileManager.resetCommentState
-      if hBase : ∀ entry, entry ∈ bootstrapState.baseComments.toList →
-          noCommentFileManager.state.contains entry.1 ∧ allCommentsHaveBackendId entry.2 ∧
-          allParentsInComments entry.2 ∧ commentRefsNodup entry.2 ∧ parentsCreatedBefore entry.2 then
-        if hCurrent : ∀ entry, entry ∈ bootstrapState.currentComments.toList →
-            noCommentFileManager.state.contains entry.1 ∧ allCommentsHaveBackendId entry.2 ∧
-            allParentsInComments entry.2 ∧ commentRefsNodup entry.2 ∧ parentsCreatedBefore entry.2 then
-          let ⟨hBackendTop, hParentsTop, hNodupTop, hBeforeTop⟩ := hTop
+      if hBaseCheck : checkFileCommentBatches noCommentFileManager.state
+          bootstrapState.baseComments.toList = true then
+        if hCurrentCheck : checkFileCommentBatches noCommentFileManager.state
+            bootstrapState.currentComments.toList = true then
+          let ⟨hBackendTop, hParentsTop, hNodupTop, hBeforeTop⟩ :=
+            (checkCommentBatch_iff bootstrapState.topLevelComments).mp hTop
+          let hBase := (checkFileCommentBatches_iff _ _).mp hBaseCheck
+          let hCurrent := (checkFileCommentBatches_iff _ _).mp hCurrentCheck
           let hAllBackend := bootstrapState.allComments_haveBackendId hBackendTop
             (fun entry hentry => (hBase entry hentry).2.1) (fun entry hentry => (hCurrent entry hentry).2.1)
           let initBS : FileThreadsBootstrapState noCommentFileManager.state

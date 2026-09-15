@@ -28,6 +28,99 @@ public def parentsCreatedBefore (comments : List Comment) : Prop :=
   ∀ c, c ∈ comments → ∀ parentId, c.parent = some parentId →
     ∀ c', c' ∈ comments → c'.backendId = some parentId → c'.createdTimestamp < c.createdTimestamp
 
+/-! ### Run-time checks for the batch predicates
+
+`addRemoteComments` has to *check* the four predicates above against whatever batch of comments the
+server just handed us. Each one is decidable, so `if h : allParentsInComments cs then ..` typechecks
+on its own -- but what that runs is a tower of `Decidable` combinators (`List.decidableBAll`,
+`Option.decidableForallMem`, `forall_prop_decidable`, ..) applied to erased `Prop` arguments, which
+is awkward to extract to elisp. The `check..` functions below are the plain `Bool`-valued
+counterparts, each paired with a `.._iff` theorem that recovers the `Prop` from a successful check,
+so callers get the same evidence without ever deciding a `Prop`. -/
+
+/-- The `Bool`-valued counterpart of `allCommentsHaveBackendId`. -/
+public def checkAllCommentsHaveBackendId (comments : List Comment) : Bool :=
+  comments.all (fun c => c.backendId.isSome)
+
+public theorem checkAllCommentsHaveBackendId_iff (comments : List Comment) :
+    checkAllCommentsHaveBackendId comments = true ↔ allCommentsHaveBackendId comments := by
+  simp only [checkAllCommentsHaveBackendId, allCommentsHaveBackendId, List.all_eq_true]
+
+/-- The `Bool`-valued counterpart of `allParentsInComments`. -/
+public def checkAllParentsInComments (comments : List Comment) : Bool :=
+  comments.all fun c =>
+    match c.parent with
+    | none => true
+    | some parentId => comments.any fun c' => c'.backendId == some parentId
+
+public theorem checkAllParentsInComments_iff (comments : List Comment) :
+    checkAllParentsInComments comments = true ↔ allParentsInComments comments := by
+  rw [checkAllParentsInComments, allParentsInComments, List.all_eq_true]
+  refine forall_congr' fun c => imp_congr_right fun hc => ?_
+  rcases c.parent with _ | parentId
+  · simp
+  · simp [List.any_eq_true]
+
+/-- Whether every element of `refs` is distinct -- the `Bool`-valued counterpart of `List.Nodup`,
+specialized to `CommentRef` (a polymorphic version would have to take a `BEq` dictionary, which the
+extractor erases). -/
+public def checkRefsNodup (refs : List CommentRef) : Bool :=
+  match refs with
+  | [] => true
+  | ref :: rest => rest.all (fun other => !(other == ref)) && checkRefsNodup rest
+
+public theorem checkRefsNodup_iff (refs : List CommentRef) :
+    checkRefsNodup refs = true ↔ refs.Nodup := by
+  induction refs with
+  | nil => simp [checkRefsNodup]
+  | cons ref rest ih =>
+    simp only [checkRefsNodup, Bool.and_eq_true, ih, List.nodup_cons]
+    refine and_congr_left' ?_
+    simp only [List.all_eq_true, Bool.not_eq_eq_eq_not, Bool.not_true, beq_eq_false_iff_ne, ne_eq]
+    exact ⟨fun h hmem => h ref hmem rfl, fun h other hother heq => h (heq ▸ hother)⟩
+
+/-- The `Bool`-valued counterpart of `commentRefsNodup`. -/
+public def checkCommentRefsNodup (comments : List Comment) : Bool :=
+  checkRefsNodup (comments.map Comment.ref)
+
+public theorem checkCommentRefsNodup_iff (comments : List Comment) :
+    checkCommentRefsNodup comments = true ↔ commentRefsNodup comments :=
+  checkRefsNodup_iff (comments.map Comment.ref)
+
+/-- The `Bool`-valued counterpart of `parentsCreatedBefore`. -/
+public def checkParentsCreatedBefore (comments : List Comment) : Bool :=
+  comments.all fun c =>
+    match c.parent with
+    | none => true
+    | some parentId =>
+      comments.all fun c' =>
+        !(c'.backendId == some parentId) || c'.createdTimestamp < c.createdTimestamp
+
+public theorem checkParentsCreatedBefore_iff (comments : List Comment) :
+    checkParentsCreatedBefore comments = true ↔ parentsCreatedBefore comments := by
+  rw [checkParentsCreatedBefore, parentsCreatedBefore, List.all_eq_true]
+  refine forall_congr' fun c => imp_congr_right fun hc => ?_
+  rcases c.parent with _ | parentId
+  · simp
+  · simp only [List.all_eq_true, Bool.or_eq_true, Bool.not_eq_eq_eq_not, Bool.not_true,
+      beq_eq_false_iff_ne, ne_eq, decide_eq_true_eq, Option.some.injEq, forall_eq']
+    exact forall_congr' fun c' => imp_congr_right fun _ =>
+      ⟨fun h hbackend => h.resolve_left (fun hne => hne hbackend),
+        fun h => if hbackend : c'.backendId = some parentId then Or.inr (h hbackend) else Or.inl hbackend⟩
+
+/-- All four structural preconditions of `assembleCommentTrees`, checked together. -/
+public def checkCommentBatch (comments : List Comment) : Bool :=
+  checkAllCommentsHaveBackendId comments && checkAllParentsInComments comments &&
+    checkCommentRefsNodup comments && checkParentsCreatedBefore comments
+
+public theorem checkCommentBatch_iff (comments : List Comment) :
+    checkCommentBatch comments = true ↔
+      allCommentsHaveBackendId comments ∧ allParentsInComments comments ∧
+        commentRefsNodup comments ∧ parentsCreatedBefore comments := by
+  rw [checkCommentBatch]
+  simp only [Bool.and_eq_true, checkAllCommentsHaveBackendId_iff, checkAllParentsInComments_iff,
+    checkCommentRefsNodup_iff, checkParentsCreatedBefore_iff, and_assoc]
+
 /-- The non-automatically-decidable piece of `commentsAllInSameFileOrAllTopLevel`: the existential
 quantifies over all of `CommentFileLocation`, which is infinite, but it's actually just a case
 split on `c.location` in disguise (the `∃ loc` is pinned down by the equation). -/
