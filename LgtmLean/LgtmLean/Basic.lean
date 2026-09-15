@@ -328,7 +328,7 @@ public theorem Std.HashMap.get_insert_of_ne {α β} [BEq α] [Hashable α] [Equi
   simp [hne]
 
 public def CommentManager.get (manager : CommentManager) (ref : CommentRef) : Comment :=
-  manager.comments[ref]!
+  manager.comments.get! ref
 
 /-- `CommentManager.get` actually reports back the ref it was looked up by, as long as that ref is
 covered (has an entry in `comments` at all) -- otherwise `[ref]!` would silently fall back to
@@ -884,7 +884,7 @@ public theorem State.hFileThreadsPublished_insert_current (s : State)
       exact hPreserve ref hc' hpub'
 
 public def addToListAt [BEq α] [Hashable α] (key : α) (value : β) (m : Std.HashMap α (List β)) : Std.HashMap α (List β) :=
-  match m[key]? with
+  match m.get? key with
   | none => m.insert key [value]
   | some lst => m.insert key (value :: lst)
 
@@ -892,7 +892,7 @@ public theorem addToListAt_eq_insert [BEq α] [Hashable α] [EquivBEq α] [Lawfu
     (key : α) (value : β) (m : Std.HashMap α (List β)) :
     addToListAt key value m = m.insert key (value :: m.getD key []) := by
   unfold addToListAt
-  rw [Std.HashMap.getD_eq_getD_getElem?]
+  rw [Std.HashMap.get?_eq_getElem?, Std.HashMap.getD_eq_getD_getElem?]
   cases m[key]? with
   | none => rfl
   | some lst => rfl

@@ -251,6 +251,10 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
     let m ← LExpr.toSExpr args[0]!
     let key ← LExpr.toSExpr args[1]!
     pure (some (.list [.atom "gethash", key, m]))
+  | .global "Std.HashMap.get!" => do
+    let m ← LExpr.toSExpr args[0]!
+    let key ← LExpr.toSExpr args[1]!
+    pure (some (.list [.atom "gethash", key, m]))
   | .global "Std.HashMap.toList" => do
     let m ← LExpr.toSExpr args[0]!
     pure (some (.list [.atom "lgtm--hash-map-to-list", m]))
@@ -281,10 +285,9 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
     let p ← LExpr.toSExpr args[0]!
     pure (some (.list [.atom "lgtm--pair-snd", p]))
   | .global "GetElem?.getElem!" => do
-    -- WARNING/TODO: Is there an overload with lists here?
     let collection ← LExpr.toSExpr args[1]!
     let idx ← LExpr.toSExpr args[2]!
-    pure (some (.list [.atom "gethash", idx, collection]))
+    pure (some (.list [.atom "seq-elt", collection, idx]))
   | .global "GetElem.getElem" => do
     let collection ← LExpr.toSExpr args[1]!
     let idx ← LExpr.toSExpr args[2]!

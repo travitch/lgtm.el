@@ -86,7 +86,7 @@ match fuel with
     let comparisonFunction := fun a b => decide ((manager.get a).createdTimestamp ≤ (manager.get b).createdTimestamp)
     let sortedChildren := thread.children.mergeSort comparisonFunction
     manager.get thread.value :: sortedChildren.flatMap (fun childRef =>
-      match threads.commentTreeNodes[childRef]? with
+      match threads.commentTreeNodes.get? childRef with
       | none => []
       | some childThread => CommentThread.linearizeRecWithFuel threads manager fuel childThread)
 
@@ -118,7 +118,7 @@ private theorem CommentThread.linearizeRecWithFuel.subset_succ (threads : Commen
       rw [List.mem_flatMap] at hx ⊢
       obtain ⟨childRef, hcr, hxc⟩ := hx
       refine ⟨childRef, hcr, ?_⟩
-      cases hlookup : threads.commentTreeNodes[childRef]? with
+      cases hlookup : threads.commentTreeNodes.get? childRef with
       | none => rw [hlookup] at hxc; exact absurd hxc (by simp)
       | some childThread => rw [hlookup] at hxc; exact ih childThread hxc
 
@@ -153,7 +153,7 @@ private theorem CommentThread.linearizeRecWithFuel.subset_of_mem_children (threa
   unfold CommentThread.linearizeRecWithFuel
   refine List.mem_cons_of_mem _ (List.mem_flatMap.mpr ⟨childRef, ?_, ?_⟩)
   · exact List.mem_mergeSort.mpr hChildMem
-  · rw [Std.HashMap.getElem?_eq_some_getElem hChildContains]
+  · rw [Std.HashMap.get?_eq_getElem?, Std.HashMap.getElem?_eq_some_getElem hChildContains]
     exact hx
 
 /-- A concrete walk from `root` to `endpoint` through `nodes`, following `.children` links,
