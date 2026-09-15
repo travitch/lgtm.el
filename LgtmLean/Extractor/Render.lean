@@ -202,6 +202,9 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
   | .global "List.isEmpty" => do
     let lst ← LExpr.toSExpr args[0]!
     pure (some (.list [.atom "seq-empty-p", lst]))
+  | .global "List.getLast" => do
+    let lst ← LExpr.toSExpr args[0]!
+    pure (some (.list [.atom "lgtm--list-last", lst]))
   | .global "List.all" => do
     let lst ← LExpr.toSExpr args[0]!
     let p ← LExpr.toSExpr args[1]!
