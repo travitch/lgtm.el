@@ -896,3 +896,9 @@ public theorem addToListAt_eq_insert [BEq α] [Hashable α] [EquivBEq α] [Lawfu
   cases m[key]? with
   | none => rfl
   | some lst => rfl
+
+public def compareThreadLocations (l₁ : ThreadLocation) (l₂ : ThreadLocation) : Bool :=
+  match (l₁, l₂) with
+  | (.topLevel, _) => true
+  | (_, .topLevel) => false
+  | (.lineNumber n₁, .lineNumber n₂) => n₁ ≤ n₂

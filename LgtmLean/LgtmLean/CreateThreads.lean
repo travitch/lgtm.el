@@ -198,7 +198,7 @@ private theorem flatMap_snd_filter_beq_fst_toList_eq_getD
 flattened list of all roots, up to reordering. -/
 private theorem flatMap_snd_toList_addToListAt_perm
     (m : Std.HashMap ThreadLocation (List CommentRef)) (k : ThreadLocation) (v : CommentRef) :
-    List.Perm ((addToListAt k v m).toList.flatMap Prod.snd)
+ List.Perm ((addToListAt k v m).toList.flatMap Prod.snd)
       (v :: m.toList.flatMap Prod.snd) := by
   rw [addToListAt_eq_insert]
   have h1 := Std.HashMap.toList_insert_perm (m := m) (k := k) (v := v :: m.getD k [])
@@ -299,7 +299,7 @@ private theorem registerServerCommentIds_commentTreeNodes_contains_iff
     (registerServerCommentIds comments hAll s₀).commentTreeNodes.contains ref ↔
       (∃ c, c ∈ comments ∧ c.ref = ref) ∨ s₀.commentTreeNodes.contains ref := by
   induction comments generalizing s₀ with
-  | nil => simp [registerServerCommentIds]
+ | nil => simp [registerServerCommentIds]
   | cons head tail ih =>
     rw [registerServerCommentIds_cons]
     refine (ih _ _).trans ?_

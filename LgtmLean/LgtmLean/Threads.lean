@@ -4,10 +4,7 @@ public import LgtmLean.Basic
 import all LgtmLean.Basic
 
 public def compareLocatedCommentThreads (t₁ : ThreadLocation × List CommentThread) (t₂ : ThreadLocation × List CommentThread) : Bool :=
-  match (t₁, t₂) with
-  | ((.topLevel, _), _) => true
-  | (_, (.topLevel, _)) => false
-  | ((.lineNumber n₁, _), (.lineNumber n₂, _)) => n₁ ≤ n₂
+  compareThreadLocations t₁.1 t₂.1
 
 public def compareThreadsByTimestamp (manager : CommentManager) (t₁ : CommentThread) (t₂ : CommentThread) : Bool :=
   (manager.get t₁.value).createdTimestamp ≤ (manager.get t₂.value).createdTimestamp
@@ -469,17 +466,24 @@ private def listIsSortedPredicate [Ord α] (values : List α) : Prop :=
   | [] => True
   | v :: rest => rest.all (λ other => (compare v other).isLE) ∧ listIsSortedPredicate rest
 
-public def ThreadLocation.le (a b : ThreadLocation) : Bool := (compare a b).isLE
-
-private theorem ThreadLocation.le_trans : ∀ (a b c : ThreadLocation), le a b → le b c → le a c := by
+private theorem compareThreadLocations_trans : ∀ (a b c : ThreadLocation),
+    compareThreadLocations a b → compareThreadLocations b c → compareThreadLocations a c := by
   intro a b c
-  unfold le compare instOrdThreadLocation instOrdThreadLocation.ord
-  rcases a <;> rcases b <;> rcases c <;> simp [Nat.isLE_compare] <;> omega
+  unfold compareThreadLocations
+  rcases a <;> rcases b <;> rcases c <;> simp <;> omega
 
-private theorem ThreadLocation.le_total : ∀ (a b : ThreadLocation), le a b || le b a := by
+private theorem compareThreadLocations_total :
+    ∀ (a b : ThreadLocation), compareThreadLocations a b || compareThreadLocations b a := by
   intro a b
-  unfold le compare instOrdThreadLocation instOrdThreadLocation.ord
-  rcases a <;> rcases b <;> simp [Nat.isLE_compare] <;> omega
+  unfold compareThreadLocations
+  rcases a <;> rcases b <;> simp <;> omega
+
+/-- `compareThreadLocations` agrees with the derived `Ord ThreadLocation` instance, which is what
+`listIsSortedPredicate` is stated in terms of. -/
+private theorem compareThreadLocations_eq_isLE_compare (a b : ThreadLocation) :
+    compareThreadLocations a b = (compare a b).isLE := by
+  unfold compareThreadLocations compare instOrdThreadLocation instOrdThreadLocation.ord
+  rcases a <;> rcases b <;> simp <;> rw [Bool.eq_iff_iff] <;> simp [Nat.isLE_compare]
 
 private theorem listIsSortedPredicate_iff_pairwise {α} [Ord α] (l : List α) :
     listIsSortedPredicate l ↔ l.Pairwise (fun a b => (compare a b).isLE = true) := by
@@ -490,14 +494,10 @@ private theorem listIsSortedPredicate_iff_pairwise {α} [Ord α] (l : List α) :
 theorem CommentThreads.asAlist.isSortedByLocation (threads : CommentThreads) (manager : CommentManager) :
   listIsSortedPredicate (List.map Prod.fst (threads.asAlist manager)) := by
   unfold CommentThreads.asAlist
-  rw [List.map_mergeSort (s := ThreadLocation.le) (by
-    intro a _ b _
-    unfold compareLocatedCommentThreads ThreadLocation.le compare instOrdThreadLocation instOrdThreadLocation.ord
-    rcases a with ⟨aloc, athreads⟩
-    rcases b with ⟨bloc, bthreads⟩
-    rcases aloc <;> rcases bloc <;> simp <;> rw [Bool.eq_iff_iff] <;> simp [Nat.isLE_compare])]
+  rw [List.map_mergeSort (s := compareThreadLocations) (by intro a _ b _; rfl)]
   rw [listIsSortedPredicate_iff_pairwise]
-  exact List.pairwise_mergeSort ThreadLocation.le_trans ThreadLocation.le_total _
+  simp only [← compareThreadLocations_eq_isLE_compare]
+  exact List.pairwise_mergeSort compareThreadLocations_trans compareThreadLocations_total _
 
 private theorem nat_compareLE_trans : ∀ (a b c : Nat), (compare a b).isLE → (compare b c).isLE → (compare a c).isLE := by
   intro a b c
