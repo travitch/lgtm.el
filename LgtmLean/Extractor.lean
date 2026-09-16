@@ -988,6 +988,8 @@ def renderToFile (targetFile : System.FilePath) (rendered : Rendered) : IO Unit 
   hdl.putStrLn "(require 'seq)"
   hdl.putStrLn "(require 'subr-x)"
   hdl.putStrLn ""
+  hdl.putStrLn ";;; Code:"
+  hdl.putStrLn ""
   hdl.putStrLn ";; Type definitions"
 
   -- We have to emit the type definitions at the top of the file since they define macros that must be visible

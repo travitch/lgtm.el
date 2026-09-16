@@ -90,7 +90,10 @@ match fuel with
       | none => []
       | some childThread => CommentThread.linearizeRecWithFuel threads manager fuel childThread)
 
-/-- Linearize a comment THREAD (belonging to `threads`) with a depth-first traversal. -/
+/-- Linearize THREAD into a list of comments.
+
+This needs access to the list of THREADS and the MANAGER to look
+up the contents of comments. -/
 public def CommentThread.linearize (thread : CommentThread) (threads : CommentThreads) (manager : CommentManager) : List Comment :=
   CommentThread.linearizeRecWithFuel threads manager threads.commentTreeNodes.size thread
 

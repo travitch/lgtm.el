@@ -85,11 +85,13 @@ public inductive CommentLocation where
   | topLevel : CommentLocation
   deriving Hashable, Inhabited, BEq
 
+/-- Return non-nil if LOC is a top-level comment. -/
 public def CommentLocation.isTopLevel (loc : CommentLocation) : Bool :=
 match loc with
 | .topLevel => true
 | .fileLocation _ => false
 
+/-- Convert LOC into a `lgtm--thread-location'. -/
 @[expose] public def CommentLocation.asThreadLocation (loc : CommentLocation) : ThreadLocation :=
 match loc with
 | .topLevel => .topLevel
@@ -161,6 +163,7 @@ public structure Comment where
   content : String
   deriving Inhabited
 
+/-- Return non-nil if C has been persisted on the server. -/
 public def Comment.isPersistedToServer (c : Comment) : Bool := c.backendId.isSome
 
 public abbrev CommentThread := Tree CommentRef
@@ -327,6 +330,10 @@ public theorem Std.HashMap.get_insert_of_ne {α β} [BEq α] [Hashable α] [Equi
   rw [Std.HashMap.get_eq_getElem, Std.HashMap.get_eq_getElem, Std.HashMap.getElem_insert]
   simp [hne]
 
+/-- Get the comment corresponding to REF from MANAGER.
+
+This could throw if the comment does not exist.  It would be nice to prove
+that this is safe with a structural invariant. -/
 public def CommentManager.get (manager : CommentManager) (ref : CommentRef) : Comment :=
   manager.comments.get! ref
 

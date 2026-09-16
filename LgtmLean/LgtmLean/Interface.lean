@@ -392,9 +392,10 @@ match l with
     (let ⟨hFound, hSameLoc, hFileLoc, hBackend, hParents, hNodup, hBefore, hSubset⟩ := hAll entry List.mem_cons_self
      bs.applyCurrent entry.1 entry.2 hFound hSameLoc hFileLoc hBackend hParents hNodup hBefore hSubset)
 
-/-- The full batch of comments `addRemoteComments` bulk-loads: the top-level bucket plus every
-file's base and current buckets, flattened into one list. `CommentManager.comments` is keyed by
-`commentsByRef` of this list, so every published-ness obligation for any of the three buckets
+/-- All comments loaded into BOOTSTRAP-STATE by `add-remote-comments'.
+
+`CommentManager.comments` is keyed by `commentsByRef` of this list,
+so every published-ness obligation for any of the three buckets
 ultimately reduces to a membership fact in `allComments`. -/
 public def CommentBootstrapState.allComments (bootstrapState : CommentBootstrapState) : List Comment :=
   List.flatten [bootstrapState.topLevelComments, bootstrapState.baseComments.toList.flatMap Prod.snd, bootstrapState.currentComments.toList.flatMap Prod.snd]
@@ -497,10 +498,10 @@ private theorem CommentBootstrapState.hAllCurrentEntries (bootstrapState : Comme
       (hCurrent entry hentry).2.2.2.2,
       allComments_hSubset hAllBackend (bootstrapState.mem_allComments_of_mem_currentComments entry hentry)⟩
 
-/-- Builds the `CommentManager` for a validated comment batch: `comments` is keyed by `.ref` over
-the whole batch (`allComments`), and `topLevelThreads` is assembled from the top-level bucket alone
-(free of `hSameLocationTop`, since `groupComments` already guarantees every top-level comment is
-actually top-level). -/
+/-- Build a comment manager from BOOTSTRAP-STATE.
+
+This extracts the data along with the invariants established by the
+bootstrapping process. -/
 public def CommentBootstrapState.toCommentManager (bootstrapState : CommentBootstrapState)
     (hBackendTop : allCommentsHaveBackendId bootstrapState.topLevelComments)
     (hParentsTop : allParentsInComments bootstrapState.topLevelComments)
