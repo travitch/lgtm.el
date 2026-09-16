@@ -7,10 +7,24 @@
 (defun lgtm--hash-map-map (func m)
   "Map FUNC over M to produce a new map.
 
-The function is called with two arguments: the keys and values from M."
-  (let ((res (make-hash-table)))
-    (maphash (lambda (key value) (puthash key (funcall func value) res)) m)
+The function is called with two arguments: the keys and values from M.
+
+The result starts as a copy of M rather than a fresh `make-hash-table'
+so that it keeps M's equality test."
+  (let ((res (copy-hash-table m)))
+    (maphash (lambda (key value) (puthash key (funcall func key value) res)) m)
     res))
+
+(defconst lgtm--hash-map-absent (make-symbol "lgtm--hash-map-absent")
+  "Sentinel `lgtm--hash-map-contains' looks for.
+Uninterned, so it cannot be `eq' to any value actually stored in a map.")
+
+(defun lgtm--hash-map-contains (key m)
+  "Whether M has an entry for KEY.
+
+Ideally we would use `hash-table-contains-p', but it was only added in
+Emacs 30."
+  (not (eq (gethash key m lgtm--hash-map-absent) lgtm--hash-map-absent)))
 
 (defun lgtm--hash-map-insert (key value m)
   "Insert KEY mapped to VALUE in M.
