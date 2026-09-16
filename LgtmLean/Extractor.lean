@@ -84,11 +84,11 @@ partial def returnsDecidable (env : Environment) (name : Name) : Bool :=
   | none => false
 
 /-- Whether `name` is a declaration the compiler generated on our behalf (structure/inductive
-machinery, equation lemmas, proof-irrelevant subterms, etc.) rather than something a person wrote. -/
-def isCompilerGenerated (env : Environment) (name : Name) : Bool :=
-  if returnsDecidable env name then
-    false
-  else
+machinery, equation lemmas, proof-irrelevant subterms, etc.) rather than something a person wrote.
+
+This is the raw judgement, *without* `isCompilerGenerated`'s exemption for `Decidable`-returning
+declarations; see `isDecidableExemption` for why the two are kept apart. -/
+def isCompilerGeneratedCore (env : Environment) (name : Name) : Bool :=
   let hasBadLastComponent :=
     match name with
     | .str _ s =>
@@ -105,6 +105,32 @@ def isCompilerGenerated (env : Environment) (name : Name) : Bool :=
     | _ => false
   Lean.isAuxRecursor env name || Lean.isNoConfusion env name || env.isProjectionFn name ||
     Lean.Meta.isInstanceCore env name || hasBadLastComponent || hasBadParentComponent
+
+/-- `isCompilerGeneratedCore`, except that a `Decidable`-returning declaration is never treated as
+compiler-generated. See `returnsDecidable` for why that exemption is needed and
+`isDecidableExemption` for how its over-reach is undone. -/
+def isCompilerGenerated (env : Environment) (name : Name) : Bool :=
+  if returnsDecidable env name then
+    false
+  else
+    isCompilerGeneratedCore env name
+
+/-- Whether `name` survives `isCompilerGenerated` *only* because of its `returnsDecidable`
+exemption, i.e. every other signal says the compiler wrote it.
+
+`deriving DecidableEq` on a structure generates exactly such a pair (`instDecidableEqGitRevision`
+and its `.decEq` worker), and the exemption is what stops the `startsWith "inst"` /
+`isInstanceCore` checks from discarding them. That exemption has to be unconditional to be safe --
+a `Decidable` value is real run-time data (see `isErasableType`), so a call site that branches on
+one genuinely needs the definition -- but on its own it keeps *every* derived instance, reachable
+or not.
+
+The dictionary positions those instances occupy (`Std.HashMap`'s `[BEq]`/`[Hashable]`, `==`, ...)
+are themselves erased and lowered to elisp `equal`, so in practice most of them end up referenced
+by nothing but each other. `pruneToReachable` uses this predicate to seed a reachability pass with
+everything else and drop the ones nothing actually calls. -/
+def isDecidableExemption (env : Environment) (name : Name) : Bool :=
+  returnsDecidable env name && isCompilerGeneratedCore env name
 
 
 /-! ## Erasure -/
@@ -812,6 +838,68 @@ def getInductiveNames (env : Environment) : List Name :=
       none
   names.mergeSort (·.toString ≤ ·.toString)
 
+/-- The names in `funcMap` reachable from `roots` by following `LExpr.global` references.
+
+Names in `roots` are always reachable, including ones with no `funcMap` entry (a declaration whose
+translation failed), which simply contribute no further edges. -/
+partial def reachableFunctions (funcMap : Std.HashMap String LFunction) (roots : List String) :
+    Std.HashSet String :=
+  go Std.HashSet.emptyWithCapacity roots
+where
+  go (seen : Std.HashSet String) : List String → Std.HashSet String
+    | [] => seen
+    | name :: rest =>
+      if seen.contains name then
+        go seen rest
+      else
+        let seen := seen.insert name
+        match funcMap[name]? with
+        | none => go seen rest
+        | some f => go seen (f.body.globalRefs ++ rest)
+
+section ReachabilityTests
+
+private def testFn (name : String) (body : LExpr) : LFunction :=
+  { name := name, parameters := [], body := body, docstring := none }
+
+/-- `root` calls `used`, which calls `alsoUsed`; `dead` is referenced by nothing, and `List.map`
+is a reference with no `funcMap` entry of its own. -/
+private def testFuncMap : Std.HashMap String LFunction :=
+  Std.HashMap.ofList
+    [ ("root", testFn "root" (.app (.global "List.map") [.global "used"])),
+      ("used", testFn "used" (.matchE [.var "x"] [([.wildcard], .global "alsoUsed")])),
+      ("alsoUsed", testFn "alsoUsed" (.lit (.nat 0))),
+      -- A cycle among the unreachable definitions, which must not diverge.
+      ("dead", testFn "dead" (.ite (.global "alsoDead") (.global "dead") (.lit (.nat 1)))),
+      ("alsoDead", testFn "alsoDead" (.global "dead")) ]
+
+/-- info: ["List.map", "alsoUsed", "root", "used"] -/
+#guard_msgs in
+#eval (reachableFunctions testFuncMap ["root"]).toList.mergeSort (· ≤ ·)
+
+-- A root that reaches nothing, and a root that isn't in the map at all, are both still kept.
+/-- info: ["alsoUsed", "untranslatable"] -/
+#guard_msgs in
+#eval (reachableFunctions testFuncMap ["alsoUsed", "untranslatable"]).toList.mergeSort (· ≤ ·)
+
+end ReachabilityTests
+
+/-- Drop the translated functions that nothing else refers to.
+
+Every function is its own root except the `isDecidableExemption` ones, so this only ever removes
+auto-derived `Decidable` machinery -- an exported helper that happens to have no caller inside the
+extracted set is still emitted, since hand-written elisp may well call it.
+
+`names` supplies the original `Name`s because `funcMap` is keyed by `toString`, which doesn't
+round-trip through `String.toName` for the mangled module-private names (`_private.LgtmLean.
+Interface.0.foo` has a *numeric* `0` component). -/
+def pruneToReachable (env : Environment) (names : List Name)
+    (funcMap : Std.HashMap String LFunction) : Std.HashMap String LFunction :=
+  let roots := names.filterMap fun name =>
+    if isDecidableExemption env name then none else some name.toString
+  let reachable := reachableFunctions funcMap roots
+  funcMap.filter fun name _ => reachable.contains name
+
 def translateLeanDefinitions (env : Environment) : MetaM (Translations String) := do
   -- FIXME: just put these into MetaM and incorporate isPropSortedInductive and isPropReturningDecl
   -- to avoid redundant validation
@@ -827,6 +915,7 @@ def translateLeanDefinitions (env : Environment) : MetaM (Translations String) :
         funcMap := funcMap.insert name.toString f
       catch ex =>
         IO.eprintln s!"-- failed to translate {name}: {(← ex.toMessageData.format).pretty}"
+  funcMap := pruneToReachable env functionNames funcMap
 
   let mut structMap : Std.HashMap String LStructureDefinition := Std.HashMap.emptyWithCapacity
   for name in structureNames do

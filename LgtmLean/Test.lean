@@ -214,6 +214,10 @@ own answer. -/
 def checkDecEq [ToElisp α] [DecidableEq α] (fn : String) (a b : α) : ElispCheck :=
   checkBool fn (elispCall fn [toElisp a, toElisp b]) (decide (a = b))
 
+/-- A check that `name` was *not* emitted, because `pruneToReachable` found nothing calling it. -/
+def checkPruned (name : String) : ElispCheck :=
+  checkBool s!"pruned: {name}" s!"(or (fboundp '{name}) (boundp '{name}))" false
+
 /-! ## Fixtures -/
 
 namespace Fixtures
@@ -469,28 +473,26 @@ def batchCheckChecks : List ElispCheck :=
       (Std.HashMap.emptyWithCapacity.insert modifiedFileRef emptyFileState)
       [(otherFileRef, topLevelComments)] ]
 
-/-- The `deriving DecidableEq` instances.
+/-- The `deriving DecidableEq` instances, none of which should reach the output.
 
-These are where a structure appears on the *pattern* side (a `cl-defstruct` record, which no vector
-pattern matches), and where one instance calls another through a global constant rather than a
-function. -/
+A `Decidable` value is real run-time data, so `isErasableType` keeps it and `isCompilerGenerated`
+exempts `Decidable`-returning declarations from its "the compiler wrote this" heuristics. But the
+positions these instances actually occupy in `LgtmLean` are all erased typeclass dictionaries
+(`Std.HashMap`'s `[BEq]`/`[Hashable]`, `==`), which lower to elisp `equal` and `:test #'equal`
+instead. That leaves the instances referring only to each other, so `pruneToReachable` drops the
+lot; `checkDecEq` exists for the day a call site branches on one directly. -/
 def decidableEqChecks : List ElispCheck :=
-  [ checkDecEq "lgtm-inst-decidable-eq-comment-ref-dec-eq" (⟨"c1"⟩ : CommentRef) ⟨"c1"⟩,
-    checkDecEq "lgtm-inst-decidable-eq-comment-ref-dec-eq" (⟨"c1"⟩ : CommentRef) ⟨"c2"⟩,
-    checkDecEq "lgtm-inst-decidable-eq-server-id-dec-eq" (⟨"s1"⟩ : ServerId) ⟨"s1"⟩,
-    checkDecEq "lgtm-inst-decidable-eq-git-revision-dec-eq" (⟨"rev"⟩ : GitRevision) ⟨"other"⟩,
-    checkDecEq "lgtm-inst-decidable-eq-file-version" FileVersion.base .base,
-    checkDecEq "lgtm-inst-decidable-eq-file-version" FileVersion.base .current,
-    checkDecEq "lgtm-inst-decidable-eq-modification-type" ModificationType.renamed .renamed,
-    checkDecEq "lgtm-inst-decidable-eq-modification-type" ModificationType.renamed .copied,
-    checkDecEq "lgtm-inst-decidable-eq-thread-location-dec-eq" (ThreadLocation.lineNumber 3) (.lineNumber 3),
-    checkDecEq "lgtm-inst-decidable-eq-thread-location-dec-eq" (ThreadLocation.lineNumber 3) .topLevel,
-    checkDecEq "lgtm-inst-decidable-eq-repository-ref-dec-eq" repositoryRef repositoryRef,
-    checkDecEq "lgtm-inst-decidable-eq-repository-ref-dec-eq" repositoryRef
-      { repositoryRef with baseRevision := ⟨"a-different-revision"⟩ },
-    -- Reaches every kind of nested comparison: another structure, an enum, and strings.
-    checkDecEq "lgtm-inst-decidable-eq-modified-file-ref-dec-eq" modifiedFileRef modifiedFileRef,
-    checkDecEq "lgtm-inst-decidable-eq-modified-file-ref-dec-eq" modifiedFileRef otherFileRef ]
+  [ checkPruned "lgtm-inst-decidable-eq-comment-ref-dec-eq",
+    checkPruned "lgtm-inst-decidable-eq-server-id-dec-eq",
+    checkPruned "lgtm-inst-decidable-eq-git-revision-dec-eq",
+    checkPruned "lgtm-inst-decidable-eq-git-revision",
+    checkPruned "lgtm-inst-decidable-eq-file-version",
+    checkPruned "lgtm-inst-decidable-eq-modification-type",
+    checkPruned "lgtm-inst-decidable-eq-thread-location-dec-eq",
+    checkPruned "lgtm-inst-decidable-eq-repository-ref-dec-eq",
+    checkPruned "lgtm-inst-decidable-eq-modified-file-ref-dec-eq",
+    -- Nothing references it, in Lean or in the output, so the exemption alone no longer keeps it.
+    checkPruned "lgtm-exists-file-location-version-decidable" ]
 
 /-- Grouping a batch: hash tables keyed by a structure, and lists nested inside them. -/
 def groupingChecks : List ElispCheck :=

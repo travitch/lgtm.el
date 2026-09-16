@@ -68,6 +68,21 @@ public inductive LExpr where
   | opaque (reason : String)
   deriving Repr, Inhabited
 
+/-- Every top-level definition `e` refers to, in no particular order and possibly with repeats.
+
+Only `global` references matter here: `ctorRef`s name data constructors and `proj`'s `structName`
+names a structure, neither of which is a `LFunction` that could be emitted or dropped. -/
+public partial def LExpr.globalRefs : LExpr → List String
+  | .global name => [name]
+  | .var _ | .ctorRef _ | .lit _ | .opaque _ => []
+  | .lam _ body => body.globalRefs
+  | .app fn args => fn.globalRefs ++ args.flatMap LExpr.globalRefs
+  | .letE _ value body => value.globalRefs ++ body.globalRefs
+  | .ite c t e => c.globalRefs ++ t.globalRefs ++ e.globalRefs
+  | .proj _ _ target => target.globalRefs
+  | .matchE discrs alts =>
+    discrs.flatMap LExpr.globalRefs ++ alts.flatMap (fun (_, rhs) => rhs.globalRefs)
+
 /-- A single `LgtmLean` function, translated to the simplified lambda calculus.
 
 The extraction requires all function parameters to be named so we only have a representation
