@@ -109,13 +109,17 @@ def SExprM.run (indentation : Nat) (translations : Translations String) (s : SEx
 
 def LStructureDefinition.toSExpr (d : LStructureDefinition) : SExprM SExpr := do
   let structName := toLgtmName d.name
-  modifyGet (λ s => ((), { s with definedFunctionNames := s!"make-{structName}" :: s.definedFunctionNames }))
-  let fields ← d.fields.mapM (λ field => do
-    let fieldName := toLispName field
+  let ctorName := s!"make-{structName}"
+  modifyGet (λ s => ((), { s with definedFunctionNames := ctorName :: s.definedFunctionNames }))
+  let fieldNames := d.fields.map toLispName
+  let fields ← fieldNames.mapM (λ fieldName => do
     modifyGet (λ s => ((), { s with definedFunctionNames := s!"{structName}-{fieldName}" :: s.definedFunctionNames }))
     pure (SExpr.list [SExpr.atom fieldName, SExpr.atom "nil", SExpr.atom ":read-only", SExpr.atom "t"]))
 
-  pure (.block [.atom "cl-defstruct", .atom structName] (← indentBy) fields)
+  -- The `(:constructor ..)` option replaces `cl-defstruct`'s default keyword-argument constructor
+  -- with a positional one, which is what a translated constructor application calls.
+  let ctorSpec := SExpr.list [.atom ":constructor", .atom ctorName, .list (fieldNames.map SExpr.atom)]
+  pure (.block [.atom "cl-defstruct", .list [.atom structName, ctorSpec]] (← indentBy) fields)
 
 /-- Global names from Lean are namespaced, so translate appropriately -/
 def translateGlobalName (name : String) : String :=
@@ -127,30 +131,87 @@ constructor's vector. See [ref:inductive-type-representation]. -/
 def translateConstructorTag (name : String) : String :=
   toLispName (name.map (λ c => if c == '.' then '-' else c))
 
-/-- Render `p` as a `pcase` "backquote pattern" fragment (the `QPAT` grammar), suitable for
-splicing directly inside a backquote pattern. Variables and wildcards need an explicit `,` to turn
-them into sub-patterns (`UPAT`s); nullary-constructor symbols and literals already match themselves
-via `equal`; constructors with fields become vector patterns. See
-[ref:inductive-type-representation]. -/
-partial def LPat.toQPat : LPat → String
-  | .var name => "," ++ toLispName name
-  | .wildcard => ",_"
-  | .lit l => SExpr.render l.toSExpr
+/-- If `name` is the constructor of a structure we emit a `cl-defstruct` for (`Foo.mk`), the
+structure's name and its fields. Structure values are records, not tagged vectors, so a pattern
+matching one has to be built differently from an inductive constructor's. -/
+def structureCtorFields (name : String) : SExprM (Option (String × List String)) := do
+  let env ← read
+  match (name.split '.').toList with
+  | [typeName, conName] =>
+    if conName.toString != "mk" then pure none
+    else match env.translations.structures[typeName.toString]? with
+      | some d => pure (some (typeName.toString, d.fields))
+      | none => pure none
+  | _ => pure none
+
+mutual
+
+/-- Render `p` as a `pcase` backquote pattern fragment. Variables and wildcards need an explicit `,`
+to turn them into sub-patterns.  Nullary-constructor symbols and literals match themselves via
+`equal`. Inductive constructors with fields become vector patterns, while structures become
+`cl-struct` patterns. See [ref:inductive-type-representation]. -/
+partial def LPat.toQPat (p : LPat) : SExprM String := do
+  match p with
+  | .var name => pure ("," ++ toLispName name)
+  | .wildcard => pure ",_"
+  | .lit l => pure (SExpr.render l.toSExpr)
   -- `Option.none`/`Option.some` are special-cased to `nil`/the bare value, `Bool.true`/
   -- `Bool.false` to `t`/`nil`, and `Decidable.isTrue`/`Decidable.isFalse` (whose sole field is
   -- always an erased proof) likewise to `t`/`nil`.
-  | .ctor "Option.none" [] => "nil"
+  | .ctor "Option.none" [] => pure "nil"
   | .ctor "Option.some" [p] => p.toQPat
-  | .ctor "Bool.true" [] => "t"
-  | .ctor "Bool.false" [] => "nil"
-  | .ctor "Decidable.isTrue" [] => "t"
-  | .ctor "Decidable.isFalse" [] => "nil"
+  | .ctor "Bool.true" [] => pure "t"
+  | .ctor "Bool.false" [] => pure "nil"
+  | .ctor "Decidable.isTrue" [] => pure "t"
+  | .ctor "Decidable.isFalse" [] => pure "nil"
   -- `List` is likewise special-cased, to elisp's own empty list and cons cell
-  | .ctor "List.nil" [] => "nil"
-  | .ctor "List.cons" [head, tail] => "(" ++ head.toQPat ++ " . " ++ tail.toQPat ++ ")"
-  | .ctor name [] => translateConstructorTag name
-  | .ctor name fields =>
-    "[" ++ String.intercalate " " (translateConstructorTag name :: fields.map LPat.toQPat) ++ "]"
+  | .ctor "List.nil" [] => pure "nil"
+  | .ctor "List.cons" [head, tail] => pure ("(" ++ (← head.toQPat) ++ " . " ++ (← tail.toQPat) ++ ")")
+  -- A `Nat` is an elisp integer, not a tagged value, so a `n + 1` pattern (`Nat.succ n`, as a
+  -- structurally recursive function's non-zero case is written) can't be a vector pattern: it is a
+  -- positive integer, whose predecessor is what the pattern binds. `app` runs `1-` on the matched
+  -- value and matches the result against the sub-pattern.
+  | .ctor "Nat.succ" [p] =>
+    pure (",(and (pred integerp) (pred (< 0)) (app 1- " ++ (← p.toUPat) ++ "))")
+  -- A tuple is an untagged vector (`translatePrimitives` builds `Prod.mk` as `(vector fst snd)`,
+  -- and `Prod.fst`/`.snd` read positions 0 and 1), so its pattern must be untagged too rather than
+  -- going through the general tagged-vector encoding below.
+  | .ctor "Prod.mk" [fst, snd] => pure ("[" ++ (← fst.toQPat) ++ " " ++ (← snd.toQPat) ++ "]")
+  | .ctor name fields => do
+    match ← structureCtorFields name with
+    -- A structure value is a `cl-defstruct` record, which no vector pattern can match (`pcase`'s
+    -- vector pattern tests `vectorp`, and a record is not a vector). `cl-struct` matches by slot
+    -- name, so the sub-patterns are paired up with the fields in declaration order. A field count
+    -- that doesn't line up would silently bind the wrong slots, so that falls through to the
+    -- encoding below instead.
+    | some (typeName, fieldNames) =>
+      if fieldNames.length == fields.length then
+        let slots ← (fieldNames.zip fields).mapM fun (field, p) => do
+          pure ("(" ++ toLispName field ++ " " ++ (← p.toUPat) ++ ")")
+        pure (",(cl-struct " ++ toLgtmName typeName ++ String.join (slots.map (" " ++ ·)) ++ ")")
+      else
+        LPat.toTaggedQPat name fields
+    | none => LPat.toTaggedQPat name fields
+
+/-- The general inductive-constructor encoding: a bare symbol for a nullary constructor, and a
+vector tagged with that symbol otherwise. -/
+partial def LPat.toTaggedQPat (name : String) (fields : List LPat) : SExprM String := do
+  match fields with
+  | [] => pure (translateConstructorTag name)
+  | _ =>
+    let sFields ← fields.mapM LPat.toQPat
+    pure ("[" ++ String.intercalate " " (translateConstructorTag name :: sFields) ++ "]")
+
+/-- Render `p` as a `pcase` pattern in its own right (the `UPAT` grammar) rather than as a fragment
+of an enclosing backquote pattern: a variable binds by bare name, and anything structural needs its
+own backquote to get back into `QPAT`. -/
+partial def LPat.toUPat (p : LPat) : SExprM String := do
+  match p with
+  | .var name => pure (toLispName name)
+  | .wildcard => pure "_"
+  | p => pure ("`" ++ (← p.toQPat))
+
+end
 
 mutual
 
@@ -246,7 +307,11 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
   | .global "String.isEmpty" => do
     let s ← LExpr.toSExpr args[0]!
     pure (some (.list [.atom "string-empty-p", s]))
-  | .global "Std.HashMap.emptyWithCapacity" => pure (some (.list [.atom "make-hash-table"]))
+  -- `:test #'equal`, not elisp's default `eql`: Lean's `Std.HashMap` keys on `BEq`, so two
+  -- structurally equal keys (two `CommentRef`s with the same id, say) are one key. Under `eql`
+  -- they would be two, and every lookup of a freshly built key would miss.
+  | .global "Std.HashMap.emptyWithCapacity" =>
+    pure (some (.list [.atom "make-hash-table", .atom ":test", .atom "#'equal"]))
   | .global "Std.HashMap.get?" => do
     let m ← LExpr.toSExpr args[0]!
     let key ← LExpr.toSExpr args[1]!
@@ -274,7 +339,8 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
   | .global "Std.HashMap.contains" => do
     let m ← LExpr.toSExpr args[0]!
     let key ← LExpr.toSExpr args[1]!
-    pure (some (.list [.atom "hash-table-contains-p", key , m]))
+    -- Note that we don't use `hash-table-contains-p` because it was only introduced in Emacs 30.
+    pure (some (.list [.atom "lgtm--hash-map-contains", key , m]))
   | .global "Std.HashMap.size" => do
     let m ← LExpr.toSExpr args[0]!
     pure (some (.list [.atom "hash-table-count", m]))
@@ -368,10 +434,7 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
     let v₂ ← LExpr.toSExpr args[1]!
     pure (some (.list [.atom "string-equal", v₁, v₂]))
   | .global "System.instDecidableEqFilePath" => do
-    -- `System.FilePath` has no `cl-defstruct` of its own (it's a foreign, non-`LgtmLean` type, so
-    -- `isLgtmLeanDecl` never lets its `deriving`-generated instance extract) -- by convention it's
-    -- passed through the whole pipeline as the bare elisp string callers construct it from, so
-    -- string equality on the two raw values *is* `FilePath` equality here.
+    -- `System.FilePath` is passed through as a plain string.
     let v₁ ← LExpr.toSExpr args[0]!
     let v₂ ← LExpr.toSExpr args[1]!
     pure (some (.list [.atom "string-equal", v₁, v₂]))
@@ -414,11 +477,8 @@ partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=
   | .ctorRef "List.nil" => pure (SExpr.atom "nil")
   | .ctorRef "Bool.true" => pure (SExpr.atom "t")
   | .ctorRef "Bool.false" => pure (SExpr.atom "nil")
-  -- `Decidable`'s own constructors carry nothing but an erased proof by the time they reach here,
-  -- so -- like `Bool.true`/`Bool.false` above -- they're just the plain boolean answer, not a
-  -- tagged value. This is what lets a decision procedure's body (`isTrue h`/`isFalse h`, however
-  -- deeply it's produced -- e.g. via `List.decidableBAll`'s own recursion) render as a real elisp
-  -- boolean instead of an opaque, always-truthy struct.
+  -- `Decidable`'s constructors carry nothing but an erased proof by the time they reach here,
+  -- sothey are just the plain boolean answer, not a tagged value.
   | .ctorRef "Decidable.isTrue" => pure (SExpr.atom "t")
   | .ctorRef "Decidable.isFalse" => pure (SExpr.atom "nil")
   | .ctorRef name => do
@@ -428,7 +488,10 @@ partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=
       modifyGet (λ s => ((), { s with referencedGlobalNames := s.referencedGlobalNames.insert conName }))
       -- Constructors in Lean have a `.mk` suffix. Drop that and replace with the equivalent prefix for cl-defstruct.
       pure (SExpr.atom ("#'" ++ conName))
-    | true => pure (SExpr.atom ("'" ++ translateGlobalName name))
+    -- `translateConstructorTag`, not `translateGlobalName`: a constructor symbol is not a global
+    -- name, and the `pcase` patterns it has to match (`LPat.toQPat`) spell it without the `lgtm-`
+    -- prefix. See [ref:inductive-type-representation].
+    | true => pure (SExpr.atom ("'" ++ translateConstructorTag name))
   | .lit l => pure l.toSExpr
   | .lam params body => do
     let sBody ← LExpr.toSExpr body
@@ -441,14 +504,23 @@ partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=
       | .global name => do
         modifyGet (λ s => ((), { s with referencedGlobalNames := s.referencedGlobalNames.insert (translateGlobalName name) }))
         let sFunc := SExpr.atom (translateGlobalName name)
-        pure (.list (sFunc :: sArgs))
+        -- A nullary global is a `defconst`, not a `defun` (see `LFunction.toSExpr`). Calling one
+        -- whose value happens to be a function has to go through `funcall`: elisp looks up a
+        -- symbol's function and value cells separately, and only the value cell is bound here.
+        match (← read).translations.functions[name]? with
+        | some lfunc =>
+          if lfunc.parameters.isEmpty then
+            pure (.list (.atom "funcall" :: sFunc :: sArgs))
+          else
+            pure (.list (sFunc :: sArgs))
+        | none => pure (.list (sFunc :: sArgs))
       | .var name => do
         let sFunc := SExpr.atom (toLispName name)
         pure (.list (.atom "funcall" :: sFunc :: sArgs))
       | .ctorRef name => do
         if ← isInductiveConstructor name then
           let sFunc := SExpr.atom "vector"
-          let tag := SExpr.atom ("'" ++ translateGlobalName name)
+          let tag := SExpr.atom ("'" ++ translateConstructorTag name)
           pure (.block [sFunc] (← indentBy) (tag :: sArgs))
         else do
           let conName := "make-" ++ toLgtmName (toLispName (name.dropEnd 3).toString)
@@ -478,9 +550,9 @@ partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=
     let sDiscrs ← discrs.mapM LExpr.toSExpr
     let sAlts ← alts.mapM (λ (pats, body) => do
       let sBody ← body.toSExpr
-      let patText := match pats with
-        | [p] => "`" ++ p.toQPat
-        | ps => "`(" ++ String.intercalate " " (ps.map LPat.toQPat) ++ ")"
+      let patText ← match pats with
+        | [p] => do pure ("`" ++ (← p.toQPat))
+        | ps => do pure ("`(" ++ String.intercalate " " (← ps.mapM LPat.toQPat) ++ ")")
       pure (SExpr.list [SExpr.atom patText, sBody]))
     -- `pcase` dispatches on a single value, so multiple discriminants are bundled into a list
     -- that each alternative's pattern then destructures. See [ref:inductive-type-representation].
@@ -570,19 +642,19 @@ def testRender (s : SExprM SExpr) : String := SExpr.render (SExprM.run 2 emptyTr
 #guard_msgs in
 #eval toLispName "parentRef'"
 
-/-- info: "(cl-defstruct lgtm-comment-ref\n  (id nil :read-only t))" -/
+/-- info: "(cl-defstruct (lgtm-comment-ref (:constructor make-lgtm-comment-ref (id)))\n  (id nil :read-only t))" -/
 #guard_msgs in
 #eval testRender (LStructureDefinition.toSExpr { name := "CommentRef", fields := ["id"] })
 
-/-- info: "(cl-defstruct lgtm-tree\n  (value nil :read-only t)\n  (children nil :read-only t))" -/
+/-- info: "(cl-defstruct (lgtm-tree (:constructor make-lgtm-tree (value children)))\n  (value nil :read-only t)\n  (children nil :read-only t))" -/
 #guard_msgs in
 #eval testRender (LStructureDefinition.toSExpr { name := "Tree", fields := ["value", "children"] })
 
-/-- info: "(cl-defstruct lgtm-modified-file-state\n)" -/
+/-- info: "(cl-defstruct (lgtm-modified-file-state (:constructor make-lgtm-modified-file-state ()))\n)" -/
 #guard_msgs in
 #eval testRender (LStructureDefinition.toSExpr { name := "ModifiedFileState", fields := [] })
 
-/-- info: "(cl-defstruct lgtm-comment-threads\n  (comment-tree-nodes nil :read-only t)\n  (server-comment-ids nil :read-only t)\n  (location-roots nil :read-only t))" -/
+/-- info: "(cl-defstruct (lgtm-comment-threads (:constructor make-lgtm-comment-threads (comment-tree-nodes server-comment-ids location-roots)))\n  (comment-tree-nodes nil :read-only t)\n  (server-comment-ids nil :read-only t)\n  (location-roots nil :read-only t))" -/
 #guard_msgs in
 #eval testRender (LStructureDefinition.toSExpr
   { name := "CommentThreads", fields := ["commentTreeNodes", "serverCommentIds", "locationRoots"] })
@@ -614,7 +686,7 @@ def testRender (s : SExprM SExpr) : String := SExpr.render (SExprM.run 2 emptyTr
 -- elisp symbol, matching how nullary constructors are represented per
 -- [ref:inductive-type-representation] -- unlike a `.mk`-suffixed structure constructor, which
 -- renders as a `make-` function reference instead.
-/-- info: "'lgtm-thread-location-top-level" -/
+/-- info: "'thread-location-top-level" -/
 #guard_msgs in
 #eval
   let translations : Translations String :=
@@ -627,7 +699,7 @@ def testRender (s : SExprM SExpr) : String := SExpr.render (SExprM.run 2 emptyTr
 -- constructor symbol in position 0 followed by the field values, per
 -- [ref:inductive-type-representation] -- unlike a `.mk`-suffixed structure constructor applied to
 -- arguments, which renders as a `make-` function call instead.
-/-- info: "(vector\n  'lgtm-thread-location-nested\n  parent)" -/
+/-- info: "(vector\n  'thread-location-nested\n  parent)" -/
 #guard_msgs in
 #eval
   let translations : Translations String :=
@@ -637,10 +709,10 @@ def testRender (s : SExprM SExpr) : String := SExpr.render (SExprM.run 2 emptyTr
   SExpr.render (SExprM.run 2 translations
     (LExpr.toSExpr (.app (.ctorRef "ThreadLocation.nested") [.var "parent"]))).1
 
--- `Except.ok`/`Except.error` are special-cased in `translatePrimitives` to render as a two-element
--- `vector` tagged with a plain (unnamespaced) quoted symbol, rather than going through the general
--- inductive-constructor encoding (which would require registering an `Except` `LInductiveDefinition`
--- and would namespace the tag as `'lgtm-except-ok`).
+-- `Except.ok`/`Except.error` are special-cased in `translatePrimitives`, rather than going
+-- through the general inductive-constructor encoding (which would require registering an `Except`
+-- `LInductiveDefinition`), but they agree with it: a two-element `vector` tagged with the quoted
+-- constructor symbol.
 /-- info: "(vector 'except-ok 42)" -/
 #guard_msgs in
 #eval testRender (LExpr.toSExpr (.app (.ctorRef "Except.ok") [.lit (.nat 42)]))
@@ -699,6 +771,34 @@ def testRender (s : SExprM SExpr) : String := SExpr.render (SExprM.run 2 emptyTr
   (.matchE [.var "l"]
     [([.ctor "List.nil" []], .lit (.nat 0)),
      ([.ctor "List.cons" [.var "x", .var "xs"]], .var "x")]))
+
+-- A tuple pattern matches the untagged two-element vector `Prod.mk` builds, so that a `match` on
+-- a pair (`match (l₁, l₂) with ..`) lines up with how the pair was constructed.
+/-- info: "(pcase p\n  (`[,fst ,snd] fst))" -/
+#guard_msgs in
+#eval testRender (LExpr.toSExpr
+  (.matchE [.var "p"] [([.ctor "Prod.mk" [.var "fst", .var "snd"]], .var "fst")]))
+
+-- A structure appears on the pattern side as a `cl-struct` pattern matching its record, since the
+-- vector pattern an inductive constructor gets would never match one.
+/-- info: "(pcase r\n  (`,(cl-struct lgtm-comment-ref (id the-id)) the-id))" -/
+#guard_msgs in
+#eval
+  let translations : Translations String :=
+    { emptyTranslations with
+      structures := Std.HashMap.emptyWithCapacity.insert "CommentRef"
+        { name := "CommentRef", fields := ["id"] } }
+  SExpr.render (SExprM.run 2 translations (LExpr.toSExpr
+    (.matchE [.var "r"] [([.ctor "CommentRef.mk" [.var "theId"]], .var "theId")]))).1
+
+-- A `Nat` is an integer, so the `n + 1` case of a recursion on `Nat` matches a positive integer
+-- and binds its predecessor, rather than destructuring a `Nat.succ` value.
+/-- info: "(pcase fuel\n  (`0 0)\n  (`,(and (pred integerp) (pred (< 0)) (app 1- rest)) rest))" -/
+#guard_msgs in
+#eval testRender (LExpr.toSExpr
+  (.matchE [.var "fuel"]
+    [([.lit (.nat 0)], .lit (.nat 0)),
+     ([.ctor "Nat.succ" [.var "rest"]], .var "rest")]))
 
 -- A `block` nested inside a `list` that's itself a body form of an outer `block` should still
 -- have its own body forms indented cumulatively (outer `indent` + inner `indent`), not just the

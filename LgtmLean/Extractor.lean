@@ -7,6 +7,19 @@ import Extractor.TopologicalSort
 
 open Lean
 
+/-
+
+# Overall design of the extractor
+
+The extractor traverses function and type definitions to render them as elisp functions and definitions.
+
+- All of the extracted functions will be private/internal elisp (i.e., prefixed with lgtm--)
+- The extractor will maintain a list of names deemed public and to be prefixed with `lgtm-` to denote that they are available for users of the lgtm library
+- No values or definitions in `Prop` will be exported, as they have no run-time representation
+- Translation of functions will go through a simplified intermediate AST
+
+-/
+
 /-- Whether `name` originates from the `LgtmLean` library.
 
 Under Lean's module system, a declaration that isn't explicitly marked `public` is compiled as
@@ -31,32 +44,29 @@ def isFunctionDecl : ConstantInfo → Bool
   | .defnInfo _ => true
   | _ => false
 
-/-- Whether `name` is a structure definition -- an inductive registered with Lean's structure
-machinery (so it has exactly one constructor and projection functions for its fields) -- as
-opposed to a plain enum/inductive, function, theorem, or other kind of declaration. -/
+/-- Test if `name` is a structure definition.
+
+Structures happen to be defined as inductives with one constructor and projection functions for its
+fields, so we have to inspect further. -/
 def isStructureDecl (env : Environment) (name : Name) : ConstantInfo → Bool
   | .inductInfo _ => Lean.isStructure env name
   | _ => false
 
-/-- Whether `name` is a plain inductive definition -- an enum or algebraic data type -- as opposed
-to a structure (handled separately by `isStructureDecl`/`translateStructure`), function, theorem,
-or other kind of declaration. -/
+/-- Test if `name` is an inductive definition. -/
 def isInductiveDecl (env : Environment) (name : Name) : ConstantInfo → Bool
   | .inductInfo _ => !Lean.isStructure env name
   | _ => false
 
 /-- Whether `name`'s declared type, once its arrow telescope is peeled off, is literally
-`Decidable _` -- i.e. `name` is an instance that actually computes a yes/no answer (`isTrue`/
-`isFalse`) rather than a plain dispatch dictionary (`BEq`, `Hashable`, ...). Purely syntactic (no
-`Meta.forallTelescope`) so it stays usable from the non-monadic `isCompilerGenerated`.
+`Decidable _`
 
-Mirrors the `Decidable` carve-out `isErasableType` applies to *values*, but at the
-declaration-filtering layer: without this, a hand-written decision procedure like
-`existsFileLocationVersion.decidable` (`Decidable (∃ loc, ..)`, i.e. a `Comment → FileVersion →
-Decidable ..` telescope once uncurried) or an auto-derived `DecidableEq` instance for one of
-`LgtmLean`'s own types (`(a b : α) → Decidable (a = b)`) would be swept up by
-`isCompilerGenerated`'s instance/name-shape heuristics below and never get a body -- even though
-`translateApp`'s dependent-`if`/`dite` handling keeps referencing it as a real, called value. -/
+Unlike `isCompilerGenerated`, this is purely syntactic so it can stay pure.
+
+This mirrors the structure of `isErasableType` and its exception for `Decidable`.  Without this, a
+hand-written decision procedure like `existsFileLocationVersion.decidable` (`Decidable (∃ loc, ..)`,
+i.e. a `Comment → FileVersion → Decidable ..` telescope once uncurried) or an auto-derived
+`DecidableEq` instance for one of `LgtmLean`'s types (`(a b : α) → Decidable (a = b)`) would be
+swept up by `isCompilerGenerated`'s instance/name-shape heuristics below and never get a body. -/
 partial def returnsDecidable (env : Environment) (name : Name) : Bool :=
   let rec peel : Expr → Expr
     | .forallE _ _ b _ => peel b
@@ -67,21 +77,14 @@ partial def returnsDecidable (env : Environment) (name : Name) : Bool :=
     | .const ``Decidable _ => true
     -- `DecidableEq`/`DecidablePred` are reducible abbreviations for a further `Decidable`-headed
     -- Pi type (`DecidableEq α := (a b : α) → Decidable (a = b)`), so an auto-`deriving DecidableEq`
-    -- instance's *declared* type peels to one of these names, not literally `Decidable` -- checked
-    -- by name rather than by unfolding, since `returnsDecidable` stays a plain, non-monadic `Bool`
-    -- so it's usable from `isCompilerGenerated`.
+    -- instance's *declared* type peels to one of these names.
     | .const ``DecidableEq _ => true
     | .const ``DecidablePred _ => true
     | _ => false
   | none => false
 
 /-- Whether `name` is a declaration the compiler generated on our behalf (structure/inductive
-machinery, equation lemmas, proof-irrelevant subterms, etc.) rather than something a person wrote.
-
-Deliberately only inspects `name`'s own last component, not `Name.isInternalDetail` (which also
-inspects the *prefix* for numeric components) -- under the module system, an ordinary
-(non-`public`) declaration is itself stored with a numeric component in its prefix (see
-`isLgtmLeanDecl`), which would make `isInternalDetail` flag every such declaration as generated. -/
+machinery, equation lemmas, proof-irrelevant subterms, etc.) rather than something a person wrote. -/
 def isCompilerGenerated (env : Environment) (name : Name) : Bool :=
   if returnsDecidable env name then
     false
@@ -95,7 +98,7 @@ def isCompilerGenerated (env : Environment) (name : Name) : Bool :=
         s.endsWith "noConfusionType" || s.startsWith "inst" || s.endsWith "decidable"
     | _ => true
   -- Catches instance-dictionary field projections (e.g. `instBEqFoo.beq`) and `match_N.splitter`
-  -- helpers, whose *own* last component looks ordinary but whose parent doesn't.
+  -- helpers, whose last component looks ordinary but whose parent doesn't.
   let hasBadParentComponent :=
     match name.getPrefix with
     | .str _ s => s.startsWith "inst" || s.startsWith "match_"
@@ -103,36 +106,22 @@ def isCompilerGenerated (env : Environment) (name : Name) : Bool :=
   Lean.isAuxRecursor env name || Lean.isNoConfusion env name || env.isProjectionFn name ||
     Lean.Meta.isInstanceCore env name || hasBadLastComponent || hasBadParentComponent
 
-/-
-
-# Overall design of the extractor
-
-The extractor traverses function and type definitions to render them as elisp functions and definitions.
-
-- All of the extracted functions will be private/internal elisp (i.e., prefixed with lgtm--)
-- The extractor will maintain a list of names deemed public and to be prefixed with `lgtm-` to denote that they are available for users of the lgtm library
-- No values or definitions in `Prop` will be exported, as they have no run-time representation
-- Translation of functions will go through a simplified intermediate AST
-
--/
-
-/-! ## A simple lambda calculus, suitable as a translation target for Lisp -/
-
 
 /-! ## Erasure -/
 
-/-- Whether a value of type `ty` has no run-time representation: `ty` is a `Prop` (so the value is
-a proof), `ty` is itself a `Sort` (so the value is a type, e.g. an implicit `{α : Type}` argument),
-or `ty` is a type class other than `Decidable` (so the value is a typeclass dictionary, e.g. `[BEq
-α]`/`[Hashable α]`). `Decidable` is deliberately excluded: elsewhere in the pipeline (`Decidable.decide`,
+/-- Whether a value of type `ty` has no run-time representation.
+
+Cases:
+
+- `ty` is a `Prop` (so the value is a proof),
+- `ty` is a `Sort` (so the value is a type, e.g. an implicit `{α : Type}` argument), or
+- `ty` is a type class other than `Decidable` (so the value is a typeclass dictionary, e.g. `[BEq α]`/`[Hashable α]`).
+
+ `Decidable` is deliberately excluded: elsewhere in the pipeline (`Decidable.decide`,
 the `if`/`ite`/`cond` lifting of Prop-valued conditions to `Bool`) a `Decidable p` value is treated
 as the actual computed answer, not a dispatch table, so erasing it would delete the very data those
 call sites need. Every other class in this codebase (`BEq`, `Hashable`, `Min`, `Max`, `HAdd`, ...)
-is used purely for dispatch -- the special-cased builtins in `Render.lean` that need one of its
-methods (e.g. `BEq.beq`, `Std.HashMap.insert`) call straight through to elisp's own structural
-equality/hashing instead, so the dictionary itself never needs to survive to the rendered output.
-Defensively returns `false` (i.e. "keep it") if type inference gets stuck, rather than taking down
-the whole translation. -/
+is used purely for dispatch -/
 def isErasableType (ty : Expr) : Meta.MetaM Bool := do
   try
     if ← Meta.isProp ty then
@@ -150,28 +139,23 @@ def isErasableValue (e : Expr) : Meta.MetaM Bool := do
 def mkLApp (fn : LExpr) (args : List LExpr) : LExpr :=
   if args.isEmpty then fn else .app fn args
 
-/-- Whether `n`'s own last name component looks like an auto-generated matcher name (`match_1`,
-`match_2`, ...). Mirrors the heuristic `Lean.Meta.Match.Extension.getMatcherInfo?` uses
-internally; we can't reuse that function (nor `Lean.Meta.matchMatcherApp?`, which is built on it)
-directly, because its backing environment extension only exports entries for `public` declarations
--- it never finds anything for `LgtmLean`'s own (all module-private) matchers, even under
-`import all`. `tryDecodeMatcher` below reimplements the equivalent decoding directly against the
-matcher's raw `Expr` value instead. -/
+/-- Whether `n`'s last name component looks like an auto-generated matcher name (`match_1`,
+`match_2`, ...). -/
 def isLikelyMatcherName (n : Name) : Bool :=
   match n.eraseMacroScopes with
   | .str _ s => s.startsWith "match_"
   | _ => false
 
-/-- Whether `s` is a Lean-generated name for a genuinely-unused, inaccessible binder (rendered with
-`✝`). Unlike a merely hygienic name (containing `._@.`, which can still be a used, ordinary
-variable -- e.g. an equation lemma's passed-through, non-pattern-matched argument), this is a
-reliable "definitely unused" signal. -/
+/-- Whether `s` is a Lean-generated name for an inaccessible binder (rendered with `✝`).
+
+Unlike a merely hygienic name (containing `._@.`, which can still be a used, ordinary
+variable this is a reliable "definitely unused" signal. -/
 def looksInaccessible (s : String) : Bool :=
   s.any (· == '✝')
 
 /-- Replace each `LPat.var` placeholder in `p` with the next name pulled off `queue`, threading the
 remaining queue through. Inaccessible names become `LPat.wildcard` instead of a `var` so the result
-doesn't invent a bogus binder name for something genuinely unused. -/
+doesn't invent a bogus binder name for something unused. -/
 partial def relabelPat (p : LPat) (queue : List String) : LPat × List String :=
   match p with
   | .var _ =>
@@ -197,10 +181,10 @@ pattern matching:
 
 * A recursive (or otherwise multi-clause) top-level function is compiled via well-founded or
   structural recursion, which is very hard to decode faithfully from its raw `Expr` value. Instead
-  `translateFunction` reads off Lean's auto-generated *equation lemmas* (`f.eq_1`, `f.eq_2`, ...),
+  `translateFunction` reads off Lean's auto-generated equation lemmas (`f.eq_1`, `f.eq_2`, ...),
   whose statement `∀ xs, f pat₁ ... patₙ = rhs` already exposes exactly the patterns and right-hand
   sides written at the definition site (see `exprToPat`).
-* A `match ... with` expression occurring *inside* a body (whether that body came from an
+* A `match ... with` expression occurring inside a body (whether that body came from an
   equation's right-hand side or from an ordinary non-recursive function) is compiled into a call
   to a separate auxiliary "matcher" definition, whose own value is a tree of `casesOn`
   applications. `tryDecodeMatcher` walks that tree once per call site to recover the patterns.
@@ -243,35 +227,29 @@ where
 
 /-- Whether `n` was invented by the elaborator rather than written by the user. This happens when a
 function parameter is bound via a pattern instead of a plain name (e.g. `def f : Nat → Nat | 0 =>
-.. | n+1 => ..`), since Lean still needs *some* name for the parameter in `f`'s own type --
+.. | n+1 => ..`).
+
 `translateFunction` uses this to reject that pattern-bound function definition form, which
 `LFunction`'s flat `parameters : List String` cannot represent. It also happens, harmlessly, for an
 anonymous instance-implicit binder (e.g. `[BEq α]`), but `translateFunction` never checks this
-function against those: `isErasableType` erases every instance-implicit parameter before its name
+function against those. `isErasableType` erases every instance-implicit parameter before its name
 would ever be examined. -/
 def isElaboratorGeneratedName (n : Name) : Bool :=
   n.hasMacroScopes
 
 /-- A stable, Lisp-safe name for a parameter binder. Falls back to a synthetic name when the
-binder's own name was invented by the elaborator (see `isElaboratorGeneratedName`) -- which
-happens for eta-expansion's own synthesized trailing parameters (see `translateApp`), since those
-don't come from any real source-level binder. -/
+binder's own name was invented by the elaborator (see `isElaboratorGeneratedName`).  That
+happens for eta-expansion's synthesized trailing parameters (see `translateApp`), since those
+don't come from a real source-level binder. -/
 def paramNameOrFallback (n : Name) (idx : Nat) : String :=
   if isElaboratorGeneratedName n then s!"etaArg{idx}" else toString n
 
 /-- Extend `varNames` with `fvarId ↦ candidate`, appending `fvarId`'s own unique internal id to
 `candidate` first if that name is already bound to some *other* fvar still in scope.
 
-Lean's own binder names aren't required to be distinct across nested scopes -- ordinary lexical
-shadowing is fine there, since real references resolve by `FVarId`, not by surface name -- but
-several of the library's own `Decidable` combinators (`DecidablePred`'s per-element instance
-argument, the callbacks `List.decidableBAll`/`decidableBEx`/`Option.decidableForallMem` synthesize,
-..) all reuse the exact same generic surface name (`a`, `a_1`, ..) for their bound variable
-regardless of call site, so nesting several of them puts multiple, genuinely different,
-simultaneously in-scope binders under identical names (as does an auto-derived `DecidableEq` body,
-which names every field's pair of compared values `a`/`b`). Since the rendered elisp is flat and
-resolves purely lexically, emitting two such binders under the same identifier would let the inner
-one silently capture references meant for the outer one. -/
+Lean's own binder names aren't required to be distinct across nested scopes, as the
+compiler resolves references using `FVarId`s instead of names.  Many generated terms
+use generic variable names that end up shadowing each other. -/
 def bindFresh (varNames : Std.HashMap FVarId String) (fvarId : FVarId) (candidate : String) :
     Std.HashMap FVarId String × String :=
   let nm :=
@@ -331,15 +309,16 @@ partial def translateExpr (varNames : Std.HashMap FVarId String) (e : Expr) : Me
   | .const n _ => translateConstRef n
   | _ => pure (.opaque s!"unsupported term shape")
 
-/-- Translate a (possibly under-saturated) application. If `e`'s own type is still a function
-type -- i.e. `e` is a first-class partially-applied value, such as a bare global reference passed
-to `List.map` -- eta-expand it into an explicit `LExpr.lam` over the remaining parameters before
-translating, since Lisp targets don't support Lean's implicit currying: an elisp `defun` called
-with fewer arguments than it declares is a runtime arity error, not a closure. Otherwise, first
-checks whether the head looks like an auto-generated matcher and, if so, tries to decode it into
-`LExpr.matchE`; otherwise (or if decoding fails) falls back to translating it as an ordinary call,
-erasing `Prop`/`Sort` arguments and special-casing the two-branch `cond`/`ite` primitives into
-`LExpr.ite`. -/
+/-- Translate a (possibly under-saturated) application.
+
+If `e`'s type is still a function type (e.g., due to currying) eta-expand it into an explicit `LExpr.lam` over the remaining parameters before
+translating, since Lisp targets don't support Lean's implicit currying.
+
+Otherwise, checks whether the head looks like an auto-generated matcher and, if so, tries to decode
+it into `LExpr.matchE`.
+
+Otherwise (or if decoding fails) falls back to translating it as an ordinary call, erasing
+`Prop`/`Sort` arguments and special-casing the `cond`/`ite` primitives into `LExpr.ite`. -/
 partial def translateApp (varNames : Std.HashMap FVarId String) (e : Expr) : Meta.MetaM LExpr := do
   let eType ← Meta.whnf (← Meta.inferType e)
   if eType.isForall then
@@ -358,14 +337,13 @@ partial def translateApp (varNames : Std.HashMap FVarId String) (e : Expr) : Met
     e.withApp fun fn args => do
       -- `if h : c then t else e` (as opposed to the non-dependent `if c then t else e`) elaborates
       -- to `dite (α := _) c inst t e`, where `t : c → α` and `e : ¬c → α` are functions of the
-      -- (erased) decidability proof rather than plain values of `α` -- unlike `ite`/`cond`, whose
-      -- branches already are `α`-valued and so fall out of the generic `keptArgs` handling below as
-      -- an `.ite` once `c`/`α` erase away. Translating `dite` the same generic way would instead
-      -- leave its two branches as zero-argument thunks (since the proof parameter erases) passed to
-      -- a literal, undefined `dite`/`lgtm-dite` call. Lambda-telescoping `t`/`e` directly here -- the
-      -- same move `decomposeCasesOn`'s minors and `decomposeDiteLiteral`'s `elseBranch` use -- yields
-      -- their bodies straight off, which become `.ite`'s branches with `inst` (the actual computed
-      -- decision, per `isErasableValue`'s `Decidable` carve-out) as the condition.
+      -- (erased) decidability proof rather than plain values of `α`. This is in contrast to
+      -- `ite`/`cond`, whose branches already are `α`-valued and so fall out of the generic
+      -- `keptArgs` handling below as an `.ite` once `c`/`α` erase away.
+      --
+      -- Translating `dite` the same generic way would leave its two branches as zero-argument
+      -- thunks (since the proof parameter erases) passed to a `dite`/`lgtm-dite`
+      -- call.
       let isDite := match fn with
         | .const ``dite _ => args.size == 5
         | _ => false
@@ -381,22 +359,25 @@ partial def translateApp (varNames : Std.HashMap FVarId String) (e : Expr) : Met
       match matcherResult? with
       | some r => pure r
       | none => do
-        -- A field whose own value is itself a function (e.g. `Configuration.createComment :
-        -- Configuration → Comment → Option ServerId`) can appear applied to more arguments than
-        -- just the structure instance: `config.createComment comment`. Lean's currying makes this
-        -- indistinguishable, at the `Expr` level, from an ordinary two-parameter function
-        -- application -- but the elisp target isn't: `Configuration.createComment` compiles to a
-        -- `cl-defstruct` accessor of arity exactly one. Splitting off the field access from the
-        -- extra arguments (which get funcall'd onto the result, see `LExpr.toSExpr`'s `.proj` case
-        -- in `Render.lean`) keeps that arity correct. Class-method projections (`BEq.beq` and
-        -- friends) are excluded since those are already special-cased whole in
-        -- `translatePrimitives`, which expects them pre-flattened.
+        -- A field of function type can appear applied to more arguments than just the structure
+        -- instance. Lean's currying makes this indistinguishable from an ordinary
+        -- function application in a way that renders incorrectly in elisp.
+        --
+        -- Example: `Configuration.createComment` compiles to a `cl-defstruct` accessor of arity
+        -- exactly one. Splitting off the field access from the extra arguments (which get funcall'd
+        -- onto the result, see `LExpr.toSExpr`'s `.proj` case in `Render.lean`) keeps that arity
+        -- correct. Class-method projections (`BEq.beq` and friends) are excluded since those are
+        -- already special-cased whole in `translatePrimitives`, which expects them pre-flattened.
         let projResult? ← match fn with
           | .const cName _ => do
             match ← getProjectionFnInfo? cName with
             | some info =>
-              if !info.fromClass && info.numParams + 1 < args.size then
-                let structName := info.ctorName.getPrefix
+              -- Restricted to structures we actually emit a `cl-defstruct` for: `Prod.fst` is a
+              -- projection too, but it is translated whole by `translatePrimitives` (to an `elt`
+              -- call), and rewriting it to a `.proj` here would name an accessor that is never
+              -- defined.
+              let structName := info.ctorName.getPrefix
+              if !info.fromClass && isLgtmLeanDecl (← getEnv) structName && info.numParams < args.size then
                 let projL ← translateExpr varNames (.proj structName info.i args[info.numParams]!)
                 let mut keptExtra : List LExpr := []
                 for a in args.extract (info.numParams + 1) args.size do
@@ -413,8 +394,19 @@ partial def translateApp (varNames : Std.HashMap FVarId String) (e : Expr) : Met
         | some r => pure r
         | none => do
           let fnL ← translateExpr varNames fn
+          -- A constructor application starts with the inductive's parameters, which are not
+          -- fields: nothing of them survives into the constructed value, so the `cl-defstruct`
+          -- constructor (or tagged vector) takes only the arguments after them. They usually erase
+          -- anyway, being types; a structure parameterized by *data* (`FileThreadsBootstrapState`,
+          -- indexed by the two maps its invariants talk about) is what makes this explicit.
+          let ctorParams ← match fn with
+            | .const cName _ => do
+              match (← getEnv).find? cName with
+              | some (.ctorInfo ctorInfo) => pure ctorInfo.numParams
+              | _ => pure 0
+            | _ => pure 0
           let mut keptArgs : List LExpr := []
-          for a in args do
+          for a in args.extract ctorParams args.size do
             if ← isErasableValue a then
               pure ()
             else
@@ -439,24 +431,17 @@ partial def insertAtPath (pat : LPat) (path : List Nat) (sub : LPat) : LPat :=
 
 /-- Try to decode a call `matcherName args...` into an `LExpr.matchE`.
 
-`matcherName`'s own (uninstantiated) value has the shape
-`fun params motive discrs alts => <tree of casesOn on the discrs>`, with the tree's leaves being
-bare applications of one of the `alts` binders. We walk that tree once (`walkMatcherBody`) to
-recover, per leaf, which discriminants were scrutinized -- to what nested depth, under which
-constructors -- to reach it; the real per-alternative bodies (with real bound-variable names) are
-then read off of `args` at the corresponding position, not out of the generic tree. Returns `none`
+`matcherName`'s uninstantiated value has the shape `fun params motive discrs alts => <tree of
+casesOn on the discrs>`, with the tree's leaves being bare applications of one of the `alts`
+binders. We walk that tree once (`walkMatcherBody`) to recover, per leaf, which discriminants were
+scrutinized to reach it. The real per-alternative bodies (with real bound-variable names) are then
+read off of `args` at the corresponding position, not out of the generic tree. Returns `none`
 (falling back to ordinary call translation) if `matcherName` isn't actually a matcher-shaped
 definition, e.g. because it doesn't delta-reduce to a recognizable `casesOn` tree at all.
 
-A discriminant position whose *type* is erasable (e.g. a `Prop` destructured purely to unpack proof
+A discriminant position whose type is erasable (e.g. a `Prop` destructured purely to unpack proof
 obligations, as in `let ⟨hFound, ...⟩ := hAll entry mem⟩`) is dropped from the emitted pattern
-rather than rendered as a real `pcase` branch: Lean's kernel only allows eliminating a `Prop` into a
-data-sorted result -- which is exactly what's happening here, since the matcher produces this
-function's real return value -- when the eliminated type is a subsingleton (at most one
-constructor), so every row sharing that position is definitionally forced to the same shape. If
-*every* discriminant turns out to be erasable this way, there is (by the same argument) exactly one
-reachable row, so the whole match collapses to that row's body translated directly, with no `pcase`
-at all. -/
+rather than rendered as a `pcase` branch. -/
 partial def tryDecodeMatcher (varNames : Std.HashMap FVarId String) (matcherName : Name) (args : Array Expr) :
     Meta.MetaM (Option LExpr) := do
   let some ci := (← getEnv).find? matcherName | return none
@@ -502,12 +487,12 @@ partial def tryDecodeMatcher (varNames : Std.HashMap FVarId String) (matcherName
             varNames' := varNames'.insert rx.fvarId! nm
             nameStrs := nameStrs ++ [nm]
           let bodyL ← translateExpr varNames' realBody
-          -- Several entries in `assoc` can share the same root position `p` -- one per depth of
-          -- nesting scrutinized under it -- so fold them into `p`'s pattern shallowest-first,
-          -- inserting each deeper `ctor` into the placeholder its immediate parent already reserved.
-          -- Relabeling walks *every* position (not just the kept ones) in the same order the names
-          -- were bound in, so the queue stays aligned; only afterwards do we drop the erased
-          -- positions' (now-irrelevant) patterns from what's actually emitted.
+          -- Several entries in `assoc` can share the same root position `p` so fold them into `p`'s
+          -- pattern shallowest-first, inserting each deeper `ctor` into the placeholder its
+          -- immediate parent already reserved.  Relabeling walks every position (not just the
+          -- kept ones) in the same order the names were bound in, so the queue stays aligned; only
+          -- afterwards do we drop the erased positions' (now-irrelevant) patterns from what's
+          -- actually emitted.
           let rawPats := allPositions.map (fun p =>
             let entries := (assoc.filter (·.1 == p)).map (fun (_, path, pat) => (path, pat))
             let sorted := entries.mergeSort (fun a b => a.1.length ≤ b.1.length)
@@ -519,19 +504,20 @@ partial def tryDecodeMatcher (varNames : Std.HashMap FVarId String) (matcherName
         alts := alts ++ [clause]
       return some (.matchE discrExprs alts)
 
-/-- Walk a matcher's own generic `casesOn` tree. Returns one row per leaf reached: the assoc-list
+/-- Walk a matcher's generic `casesOn` tree. Returns one row per leaf reached: the assoc-list
 of (root discriminant position, path of ctor-field indices from that root, constructor pattern at
 that path) accumulated on the way there, plus the `FVarId` (one of `topPos`'s keys) of the
 alternative binder applied at that leaf. A discriminant (or field of one) that's never destructured
-on some path (e.g. a wildcard `_` pattern) simply doesn't appear in that row's assoc-list;
+on some path (e.g. a wildcard `_` pattern) doesn't appear in that row's assoc-list.
 `tryDecodeMatcher` pads for this using the union of root positions seen across all rows, and
 defaults any un-visited field within a visited root to a plain variable.
 
 A named/dependent match (`match h : e with`) makes the matcher's motive depend on the scrutinee
-equality, so the elaborator wraps the real `casesOn` tree in an extra redex --
-`(fun x_1 => casesOn ... x_1 ...) x (Eq.refl x)` -- to thread that equality proof through. `headBeta`
-strips exactly that wrapper (without unfolding any definitions, unlike `whnf`) so the `casesOn` node
-underneath is still recognized; it's a no-op everywhere else. -/
+equality, so the elaborator wraps the real `casesOn` tree in an extra redex to thread that equality proof through.
+Example: `(fun x_1 => casesOn ... x_1 ...) x (Eq.refl x)`
+
+`headBeta` strips exactly that wrapper (without unfolding any definitions, unlike `whnf`) so the
+`casesOn` node underneath is still recognized. It's a no-op everywhere else. -/
 partial def walkMatcherBody (topPos : Std.HashMap FVarId Nat) (varPos : Std.HashMap FVarId (Nat × List Nat))
     (e : Expr) : Meta.MetaM (List (List (Nat × List Nat × LPat) × FVarId)) := do
   match e.headBeta.getAppFn with
@@ -552,11 +538,10 @@ function of that constructor's fields. Only handles non-indexed inductives (true
 `LgtmLean` actually pattern-matches on: `Bool`, `List`, `Option`, `Nat`, and its own plain enums).
 
 `major` need not be one of the matcher's own top-level discriminants directly (`varPos[·]` covers
-both cases uniformly via an empty vs. non-empty path): it may instead be a field variable this
-same function bound while decomposing an *enclosing* `casesOn`, which is what makes a source
-pattern like `((.topLevel, _), _)` -- nested two constructors deep on a single discriminant --
-decodable at all, since Lean compiles it into one matcher whose body chains `casesOn` nodes
-directly rather than delegating the inner level to its own auxiliary matcher. -/
+both cases uniformly via an empty vs. non-empty path): it may instead be a field variable this same
+function bound while decomposing an *enclosing* `casesOn`, which is what makes a source pattern like
+`((.topLevel, _), _)` decodable, since Lean compiles it into one matcher whose body chains `casesOn`
+nodes directly rather than delegating the inner level to its own auxiliary matcher. -/
 partial def decomposeCasesOn (topPos : Std.HashMap FVarId Nat) (varPos : Std.HashMap FVarId (Nat × List Nat))
     (indName : Name) (e : Expr) : Meta.MetaM (List (List (Nat × List Nat × LPat) × FVarId)) := do
   match (← getEnv).find? indName with
@@ -586,21 +571,15 @@ partial def decomposeCasesOn (topPos : Std.HashMap FVarId Nat) (varPos : Std.Has
     | _ => pure []
   | _ => pure []
 
-/-- Decompose one `dite (scrutinee = lit) inst thenBranch elseBranch` node -- how Lean compiles a
-`match` against a literal value (`Nat`, `String`, or -- since `Char` has no constructors of its own
--- `Char.ofNat n`) instead of against a genuine inductive constructor -- into a `(rootPos, path,
-LPat.lit ..)` row for the positive branch, chained with whatever `elseBranch` (the next `dite` in
-the chain, or the final wildcard alt) contributes.
+/-- Decompose one `dite (scrutinee = lit) inst thenBranch elseBranch` node.
+
+This is how Lean compiles a `match` against a literal value (`Nat`, `String`, or `Char.ofNat n`).
+The `Char` form is odd because `Char` has no constructors of its own.
 
 `thenBranch`'s value is `@Eq.ndrec_symm α lit motive (h Unit.unit) scrutinee`: since
-`Eq.ndrec_symm`'s own signature is `.. → motive a → {b} → b = a → motive b`, this partial
-application (5 of its 6 explicit args) already has exactly the function type `dite` needs for its
-`t : cond → α` argument, with no further eta-expansion -- so the leaf alt-binder is its own 4th
-explicit argument (`h Unit.unit`), not something reached via `lambdaTelescope`. Literal patterns
-carry no field data, so unlike `decomposeCasesOn`'s constructor branches, that binder is applied to
-a throwaway `Unit.unit` rather than to any real fields. Only recognizes the scrutinee-on-the-left
-equality order actually produced for `LgtmLean`'s own literal matches; anything else falls back
-(returns `[]`) to ordinary call translation, same as an unrecognized `casesOn` shape. -/
+`Eq.ndrec_symm`'s signature is `.. → motive a → {b} → b = a → motive b`, this partial application (5
+of its 6 explicit args) already has the function type `dite` needs for its `t : cond → α` argument,
+with no further eta-expansion. -/
 partial def decomposeDiteLiteral (topPos : Std.HashMap FVarId Nat) (varPos : Std.HashMap FVarId (Nat × List Nat))
     (e : Expr) : Meta.MetaM (List (List (Nat × List Nat × LPat) × FVarId)) := do
   let args := e.getAppArgs
@@ -639,10 +618,10 @@ partial def decomposeDiteLiteral (topPos : Std.HashMap FVarId Nat) (varPos : Std
 
 end
 
-/-- Whether equation clause `pats` is nothing more than the trivial variable patterns naming
-`params`, in order -- i.e. the clause doesn't actually destructure any of its arguments. When it's
-the sole clause, `translateFunction` uses its body directly instead of wrapping it in a
-(redundant) single-alternative `LExpr.matchE`. -/
+/-- Whether equation clause `pats` is just the trivial variable patterns naming `params`, in
+order. That is, if the clause doesn't actually destructure any of its arguments. When it's the sole
+clause, `translateFunction` uses its body directly instead of wrapping it in a redundant
+single-alternative `LExpr.matchE`. -/
 def isTrivialClause (pats : List LPat) (params : List String) : Bool :=
   pats.length == params.length && (pats.zip params).all fun (p, n) =>
     match p with
@@ -651,31 +630,28 @@ def isTrivialClause (pats : List LPat) (params : List String) : Bool :=
 
 /-- Translate a single top-level `LgtmLean` function into its `LFunction` representation.
 
-Reads the function's parameter names directly off its own declared type, throwing if any *kept*
-(non-erasable, see `isErasableType`) parameter's name was invented by the elaborator rather than
-written by the user (see `isElaboratorGeneratedName`) -- that only happens for the pattern-bound
-function definition form, which `LgtmLean` no longer uses. An *erasable* parameter's name doesn't
-matter (it's dropped either way), so an anonymous instance-implicit binder like `[BEq α]` -- whose
-elaborator-invented name would otherwise also trip this guard -- never reaches the check at all.
-The body then prefers Lean's auto-generated equation lemmas (one clause per equation) -- this is
-what lets recursive functions come through as ordinary pattern matching instead of the raw
-well-founded/structural recursion combinators they actually compile to -- falling back to directly
-reading off `lambdaTelescope` of the definition's value for functions with no equations (e.g. a
-one-line non-recursive `def` with no internal `match`). Multiple equation clauses (or a single
-clause that does destructure its arguments, e.g. a single-constructor structure) are recombined
-into one `LExpr.matchE` over the declared parameters. -/
+Reads the function's parameter names directly off its declared type, throwing if any non-erasable
+parameter's name was invented by the elaborator rather than written by the user.  That only happens
+for the pattern-bound function definition forms, so extractable code should avoid that definition
+style.
+
+The body then prefers Lean's auto-generated equation lemmas, which is what lets recursive functions
+come through as ordinary pattern matching instead of the raw well-founded/structural recursion
+combinators they actually compile to.  Falls back to directly reading off `lambdaTelescope` of
+the definition's value for functions with no equations (e.g. a one-line non-recursive `def` with no
+internal `match`). Multiple equation clauses (or a single clause that does destructure its
+arguments, e.g. a single-constructor structure) are recombined into one `LExpr.matchE` over the
+declared parameters. -/
 def translateFunction (name : Name) : Meta.MetaM LFunction := do
   let info ← getConstInfo name
   let docstring ← findDocString? (← getEnv) name
   let eqns? ← Meta.getEqnsFor? name
   -- When equations exist, the real per-clause patterns are read off separately below (via
-  -- `exprToPat`, from each equation lemma's own LHS), so this telescope's names only need to be
-  -- *some* stable, distinct, Lisp-safe identifiers to serve as `LFunction.parameters`/the
-  -- top-level `matchE` scrutinee list -- unlike the no-equations branch below (a genuinely
-  -- pattern-bound hand-written `def`, which `LgtmLean` no longer uses), a synthetic fallback name
-  -- is safe here rather than a hard failure. This is what lets a compiler-`deriving`-generated
-  -- instance like `instDecidableEqCommentRef.decEq` (whose *declared type*, unlike its equations,
-  -- names its parameters via elaborator-invented patterns) translate at all.
+  -- `exprToPat`, from each equation lemma's LHS), so this telescope's names only need to be some
+  -- stable, distinct, Lisp-safe identifiers to serve as `LFunction.parameters`/the top-level
+  -- `matchE` scrutinee list, a synthetic fallback name is safe here rather than a hard
+  -- failure. This is what lets a compiler-`deriving`-generated instance like
+  -- `instDecidableEqCommentRef.decEq`.
   let paramNames ← Meta.forallTelescope info.type fun xs _ => do
     let mut names : List String := []
     for x in xs do
@@ -711,16 +687,10 @@ def translateFunction (name : Name) : Meta.MetaM LFunction := do
           let bodyL ← translateExpr varNames rhs
           pure (pats, bodyL)
       clauses := clauses ++ [clause]
-    -- `paramNames` (from `info.type`'s telescope) can come back shorter than the equations'
-    -- own arity -- observed for a `deriving DecidableEq` enum's *own* instance (as opposed to a
-    -- `.decEq` helper it delegates to, see `instDecidableEqRepositoryRef.decEq` above): its
-    -- declared type is the bare application `DecidableEq FileVersion`, and `forallTelescope`
-    -- doesn't peel through that abbreviation to the `(a b : FileVersion) → ..` it actually stands
-    -- for, so `paramNames` comes back empty while the equations still bind two real parameters.
-    -- These outer names are purely cosmetic scrutinee bindings for the `matchE` below (the
-    -- equations' *own* bound names, captured separately in each clause's own `LPat`s, are what
-    -- actually drives translation) -- so falling back to a synthetic name per clause parameter is
-    -- safe whenever the arities disagree.
+    -- `paramNames` (from `info.type`'s telescope) can come back shorter than the equations' arity.
+    -- This seems to happen around `DecidableEq` instances.  The extra names are purely cosmetic
+    -- scrutinee bindings for the `matchE` below so falling back to a synthetic name per clause
+    -- parameter is safe whenever the arities disagree.
     let arity := (clauses.headD ([], LExpr.opaque "")).1.length
     let paramNames := if paramNames.length == arity then paramNames else
       (List.range arity).map (s!"arg{·}")
@@ -746,11 +716,7 @@ def translateFunction (name : Name) : Meta.MetaM LFunction := do
 -- Regression test: `LgtmLean.Files.parseFileModificationType` matches its `Char` parameter against
 -- literal patterns (`'M'`, `'A'`, ...). Since it's non-recursive, `translateFunction` takes this
 -- function's equation-lemma path, converting each equation's left-hand-side argument via
--- `exprToPat` -- as opposed to the *matcher*-decoding path (`tryDecodeMatcher`/
--- `decomposeDiteLiteral`), used only for a `match` nested inside a larger body. `exprToPat` once
--- had no case for a `Char` literal (represented as the application `Char.ofNat n`, not a bare
--- `Expr.lit`) and silently fell back to `.wildcard` instead of `.lit (.char _)`, which -- since
--- `pcase` tries alternatives in order -- made every character match the first alternative.
+-- `exprToPat`.
 /-- info: "LPat.lit (LLit.char 'M'), LPat.lit (LLit.char 'A'), LPat.lit (LLit.char 'D'), LPat.lit (LLit.char 'T'), LPat.lit (LLit.char 'R'), LPat.lit (LLit.char 'C'), LPat.var \"c\"" -/
 #guard_msgs in
 #eval show Meta.MetaM String from do
@@ -759,10 +725,10 @@ def translateFunction (name : Name) : Meta.MetaM LFunction := do
   | .matchE _ alts => pure (", ".intercalate (alts.map (fun (pats, _) => reprStr pats.head!)))
   | _ => pure "no matchE"
 
-/-- Whether `name`'s own declared type has no run-time representation once its full arrow
+/-- Whether `name`'s declared type has no run-time representation once its full arrow
 telescope is peeled off: either a `Prop` (a proof-producing predicate like
-`SelectedComment.WellFormed`) or itself a `Sort` (a type synonym like `abbrev CommentThread := ...`).
-Neither is really a "function" in the run-time sense -- translating its body would just erase
+`SelectedComment.WellFormed`) or a `Sort` (a type synonym like `abbrev CommentThread := ...`).
+Neither is really a "function" in the run-time sense.  Translating its body would just erase
 everything down to a meaningless husk, so `main` skips these outright rather than emitting one. -/
 def isPropReturningDecl (name : Name) : Meta.MetaM Bool := do
   try
@@ -770,14 +736,14 @@ def isPropReturningDecl (name : Name) : Meta.MetaM Bool := do
   catch _ =>
     return false
 
-/-- Whether the inductive `name`, once its indices/parameters are peeled off, is itself the `Prop`
-sort -- i.e. it's a proof-only relation (like `CommentThreads.NodeReachable`) rather than a genuine
-data type. Checks `codomain.isProp` (is this expression *literally* the sort `Prop`), not
-`Meta.isProp codomain` (is the *type of* this expression `Prop`, which asks a different question
-here since `codomain` is itself a classifying sort, not a value). Also deliberately does not treat
-a `Type`-valued codomain as erasable the way `isPropReturningDecl` does for functions: every
-ordinary data inductive's own declared type is itself `Type`-sorted (that's just what it means to
-be a type), so that check would reject every inductive, not just the proof-only ones. -/
+/-- Whether the inductive `name` is a `Prop` or `Sort.
+
+Checks `codomain.isProp` (is this expression *literally* the sort `Prop`), not `Meta.isProp
+codomain` (is the *type of* this expression `Prop`, which asks a different question here since
+`codomain` is itself a classifying sort, not a value). Also deliberately does not treat a
+`Type`-valued codomain as erasable the way `isPropReturningDecl` does for functions: every ordinary
+data inductive's declared type is itself `Type`-sorted so that check would reject every inductive,
+not just the proof-only ones. -/
 def isPropSortedInductive (name : Name) : Meta.MetaM Bool := do
   try
     Meta.forallTelescope (← getConstInfo name).type fun _ codomain => do
@@ -792,7 +758,11 @@ def translateStructure (name : Name) : Meta.MetaM LStructureDefinition := do
   let ctor := Lean.getStructureCtor env name
   Meta.forallTelescope ctor.type fun xs _ => do
     let mut fields : List String := []
-    for x in xs do
+    -- The constructor's leading `numParams` binders are the structure's *parameters*, not its
+    -- fields.  E.g., `FileThreadsBootstrapState origState comments₁` is a family of types indexed
+    -- by two values. They only exist to pin down the type, so they have no slot in the
+    -- `cl-defstruct`. `translateApp` drops them from projection applications to match.
+    for x in xs.extract ctor.numParams xs.size do
       let ld ← x.fvarId!.getDecl
       unless ← isErasableType ld.type do
         fields := fields ++ [toString ld.userName]
@@ -800,7 +770,7 @@ def translateStructure (name : Name) : Meta.MetaM LStructureDefinition := do
 
 /-- Translate a single top-level `LgtmLean` (non-structure) inductive into its
 `LInductiveDefinition` representation: one `(name, arity)` pair per constructor, where the arity
-discards any constructor field of an erasable type (e.g., Prop) -- mirroring `translateStructure`. -/
+discards any constructor field of an erasable type (e.g., Prop). -/
 def translateInductive (name : Name) : Meta.MetaM LInductiveDefinition := do
   match ← getConstInfo name with
   | .inductInfo indInfo => do
@@ -922,7 +892,12 @@ def renderIntermediate (targetFile : System.FilePath) (translations : Translatio
 def renderToFile (targetFile : System.FilePath) (rendered : Rendered) : IO Unit := do
   let hdl ← IO.FS.Handle.mk targetFile IO.FS.Mode.write
 
+  hdl.putStrLn ";;; lgtm-lean-core.el --- Extracted LgtmLean core -*- lexical-binding: t; -*-"
   hdl.putStrLn ";; This file is generated by extracting Lean code. Do not edit this file directly."
+  hdl.putStrLn ""
+  hdl.putStrLn "(require 'cl-lib)"
+  hdl.putStrLn "(require 'seq)"
+  hdl.putStrLn "(require 'subr-x)"
   hdl.putStrLn ""
   hdl.putStrLn ";; Type definitions"
 
