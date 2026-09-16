@@ -172,22 +172,28 @@ def isLikelyMatcherName (n : Name) : Bool :=
   | .str _ s => s.startsWith "match_"
   | _ => false
 
-/-- Whether `s` is a Lean-generated name for an inaccessible binder (rendered with `✝`).
+/-- A readable, Lisp-safe rendering of a binder's name.
 
-Unlike a merely hygienic name (containing `._@.`, which can still be a used, ordinary
-variable this is a reliable "definitely unused" signal. -/
-def looksInaccessible (s : String) : Bool :=
-  s.any (· == '✝')
+Lean's match compiler, structure-update notation and pattern-matching lambdas name their binders
+hygienically (`tail._@.LgtmLean.Threads.4103313803._hygCtx._hyg.47`). `toString` keeps those macro
+scopes verbatim -- the `✝` seen in goal displays is added by the pretty-printer's name sanitizer,
+not by `toString` -- so rendering them raw leaks unreadable identifiers into the elisp. Erasing the
+scopes recovers the base name (`tail`).
 
-/-- Replace each `LPat.var` placeholder in `p` with the next name pulled off `queue`, threading the
-remaining queue through. Inaccessible names become `LPat.wildcard` instead of a `var` so the result
+Callers must pair this with `bindFresh`, which restores the distinctness the macro scopes were
+providing: erasing scopes can collapse two genuinely different binders onto the same base. -/
+def readableBinderName (n : Name) : String :=
+  toString n.eraseMacroScopes
+
+/-- Replace each `LPat.var` placeholder in `p` with the next entry pulled off `queue`, threading the
+remaining queue through. A `none` entry becomes `LPat.wildcard` instead of a `var` so the result
 doesn't invent a bogus binder name for something unused. -/
-partial def relabelPat (p : LPat) (queue : List String) : LPat × List String :=
+partial def relabelPat (p : LPat) (queue : List (Option String)) : LPat × List (Option String) :=
   match p with
   | .var _ =>
     match queue with
     | [] => (.wildcard, [])
-    | n :: rest => ((if looksInaccessible n then .wildcard else .var n), rest)
+    | n :: rest => ((match n with | some nm => .var nm | none => .wildcard), rest)
   | .ctor name fields =>
     let (fields', queue') := fields.foldl (fun (acc, q) f =>
       let (f', q') := relabelPat f q
@@ -195,7 +201,8 @@ partial def relabelPat (p : LPat) (queue : List String) : LPat × List String :=
     (.ctor name fields', queue')
   | other => (other, queue)
 
-def relabelPats (pats : List LPat) (queue : List String) : List LPat × List String :=
+def relabelPats (pats : List LPat) (queue : List (Option String)) :
+    List LPat × List (Option String) :=
   pats.foldl (fun (acc, q) p =>
     let (p', q') := relabelPat p q
     (acc ++ [p'], q')) ([], queue)
@@ -312,7 +319,7 @@ partial def translateExpr (varNames : Std.HashMap FVarId String) (e : Expr) : Me
   | .letE n ty v b _ => do
     let erase ← isErasableType ty
     Meta.withLetDecl n ty v fun fvar => do
-      let (varNames', nm) := bindFresh varNames fvar.fvarId! (toString n)
+      let (varNames', nm) := bindFresh varNames fvar.fvarId! (readableBinderName n)
       let bL ← translateExpr varNames' (b.instantiate1 fvar)
       if erase then
         pure bL
@@ -325,7 +332,7 @@ partial def translateExpr (varNames : Std.HashMap FVarId String) (e : Expr) : Me
       let mut paramNames : List String := []
       for x in xs do
         let ld ← x.fvarId!.getDecl
-        let (vn, nm) := bindFresh varNames' x.fvarId! (toString ld.userName)
+        let (vn, nm) := bindFresh varNames' x.fvarId! (readableBinderName ld.userName)
         varNames' := vn
         if !(← isErasableType ld.type) then
           paramNames := paramNames ++ [nm]
@@ -496,7 +503,8 @@ partial def tryDecodeMatcher (varNames : Std.HashMap FVarId String) (matcherName
         let mut varNames' := varNames
         for rx in realXs do
           let ld ← rx.fvarId!.getDecl
-          varNames' := varNames'.insert rx.fvarId! (toString ld.userName)
+          let (vn, _) := bindFresh varNames' rx.fvarId! (readableBinderName ld.userName)
+          varNames' := vn
         some <$> translateExpr varNames' realBody
     else
       let discrExprs ← keptPositions.mapM (fun p => translateExpr varNames args[p]!)
@@ -506,12 +514,15 @@ partial def tryDecodeMatcher (varNames : Std.HashMap FVarId String) (matcherName
         let altArgExpr := args[altPos]!
         let clause ← Meta.lambdaTelescope altArgExpr fun realXs realBody => do
           let mut varNames' := varNames
-          let mut nameStrs : List String := []
+          -- A binder the alternative's body never mentions becomes a `_` pattern rather than an
+          -- invented name. This is what the user wrote as `_` in the source: the match compiler has
+          -- to bind *something* there, so it invents a hygienic name, but nothing can refer to it.
+          let mut nameStrs : List (Option String) := []
           for rx in realXs do
             let ld ← rx.fvarId!.getDecl
-            let nm := toString ld.userName
-            varNames' := varNames'.insert rx.fvarId! nm
-            nameStrs := nameStrs ++ [nm]
+            let (vn, nm) := bindFresh varNames' rx.fvarId! (readableBinderName ld.userName)
+            varNames' := vn
+            nameStrs := nameStrs ++ [if realBody.containsFVar rx.fvarId! then some nm else none]
           let bodyL ← translateExpr varNames' realBody
           -- Several entries in `assoc` can share the same root position `p` so fold them into `p`'s
           -- pattern shallowest-first, inserting each deeper `ctor` into the placeholder its
@@ -700,7 +711,8 @@ def translateFunction (name : Name) : Meta.MetaM LFunction := do
         let mut varNames : Std.HashMap FVarId String := {}
         for x in xs do
           let ld ← x.fvarId!.getDecl
-          varNames := varNames.insert x.fvarId! (toString ld.userName)
+          let (vn, _) := bindFresh varNames x.fvarId! (readableBinderName ld.userName)
+          varNames := vn
         match eqType.eq? with
         | none => pure ([LPat.wildcard], LExpr.opaque "malformed equation lemma")
         | some (_, lhs, rhs) => do
