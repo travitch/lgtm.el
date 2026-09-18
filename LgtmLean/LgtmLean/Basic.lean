@@ -4,9 +4,11 @@ public import Std
 import Init.System
 import Init.Data.List.Sort
 
+meta import Extractor.Attribute
 public import LgtmLean.Tree
 
 /-- A reference that can be mapped to (mutable) comment contents -/
+@[public_api]
 public structure CommentRef where
   /-- A unique identifier
 
@@ -71,6 +73,7 @@ public structure ModifiedFileRef where
   currentFileHash : GitRevision
   deriving Hashable, DecidableEq
 
+@[public_api]
 public structure CommentFileLocation where
   version : FileVersion
   fileRef : ModifiedFileRef
@@ -133,6 +136,7 @@ public structure ServerId where
 This is separated out from references, as references often need to be hashed
 or compared for equality, which is expensive if the reference actually includes
 all of the comment data. -/
+@[public_api]
 public structure Comment where
   /-- The unique id assigned to this comment.
 
@@ -438,6 +442,7 @@ public theorem CommentManager.preservePublished_insert (manager : CommentManager
   rw [Std.HashMap.get_insert_of_ne hne' hc h]
   exact hpub
 
+@[public_api]
 public structure Repository where
   /-- The name of the repository -/
   name : String
@@ -680,6 +685,7 @@ take what they give us. -/
 public structure ChangesetStatus where
   status : String
 
+@[public_api]
 public structure Configuration where
   user : String
   changesetId : String

@@ -7,6 +7,7 @@ The fields do not include Prop-typed entries. -/
 public structure LStructureDefinition where
   name : String
   fields : List String
+  isPublic : Bool := false
   deriving Repr
 
 /-- An abstraction of Lean inductive definitions.
@@ -93,6 +94,7 @@ public structure LFunction where
   parameters : List String
   body : LExpr
   docstring : Option String
+  isPublic : Bool := false
   deriving Repr
 
 

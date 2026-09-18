@@ -1,6 +1,7 @@
 import Lean
 import LgtmLean
 
+import Extractor.Attribute
 import Extractor.IR
 import Extractor.Render
 import Extractor.TopologicalSort
@@ -682,6 +683,7 @@ declared parameters. -/
 def translateFunction (name : Name) : Meta.MetaM LFunction := do
   let info ← getConstInfo name
   let docstring ← findDocString? (← getEnv) name
+  let isPublic := isPublicApi (← getEnv) name
   let eqns? ← Meta.getEqnsFor? name
   -- When equations exist, the real per-clause patterns are read off separately below (via
   -- `exprToPat`, from each equation lemma's LHS), so this telescope's names only need to be some
@@ -736,12 +738,12 @@ def translateFunction (name : Name) : Meta.MetaM LFunction := do
       | [(pats, bodyL)] =>
         if isTrivialClause pats paramNames then bodyL else .matchE (paramNames.map LExpr.var) clauses
       | _ => .matchE (paramNames.map LExpr.var) clauses
-    pure { name := toString name, parameters := paramNames, body, docstring }
+    pure { name := toString name, parameters := paramNames, body, docstring, isPublic }
   | none =>
     match info.value? with
     | none =>
       let body := LExpr.opaque "no definition available"
-      pure { name := toString name, parameters := paramNames, body, docstring }
+      pure { name := toString name, parameters := paramNames, body, docstring, isPublic }
     | some v =>
       Meta.lambdaTelescope v fun xs body => do
         let mut varNames : Std.HashMap FVarId String := {}
@@ -749,7 +751,7 @@ def translateFunction (name : Name) : Meta.MetaM LFunction := do
           let ld ← x.fvarId!.getDecl
           varNames := varNames.insert x.fvarId! (toString ld.userName)
         let bodyL ← translateExpr varNames body
-        pure { name := toString name, parameters := paramNames, body := bodyL, docstring }
+        pure { name := toString name, parameters := paramNames, body := bodyL, docstring, isPublic }
 
 -- Regression test: `LgtmLean.Files.parseFileModificationType` matches its `Char` parameter against
 -- literal patterns (`'M'`, `'A'`, ...). Since it's non-recursive, `translateFunction` takes this
@@ -804,7 +806,7 @@ def translateStructure (name : Name) : Meta.MetaM LStructureDefinition := do
       let ld ← x.fvarId!.getDecl
       unless ← isErasableType ld.type do
         fields := fields ++ [toString ld.userName]
-    pure { name := toString name, fields }
+    pure { name := toString name, fields, isPublic := isPublicApi env name }
 
 /-- Translate a single top-level `LgtmLean` (non-structure) inductive into its
 `LInductiveDefinition` representation: one `(name, arity)` pair per constructor, where the arity
