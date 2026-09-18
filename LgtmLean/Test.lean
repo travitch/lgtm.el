@@ -517,8 +517,8 @@ per-file fold (`applyBaseThreads`/`applyCurrentThreads`) and the accessors it up
 def fileThreadChecks : List ElispCheck :=
   let loaded := addRemoteComments (fileReviewState fileComments)
   let loadedStateElisp :=
-    elispCall "lgtm--result-updated-state"
-      [elispCall "lgtm--add-remote-comments" [fileReviewStateElisp fileComments]]
+    elispCall "lgtm-result-updated-state"
+      [elispCall "lgtm-add-remote-comments" [fileReviewStateElisp fileComments]]
   let fileManager := loaded.updatedState.fileManager
   let baseChecks :=
     if h : fileManager.state.contains modifiedFileRef then
@@ -533,19 +533,19 @@ def fileThreadChecks : List ElispCheck :=
           fileManager ]
     else
       [missingFixture "a loaded ModifiedFileState for the tracked file"]
-  [ check "lgtm--add-remote-comments (value, file-scoped)"
-      (elispCall "lgtm--result-value"
-        [elispCall "lgtm--add-remote-comments" [fileReviewStateElisp fileComments]])
+  [ check "lgtm-add-remote-comments (value, file-scoped)"
+      (elispCall "lgtm-result-value"
+        [elispCall "lgtm-add-remote-comments" [fileReviewStateElisp fileComments]])
       loaded.value,
-    check "lgtm--add-remote-comments (file manager)"
+    check "lgtm-add-remote-comments (file manager)"
       (elispCall "lgtm--state-file-manager" [loadedStateElisp]) fileManager,
-    check "lgtm--add-remote-comments (comment manager, file-scoped)"
+    check "lgtm-add-remote-comments (comment manager, file-scoped)"
       (elispCall "lgtm--state-comment-manager" [loadedStateElisp]) loaded.updatedState.commentManager,
     -- `mixedComments` mentions a file the review doesn't track, so the batch has to be rejected --
     -- leaving the state alone -- rather than loaded.
-    check "lgtm--add-remote-comments (untracked file)"
-      (elispCall "lgtm--result-value"
-        [elispCall "lgtm--add-remote-comments" [fileReviewStateElisp mixedComments]])
+    check "lgtm-add-remote-comments (untracked file)"
+      (elispCall "lgtm-result-value"
+        [elispCall "lgtm-add-remote-comments" [fileReviewStateElisp mixedComments]])
       (addRemoteComments (fileReviewState mixedComments)).value,
     checkBool2 "lgtm--check-file-comment-batches" checkFileCommentBatches singleFileState
       [(modifiedFileRef, fileComments)] ] ++ baseChecks
@@ -560,17 +560,17 @@ def threadChecks : List ElispCheck :=
   let manager := loadedState.commentManager
   let threads := manager.topLevelThreads
   let loadedStateElisp :=
-    elispCall "lgtm--result-updated-state"
-      [elispCall "lgtm--add-remote-comments" [initialStateElisp topLevelComments]]
+    elispCall "lgtm-result-updated-state"
+      [elispCall "lgtm-add-remote-comments" [initialStateElisp topLevelComments]]
   let managerElisp := elispCall "lgtm--state-comment-manager" [loadedStateElisp]
-  [ check "lgtm--add-remote-comments (value)"
-      (elispCall "lgtm--result-value"
-        [elispCall "lgtm--add-remote-comments" [initialStateElisp topLevelComments]])
+  [ check "lgtm-add-remote-comments (value)"
+      (elispCall "lgtm-result-value"
+        [elispCall "lgtm-add-remote-comments" [initialStateElisp topLevelComments]])
       loadResult.value,
-    check "lgtm--add-remote-comments (comment manager)" managerElisp manager,
-    check "lgtm--reset-comment-state"
+    check "lgtm-add-remote-comments (comment manager)" managerElisp manager,
+    check "lgtm-reset-comment-state"
       (elispCall "lgtm--state-comment-manager"
-        [elispCall "lgtm--result-updated-state" [elispCall "lgtm--reset-comment-state" [loadedStateElisp]]])
+        [elispCall "lgtm-result-updated-state" [elispCall "lgtm-reset-comment-state" [loadedStateElisp]]])
       (resetCommentState loadedState).updatedState.commentManager,
     check2 "lgtm--comment-manager-get" CommentManager.get manager ⟨"c2"⟩,
     checkBool1 "lgtm--comment-threads-is-empty" CommentThreads.isEmpty threads,
@@ -638,21 +638,21 @@ def assemblyChecks : List ElispCheck :=
 def commentCreationChecks : List ElispCheck :=
   let published := completeCommentWithContent editingState "a brand new comment"
   let cancelled := cancelCommentCreation editingState
-  [ check "lgtm--complete-comment-with-content (value)"
-      (elispCall "lgtm--result-value"
-        [elispCall "lgtm--complete-comment-with-content" [editingStateElisp, toElisp "a brand new comment"]])
+  [ check "lgtm-complete-comment-with-content (value)"
+      (elispCall "lgtm-result-value"
+        [elispCall "lgtm-complete-comment-with-content" [editingStateElisp, toElisp "a brand new comment"]])
       published.value,
-    check "lgtm--complete-comment-with-content (comment manager)"
+    check "lgtm-complete-comment-with-content (comment manager)"
       (elispCall "lgtm--state-comment-manager"
-        [elispCall "lgtm--result-updated-state"
-          [elispCall "lgtm--complete-comment-with-content" [editingStateElisp, toElisp "a brand new comment"]]])
+        [elispCall "lgtm-result-updated-state"
+          [elispCall "lgtm-complete-comment-with-content" [editingStateElisp, toElisp "a brand new comment"]]])
       published.updatedState.commentManager,
-    check "lgtm--cancel-comment-creation (value)"
-      (elispCall "lgtm--result-value" [elispCall "lgtm--cancel-comment-creation" [editingStateElisp]])
+    check "lgtm-cancel-comment-creation (value)"
+      (elispCall "lgtm-result-value" [elispCall "lgtm-cancel-comment-creation" [editingStateElisp]])
       cancelled.value,
-    check "lgtm--cancel-comment-creation (comment being edited)"
+    check "lgtm-cancel-comment-creation (comment being edited)"
       (elispCall "lgtm--state-comment-being-edited"
-        [elispCall "lgtm--result-updated-state" [elispCall "lgtm--cancel-comment-creation" [editingStateElisp]]])
+        [elispCall "lgtm-result-updated-state" [elispCall "lgtm-cancel-comment-creation" [editingStateElisp]]])
       cancelled.updatedState.commentBeingEdited ]
 
 end Checks

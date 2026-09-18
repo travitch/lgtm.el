@@ -2,10 +2,13 @@ module
 
 import Std
 
+meta import Extractor.Attribute
+
 public import LgtmLean.Basic
 public import LgtmLean.CreateThreads
 import all LgtmLean.CreateThreads
 
+@[public_api]
 public structure Result α where
   value : α
   updatedState : State
@@ -13,6 +16,7 @@ public structure Result α where
 /-- Delete all of the comments in the current review state.
 
 This is used to prepare to fetch an updated state from the server. -/
+@[public_api]
 public def resetCommentState (s₀ : State) : Result Unit :=
   let manager₁ := s₀.fileManager.resetCommentState
   let s₁ := { s₀ with
@@ -542,6 +546,7 @@ there before.
 
 Fails (leaving the state unchanged) if the server's batch doesn't satisfy the structural invariants
 that we expect (see `assembleCommentTrees`). -/
+@[public_api]
 public def addRemoteComments (s₀ : State) : Result (Except String Unit) :=
   match s₀.configuration.getRemoteConversations s₀.fileManager with
   | none => Result.mk (Except.ok ()) s₀
@@ -822,6 +827,7 @@ Note that we could add a proof obligation that the content is not empty, but thi
 context outside of the context of the Lean code, so that proof obligation cannot be fulfilled.
 
 -/
+@[public_api]
 public def completeCommentWithContent (s₀ : State) (newContent : String) : Result (Except String Comment) :=
   if newContent.isEmpty then
     Result.mk (Except.error "Comments cannot be empty") s₀
@@ -962,6 +968,7 @@ private theorem completeCommentWithContent.failsIfSavingCommentToServerFails (s�
     simp [hNotEmptyInput]
   simp [completeCommentWithContent, hEmpty, hCreateFails, Except.isOk, Except.toBool]
 
+@[public_api]
 public def cancelCommentCreation (s₀ : State) : Result Unit :=
   let s₁ := { s₀ with commentBeingEdited := none
                       hCommentBeingEditedWellFormed := by simp }
