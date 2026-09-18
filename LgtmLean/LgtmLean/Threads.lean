@@ -75,10 +75,13 @@ public def CommentThreads.previousThread (threads : CommentThreads) (manager : C
       let prevThread := orderedThreads[prevIdx]!
       some ⟨version, prevThread, prevThread.value⟩
 
-/-- Depth-first walk of `thread`'s descendants, resolving child refs against `threads` up to
-`fuel` levels deep. `fuel := threads.commentTreeNodes.size` in `CommentThread.linearize` is enough
-to reach every node of a genuine (cycle-free) thread, since such a thread's depth cannot exceed
-its node count. Children are sorted by timestamp at each level, matching `CommentThreads.asAlist`. -/
+/-- Linearize THREAD into a list of comments.
+
+Comments are ordered such that replies come after their parent and children are
+sorted in timestamp order.
+
+THREADS and MANAGER are used to get comment contents.  FUEL is used to guarantee
+termination. -/
 public def CommentThread.linearizeRecWithFuel (threads : CommentThreads) (manager : CommentManager) (fuel : Nat) (thread : CommentThread) : List Comment :=
 match fuel with
 | 0 => []
