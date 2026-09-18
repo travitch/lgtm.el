@@ -15,7 +15,8 @@ open Lean
 The extractor traverses function and type definitions to render them as elisp functions and definitions.
 
 - All of the extracted functions will be private/internal elisp (i.e., prefixed with lgtm--)
-- The extractor will maintain a list of names deemed public and to be prefixed with `lgtm-` to denote that they are available for users of the lgtm library
+- Declarations tagged `@[public_api]` (see `Extractor/Attribute.lean`) are instead prefixed with
+  `lgtm-` to denote that they are available for users of the lgtm library
 - No values or definitions in `Prop` will be exported, as they have no run-time representation
 - Translation of functions will go through a simplified intermediate AST
 

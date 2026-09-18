@@ -50,7 +50,7 @@ This is `equal' with two adjustments, both about hash tables:
 
 `equal' compares hash tables by identity, so it has to be taught to descend
 into them -- including when they are nested inside a record, as the maps in a
-`lgtm-comment-threads' are.
+`lgtm--comment-threads' are.
 
 Lean's `Std.HashMap' and Emacs' `maphash' do not agree on iteration order, so
 tables are compared as unordered key/value sets rather than element-wise."

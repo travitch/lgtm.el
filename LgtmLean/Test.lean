@@ -76,10 +76,10 @@ nullary constructors are symbols; constructors with fields are vectors tagged wi
 symbol. -/
 
 instance : ToElisp CommentRef := ⟨fun r => elispCall "make-lgtm-comment-ref" [toElisp r.id]⟩
-instance : ToElisp ServerId := ⟨fun s => elispCall "make-lgtm-server-id" [toElisp s.id]⟩
-instance : ToElisp GitRevision := ⟨fun r => elispCall "make-lgtm-git-revision" [toElisp r.hash]⟩
-instance : ToElisp FileRef := ⟨fun r => elispCall "make-lgtm-file-ref" [toElisp r.path]⟩
-instance : ToElisp ChangesetStatus := ⟨fun s => elispCall "make-lgtm-changeset-status" [toElisp s.status]⟩
+instance : ToElisp ServerId := ⟨fun s => elispCall "make-lgtm--server-id" [toElisp s.id]⟩
+instance : ToElisp GitRevision := ⟨fun r => elispCall "make-lgtm--git-revision" [toElisp r.hash]⟩
+instance : ToElisp FileRef := ⟨fun r => elispCall "make-lgtm--file-ref" [toElisp r.path]⟩
+instance : ToElisp ChangesetStatus := ⟨fun s => elispCall "make-lgtm--changeset-status" [toElisp s.status]⟩
 
 instance : ToElisp FileVersion where
   toElisp
@@ -101,10 +101,10 @@ instance : ToElisp ThreadLocation where
     | .lineNumber n => elispCall "vector" ["'thread-location-line-number", toElisp n]
 
 instance : ToElisp RepositoryRef where
-  toElisp r := elispCall "make-lgtm-repository-ref" [toElisp r.name, toElisp r.path, toElisp r.baseRevision]
+  toElisp r := elispCall "make-lgtm--repository-ref" [toElisp r.name, toElisp r.path, toElisp r.baseRevision]
 
 instance : ToElisp ModifiedFileRef where
-  toElisp r := elispCall "make-lgtm-modified-file-ref"
+  toElisp r := elispCall "make-lgtm--modified-file-ref"
     [toElisp r.repositoryRef, toElisp r.modificationType, toElisp r.baseFileName,
      toElisp r.baseFileHash, toElisp r.currentFileName, toElisp r.currentFileHash]
 
@@ -125,34 +125,34 @@ instance : ToElisp Comment where
      toElisp c.replyToId, toElisp c.content]
 
 instance [ToElisp α] : ToElisp (Tree α) where
-  toElisp t := elispCall "make-lgtm-tree" [toElisp t.value, toElisp t.children]
+  toElisp t := elispCall "make-lgtm--tree" [toElisp t.value, toElisp t.children]
 
 instance : ToElisp CommentThreads where
-  toElisp t := elispCall "make-lgtm-comment-threads"
+  toElisp t := elispCall "make-lgtm--comment-threads"
     [toElisp t.commentTreeNodes, toElisp t.serverCommentIds, toElisp t.locationRoots]
 
 instance : ToElisp SelectedComment where
-  toElisp s := elispCall "make-lgtm-selected-comment" [toElisp s.version, toElisp s.thread, toElisp s.comment]
+  toElisp s := elispCall "make-lgtm--selected-comment" [toElisp s.version, toElisp s.thread, toElisp s.comment]
 
 instance : ToElisp CommentManager where
-  toElisp m := elispCall "make-lgtm-comment-manager"
+  toElisp m := elispCall "make-lgtm--comment-manager"
     [toElisp m.comments, toElisp m.topLevelThreads, toElisp m.selectedComment]
 
 instance : ToElisp CommentBootstrapState where
-  toElisp b := elispCall "make-lgtm-comment-bootstrap-state"
+  toElisp b := elispCall "make-lgtm--comment-bootstrap-state"
     [toElisp b.topLevelComments, toElisp b.baseComments, toElisp b.currentComments]
 
 instance : ToElisp CommentTreeBootstrapState where
-  toElisp b := elispCall "make-lgtm-comment-tree-bootstrap-state"
+  toElisp b := elispCall "make-lgtm--comment-tree-bootstrap-state"
     [toElisp b.commentTreeNodes, toElisp b.serverCommentIds, toElisp b.locationRoots]
 
 instance : ToElisp ModifiedFileState where
-  toElisp s := elispCall "make-lgtm-modified-file-state"
+  toElisp s := elispCall "make-lgtm--modified-file-state"
     [toElisp s.ref, toElisp s.fileRef, toElisp s.selectedComment, toElisp s.baseThreads,
      toElisp s.currentThreads]
 
 instance : ToElisp ModifiedFileManager where
-  toElisp m := elispCall "make-lgtm-modified-file-manager" [toElisp m.state, toElisp m.modifiedFiles]
+  toElisp m := elispCall "make-lgtm--modified-file-manager" [toElisp m.state, toElisp m.modifiedFiles]
 
 /-! ## Checks -/
 
@@ -299,9 +299,9 @@ def configuration (comments : List Comment) : Configuration :=
 def configurationElisp (comments : List Comment) : String :=
   elispCall "make-lgtm-configuration"
     [ toElisp "alice", toElisp "cs-1", "nil", toElisp "bob", "42",
-      elispCall "make-lgtm-changeset-status" [toElisp "open"],
+      elispCall "make-lgtm--changeset-status" [toElisp "open"],
       toElisp "https://example.com/1", toElisp "A change", toElisp "It changes things.",
-      "(lambda (comment) (make-lgtm-server-id \"sid-new\"))",
+      "(lambda (comment) (make-lgtm--server-id \"sid-new\"))",
       s!"(lambda (file-manager) {toElisp comments})" ]
 
 /-- A review state that has not loaded any comments yet, and is not editing one. -/
@@ -313,8 +313,8 @@ def initialState (comments : List Comment) : State :=
     hFileThreadsPublished := by intro fileRef h; simp [emptyFileManager] at h }
 
 def initialStateElisp (comments : List Comment) : String :=
-  elispCall "make-lgtm-state"
-    [ configurationElisp comments, "nil", "nil", "lgtm-comment-manager-empty",
+  elispCall "make-lgtm--state"
+    [ configurationElisp comments, "nil", "nil", "lgtm--comment-manager-empty",
       toElisp emptyFileManager ]
 
 /-- A review state part-way through writing a new top-level comment. `draftComment` is fresh
@@ -334,8 +334,8 @@ def editingState : State :=
     hFileThreadsPublished := by intro fileRef h; simp [emptyFileManager] at h }
 
 def editingStateElisp : String :=
-  elispCall "make-lgtm-state"
-    [ configurationElisp topLevelComments, "nil", toElisp draftComment, "lgtm-comment-manager-empty",
+  elispCall "make-lgtm--state"
+    [ configurationElisp topLevelComments, "nil", toElisp draftComment, "lgtm--comment-manager-empty",
       toElisp emptyFileManager ]
 
 /-- The state map of a review that tracks exactly one file. An `abbrev` so that the `Std.HashMap`
@@ -392,8 +392,8 @@ def fileReviewState (comments : List Comment) : State :=
       simp [emptyFileState, CommentThreads.empty] }
 
 def fileReviewStateElisp (comments : List Comment) : String :=
-  elispCall "make-lgtm-state"
-    [ configurationElisp comments, toElisp modifiedFileRef, "nil", "lgtm-comment-manager-empty",
+  elispCall "make-lgtm--state"
+    [ configurationElisp comments, toElisp modifiedFileRef, "nil", "lgtm--comment-manager-empty",
       toElisp singleFileManager ]
 
 end Fixtures
@@ -410,66 +410,66 @@ open Fixtures
 
 /-- Literals, `Option` results, and `pcase` over an enum -- both directions. -/
 def literalChecks : List ElispCheck :=
-  [ check1 "lgtm-format-file-modification-type" formatFileModificationType .modified,
-    check1 "lgtm-format-file-modification-type" formatFileModificationType .added,
-    check1 "lgtm-format-file-modification-type" formatFileModificationType .deleted,
-    check1 "lgtm-format-file-modification-type" formatFileModificationType .renamed,
-    check1 "lgtm-format-file-modification-type" formatFileModificationType .copied,
-    check1 "lgtm-format-file-modification-type" formatFileModificationType .typechange,
-    check1 "lgtm-parse-file-modification-type" parseFileModificationType 'M',
-    check1 "lgtm-parse-file-modification-type" parseFileModificationType 'R',
-    check1 "lgtm-parse-file-modification-type" parseFileModificationType 'T',
+  [ check1 "lgtm--format-file-modification-type" formatFileModificationType .modified,
+    check1 "lgtm--format-file-modification-type" formatFileModificationType .added,
+    check1 "lgtm--format-file-modification-type" formatFileModificationType .deleted,
+    check1 "lgtm--format-file-modification-type" formatFileModificationType .renamed,
+    check1 "lgtm--format-file-modification-type" formatFileModificationType .copied,
+    check1 "lgtm--format-file-modification-type" formatFileModificationType .typechange,
+    check1 "lgtm--parse-file-modification-type" parseFileModificationType 'M',
+    check1 "lgtm--parse-file-modification-type" parseFileModificationType 'R',
+    check1 "lgtm--parse-file-modification-type" parseFileModificationType 'T',
     -- Neither of these parses; the second also exercises a character that needs escaping in
     -- elisp's `?c` syntax.
-    check1 "lgtm-parse-file-modification-type" parseFileModificationType 'Z',
-    check1 "lgtm-parse-file-modification-type" parseFileModificationType ' ' ]
+    check1 "lgtm--parse-file-modification-type" parseFileModificationType 'Z',
+    check1 "lgtm--parse-file-modification-type" parseFileModificationType ' ' ]
 
 /-- Small total functions over the core types: enums with fields, `Option`, tuples. -/
 def coreChecks : List ElispCheck :=
-  [ checkBool1 "lgtm-thread-location-is-top-level" ThreadLocation.isTopLevel .topLevel,
-    checkBool1 "lgtm-thread-location-is-top-level" ThreadLocation.isTopLevel (.lineNumber 42),
-    checkBool1 "lgtm-comment-location-is-top-level" CommentLocation.isTopLevel .topLevel,
-    checkBool1 "lgtm-comment-location-is-top-level" CommentLocation.isTopLevel (fileLoc 12),
-    check1 "lgtm-comment-location-as-thread-location" CommentLocation.asThreadLocation .topLevel,
-    check1 "lgtm-comment-location-as-thread-location" CommentLocation.asThreadLocation (fileLoc 12),
-    checkBool1 "lgtm-comment-is-persisted-to-server" Comment.isPersistedToServer topLevelComments[0]!,
-    checkBool1 "lgtm-comment-is-persisted-to-server" Comment.isPersistedToServer draftComment,
+  [ checkBool1 "lgtm--thread-location-is-top-level" ThreadLocation.isTopLevel .topLevel,
+    checkBool1 "lgtm--thread-location-is-top-level" ThreadLocation.isTopLevel (.lineNumber 42),
+    checkBool1 "lgtm--comment-location-is-top-level" CommentLocation.isTopLevel .topLevel,
+    checkBool1 "lgtm--comment-location-is-top-level" CommentLocation.isTopLevel (fileLoc 12),
+    check1 "lgtm--comment-location-as-thread-location" CommentLocation.asThreadLocation .topLevel,
+    check1 "lgtm--comment-location-as-thread-location" CommentLocation.asThreadLocation (fileLoc 12),
+    checkBool1 "lgtm--comment-is-persisted-to-server" Comment.isPersistedToServer topLevelComments[0]!,
+    checkBool1 "lgtm--comment-is-persisted-to-server" Comment.isPersistedToServer draftComment,
     -- `compareThreadLocations` matches on a *pair*, so it is where a mismatch between how tuples
     -- are built and how they are matched shows up.
-    checkBool2 "lgtm-compare-thread-locations" compareThreadLocations .topLevel (.lineNumber 3),
-    checkBool2 "lgtm-compare-thread-locations" compareThreadLocations (.lineNumber 3) .topLevel,
-    checkBool2 "lgtm-compare-thread-locations" compareThreadLocations (.lineNumber 3) (.lineNumber 9),
-    checkBool2 "lgtm-compare-thread-locations" compareThreadLocations (.lineNumber 9) (.lineNumber 3),
-    checkBool2 "lgtm-compare-located-comment-threads" compareLocatedCommentThreads
+    checkBool2 "lgtm--compare-thread-locations" compareThreadLocations .topLevel (.lineNumber 3),
+    checkBool2 "lgtm--compare-thread-locations" compareThreadLocations (.lineNumber 3) .topLevel,
+    checkBool2 "lgtm--compare-thread-locations" compareThreadLocations (.lineNumber 3) (.lineNumber 9),
+    checkBool2 "lgtm--compare-thread-locations" compareThreadLocations (.lineNumber 9) (.lineNumber 3),
+    checkBool2 "lgtm--compare-located-comment-threads" compareLocatedCommentThreads
       (.lineNumber 3, []) (.lineNumber 9, []),
-    check2 "lgtm-tree-add-child" Tree.addChild (⟨⟨"c1"⟩, [⟨"c2"⟩]⟩ : CommentThread) ⟨"c3"⟩,
-    check3 "lgtm-add-to-list-at" (addToListAt (α := ThreadLocation) (β := CommentRef))
+    check2 "lgtm--tree-add-child" Tree.addChild (⟨⟨"c1"⟩, [⟨"c2"⟩]⟩ : CommentThread) ⟨"c3"⟩,
+    check3 "lgtm--add-to-list-at" (addToListAt (α := ThreadLocation) (β := CommentRef))
       (.lineNumber 3) ⟨"c1"⟩ Std.HashMap.emptyWithCapacity,
-    check3 "lgtm-add-to-list-at" (addToListAt (α := ThreadLocation) (β := CommentRef))
+    check3 "lgtm--add-to-list-at" (addToListAt (α := ThreadLocation) (β := CommentRef))
       (.lineNumber 3) ⟨"c2"⟩ (Std.HashMap.emptyWithCapacity.insert (.lineNumber 3) [⟨"c1"⟩]) ]
 
 /-- The `Bool`-valued batch checks: recursion, `List.all`/`any`, and `BEq` on structures. -/
 def batchCheckChecks : List ElispCheck :=
-  [ checkBool1 "lgtm-check-refs-nodup" checkRefsNodup [⟨"a"⟩, ⟨"b"⟩, ⟨"c"⟩],
-    checkBool1 "lgtm-check-refs-nodup" checkRefsNodup [⟨"a"⟩, ⟨"b"⟩, ⟨"a"⟩],
-    checkBool1 "lgtm-check-comment-refs-nodup" checkCommentRefsNodup topLevelComments,
-    checkBool1 "lgtm-check-comment-refs-nodup" checkCommentRefsNodup (topLevelComments ++ topLevelComments),
-    checkBool1 "lgtm-check-all-comments-have-backend-id" checkAllCommentsHaveBackendId topLevelComments,
-    checkBool1 "lgtm-check-all-comments-have-backend-id" checkAllCommentsHaveBackendId
+  [ checkBool1 "lgtm--check-refs-nodup" checkRefsNodup [⟨"a"⟩, ⟨"b"⟩, ⟨"c"⟩],
+    checkBool1 "lgtm--check-refs-nodup" checkRefsNodup [⟨"a"⟩, ⟨"b"⟩, ⟨"a"⟩],
+    checkBool1 "lgtm--check-comment-refs-nodup" checkCommentRefsNodup topLevelComments,
+    checkBool1 "lgtm--check-comment-refs-nodup" checkCommentRefsNodup (topLevelComments ++ topLevelComments),
+    checkBool1 "lgtm--check-all-comments-have-backend-id" checkAllCommentsHaveBackendId topLevelComments,
+    checkBool1 "lgtm--check-all-comments-have-backend-id" checkAllCommentsHaveBackendId
       (draftComment :: topLevelComments),
-    checkBool1 "lgtm-check-all-parents-in-comments" checkAllParentsInComments topLevelComments,
+    checkBool1 "lgtm--check-all-parents-in-comments" checkAllParentsInComments topLevelComments,
     -- The reply's parent is missing from this batch.
-    checkBool1 "lgtm-check-all-parents-in-comments" checkAllParentsInComments [topLevelComments[1]!],
-    checkBool1 "lgtm-check-parents-created-before" checkParentsCreatedBefore topLevelComments,
-    checkBool1 "lgtm-check-parents-created-before" checkParentsCreatedBefore
+    checkBool1 "lgtm--check-all-parents-in-comments" checkAllParentsInComments [topLevelComments[1]!],
+    checkBool1 "lgtm--check-parents-created-before" checkParentsCreatedBefore topLevelComments,
+    checkBool1 "lgtm--check-parents-created-before" checkParentsCreatedBefore
       [topLevelComments[1]!, mkComment "c1" "s1" none 500 .topLevel "created after its reply"],
-    checkBool1 "lgtm-check-comment-batch" checkCommentBatch topLevelComments,
-    checkBool1 "lgtm-check-comment-batch" checkCommentBatch mixedComments,
-    checkBool2 "lgtm-check-file-comment-batches" checkFileCommentBatches
+    checkBool1 "lgtm--check-comment-batch" checkCommentBatch topLevelComments,
+    checkBool1 "lgtm--check-comment-batch" checkCommentBatch mixedComments,
+    checkBool2 "lgtm--check-file-comment-batches" checkFileCommentBatches
       (Std.HashMap.emptyWithCapacity.insert modifiedFileRef emptyFileState)
       [(modifiedFileRef, topLevelComments)],
     -- The entry names a file the manager doesn't track.
-    checkBool2 "lgtm-check-file-comment-batches" checkFileCommentBatches
+    checkBool2 "lgtm--check-file-comment-batches" checkFileCommentBatches
       (Std.HashMap.emptyWithCapacity.insert modifiedFileRef emptyFileState)
       [(otherFileRef, topLevelComments)] ]
 
@@ -482,33 +482,33 @@ positions these instances actually occupy in `LgtmLean` are all erased typeclass
 instead. That leaves the instances referring only to each other, so `pruneToReachable` drops the
 lot; `checkDecEq` exists for the day a call site branches on one directly. -/
 def decidableEqChecks : List ElispCheck :=
-  [ checkPruned "lgtm-inst-decidable-eq-comment-ref-dec-eq",
-    checkPruned "lgtm-inst-decidable-eq-server-id-dec-eq",
-    checkPruned "lgtm-inst-decidable-eq-git-revision-dec-eq",
-    checkPruned "lgtm-inst-decidable-eq-git-revision",
-    checkPruned "lgtm-inst-decidable-eq-file-version",
-    checkPruned "lgtm-inst-decidable-eq-modification-type",
-    checkPruned "lgtm-inst-decidable-eq-thread-location-dec-eq",
-    checkPruned "lgtm-inst-decidable-eq-repository-ref-dec-eq",
-    checkPruned "lgtm-inst-decidable-eq-modified-file-ref-dec-eq",
+  [ checkPruned "lgtm--inst-decidable-eq-comment-ref-dec-eq",
+    checkPruned "lgtm--inst-decidable-eq-server-id-dec-eq",
+    checkPruned "lgtm--inst-decidable-eq-git-revision-dec-eq",
+    checkPruned "lgtm--inst-decidable-eq-git-revision",
+    checkPruned "lgtm--inst-decidable-eq-file-version",
+    checkPruned "lgtm--inst-decidable-eq-modification-type",
+    checkPruned "lgtm--inst-decidable-eq-thread-location-dec-eq",
+    checkPruned "lgtm--inst-decidable-eq-repository-ref-dec-eq",
+    checkPruned "lgtm--inst-decidable-eq-modified-file-ref-dec-eq",
     -- Nothing references it, in Lean or in the output, so the exemption alone no longer keeps it.
-    checkPruned "lgtm-exists-file-location-version-decidable" ]
+    checkPruned "lgtm--exists-file-location-version-decidable" ]
 
 /-- Grouping a batch: hash tables keyed by a structure, and lists nested inside them. -/
 def groupingChecks : List ElispCheck :=
-  [ check1 "lgtm-comments-by-ref" commentsByRef topLevelComments,
-    check1 "lgtm-comments-by-ref" commentsByRef mixedComments,
-    check1 "lgtm-group-comments" groupComments topLevelComments,
-    check1 "lgtm-group-comments" groupComments mixedComments,
-    check1 "lgtm-comment-bootstrap-state-all-comments" CommentBootstrapState.allComments
+  [ check1 "lgtm--comments-by-ref" commentsByRef topLevelComments,
+    check1 "lgtm--comments-by-ref" commentsByRef mixedComments,
+    check1 "lgtm--group-comments" groupComments topLevelComments,
+    check1 "lgtm--group-comments" groupComments mixedComments,
+    check1 "lgtm--comment-bootstrap-state-all-comments" CommentBootstrapState.allComments
       (groupComments topLevelComments) ]
 
 /-- Per-file state: the accessors a file's threads are read and written through. -/
 def fileStateChecks : List ElispCheck :=
-  [ check2 "lgtm-modified-file-state-threads-for" ModifiedFileState.threadsFor emptyFileState .base,
-    check2 "lgtm-modified-file-state-threads-for" ModifiedFileState.threadsFor emptyFileState .current,
-    check1 "lgtm-modified-file-manager-reset-file-state" ModifiedFileManager.resetFileState emptyFileState,
-    check1 "lgtm-modified-file-manager-reset-comment-state" ModifiedFileManager.resetCommentState
+  [ check2 "lgtm--modified-file-state-threads-for" ModifiedFileState.threadsFor emptyFileState .base,
+    check2 "lgtm--modified-file-state-threads-for" ModifiedFileState.threadsFor emptyFileState .current,
+    check1 "lgtm--modified-file-manager-reset-file-state" ModifiedFileManager.resetFileState emptyFileState,
+    check1 "lgtm--modified-file-manager-reset-comment-state" ModifiedFileManager.resetCommentState
       emptyFileManager ]
 
 /-- Loading comments that belong to a file rather than to the changeset as a whole: the
@@ -517,37 +517,37 @@ per-file fold (`applyBaseThreads`/`applyCurrentThreads`) and the accessors it up
 def fileThreadChecks : List ElispCheck :=
   let loaded := addRemoteComments (fileReviewState fileComments)
   let loadedStateElisp :=
-    elispCall "lgtm-result-updated-state"
-      [elispCall "lgtm-add-remote-comments" [fileReviewStateElisp fileComments]]
+    elispCall "lgtm--result-updated-state"
+      [elispCall "lgtm--add-remote-comments" [fileReviewStateElisp fileComments]]
   let fileManager := loaded.updatedState.fileManager
   let baseChecks :=
     if h : fileManager.state.contains modifiedFileRef then
       let fileState := fileManager.state.get modifiedFileRef h
-      [ check2 "lgtm-modified-file-state-threads-for" ModifiedFileState.threadsFor fileState .base,
-        check2 "lgtm-modified-file-state-threads-for" ModifiedFileState.threadsFor fileState .current,
-        check "lgtm-modified-file-state-with-threads-for"
-          (elispCall "lgtm-modified-file-state-with-threads-for"
+      [ check2 "lgtm--modified-file-state-threads-for" ModifiedFileState.threadsFor fileState .base,
+        check2 "lgtm--modified-file-state-threads-for" ModifiedFileState.threadsFor fileState .current,
+        check "lgtm--modified-file-state-with-threads-for"
+          (elispCall "lgtm--modified-file-state-with-threads-for"
             [toElisp fileState, toElisp FileVersion.current, toElisp fileState.baseThreads])
           (fileState.withThreadsFor .current fileState.baseThreads fileState.hBaseThreadsFileScoped),
-        check1 "lgtm-modified-file-manager-reset-comment-state" ModifiedFileManager.resetCommentState
+        check1 "lgtm--modified-file-manager-reset-comment-state" ModifiedFileManager.resetCommentState
           fileManager ]
     else
       [missingFixture "a loaded ModifiedFileState for the tracked file"]
-  [ check "lgtm-add-remote-comments (value, file-scoped)"
-      (elispCall "lgtm-result-value"
-        [elispCall "lgtm-add-remote-comments" [fileReviewStateElisp fileComments]])
+  [ check "lgtm--add-remote-comments (value, file-scoped)"
+      (elispCall "lgtm--result-value"
+        [elispCall "lgtm--add-remote-comments" [fileReviewStateElisp fileComments]])
       loaded.value,
-    check "lgtm-add-remote-comments (file manager)"
-      (elispCall "lgtm-state-file-manager" [loadedStateElisp]) fileManager,
-    check "lgtm-add-remote-comments (comment manager, file-scoped)"
-      (elispCall "lgtm-state-comment-manager" [loadedStateElisp]) loaded.updatedState.commentManager,
+    check "lgtm--add-remote-comments (file manager)"
+      (elispCall "lgtm--state-file-manager" [loadedStateElisp]) fileManager,
+    check "lgtm--add-remote-comments (comment manager, file-scoped)"
+      (elispCall "lgtm--state-comment-manager" [loadedStateElisp]) loaded.updatedState.commentManager,
     -- `mixedComments` mentions a file the review doesn't track, so the batch has to be rejected --
     -- leaving the state alone -- rather than loaded.
-    check "lgtm-add-remote-comments (untracked file)"
-      (elispCall "lgtm-result-value"
-        [elispCall "lgtm-add-remote-comments" [fileReviewStateElisp mixedComments]])
+    check "lgtm--add-remote-comments (untracked file)"
+      (elispCall "lgtm--result-value"
+        [elispCall "lgtm--add-remote-comments" [fileReviewStateElisp mixedComments]])
       (addRemoteComments (fileReviewState mixedComments)).value,
-    checkBool2 "lgtm-check-file-comment-batches" checkFileCommentBatches singleFileState
+    checkBool2 "lgtm--check-file-comment-batches" checkFileCommentBatches singleFileState
       [(modifiedFileRef, fileComments)] ] ++ baseChecks
 
 /-- Assembling threads from a batch of comments, and everything that reads the result.
@@ -560,29 +560,29 @@ def threadChecks : List ElispCheck :=
   let manager := loadedState.commentManager
   let threads := manager.topLevelThreads
   let loadedStateElisp :=
-    elispCall "lgtm-result-updated-state"
-      [elispCall "lgtm-add-remote-comments" [initialStateElisp topLevelComments]]
-  let managerElisp := elispCall "lgtm-state-comment-manager" [loadedStateElisp]
-  [ check "lgtm-add-remote-comments (value)"
-      (elispCall "lgtm-result-value"
-        [elispCall "lgtm-add-remote-comments" [initialStateElisp topLevelComments]])
+    elispCall "lgtm--result-updated-state"
+      [elispCall "lgtm--add-remote-comments" [initialStateElisp topLevelComments]]
+  let managerElisp := elispCall "lgtm--state-comment-manager" [loadedStateElisp]
+  [ check "lgtm--add-remote-comments (value)"
+      (elispCall "lgtm--result-value"
+        [elispCall "lgtm--add-remote-comments" [initialStateElisp topLevelComments]])
       loadResult.value,
-    check "lgtm-add-remote-comments (comment manager)" managerElisp manager,
-    check "lgtm-reset-comment-state"
-      (elispCall "lgtm-state-comment-manager"
-        [elispCall "lgtm-result-updated-state" [elispCall "lgtm-reset-comment-state" [loadedStateElisp]]])
+    check "lgtm--add-remote-comments (comment manager)" managerElisp manager,
+    check "lgtm--reset-comment-state"
+      (elispCall "lgtm--state-comment-manager"
+        [elispCall "lgtm--result-updated-state" [elispCall "lgtm--reset-comment-state" [loadedStateElisp]]])
       (resetCommentState loadedState).updatedState.commentManager,
-    check2 "lgtm-comment-manager-get" CommentManager.get manager ⟨"c2"⟩,
-    checkBool1 "lgtm-comment-threads-is-empty" CommentThreads.isEmpty threads,
-    checkBool1 "lgtm-comment-threads-is-empty" CommentThreads.isEmpty CommentThreads.empty,
-    check "lgtm-comment-threads-empty (constant)" "lgtm-comment-threads-empty" CommentThreads.empty,
-    check "lgtm-comment-manager-empty (constant)" "lgtm-comment-manager-empty" CommentManager.empty,
-    check "lgtm-empty-bootstrap-state (constant)" "lgtm-empty-bootstrap-state" emptyBootstrapState,
-    check2 "lgtm-comment-threads-as-alist" CommentThreads.asAlist threads manager,
-    check2 "lgtm-comment-threads-to-threads-ordered" CommentThreads.toThreadsOrdered threads manager,
-    checkBool3 "lgtm-compare-threads-by-timestamp" compareThreadsByTimestamp manager
+    check2 "lgtm--comment-manager-get" CommentManager.get manager ⟨"c2"⟩,
+    checkBool1 "lgtm--comment-threads-is-empty" CommentThreads.isEmpty threads,
+    checkBool1 "lgtm--comment-threads-is-empty" CommentThreads.isEmpty CommentThreads.empty,
+    check "lgtm--comment-threads-empty (constant)" "lgtm--comment-threads-empty" CommentThreads.empty,
+    check "lgtm--comment-manager-empty (constant)" "lgtm--comment-manager-empty" CommentManager.empty,
+    check "lgtm--empty-bootstrap-state (constant)" "lgtm--empty-bootstrap-state" emptyBootstrapState,
+    check2 "lgtm--comment-threads-as-alist" CommentThreads.asAlist threads manager,
+    check2 "lgtm--comment-threads-to-threads-ordered" CommentThreads.toThreadsOrdered threads manager,
+    checkBool3 "lgtm--compare-threads-by-timestamp" compareThreadsByTimestamp manager
       ⟨⟨"c1"⟩, []⟩ ⟨⟨"c3"⟩, []⟩,
-    checkBool3 "lgtm-compare-threads-by-timestamp" compareThreadsByTimestamp manager
+    checkBool3 "lgtm--compare-threads-by-timestamp" compareThreadsByTimestamp manager
       ⟨⟨"c3"⟩, []⟩ ⟨⟨"c1"⟩, []⟩ ]
 
 /-- Navigation between threads and within a thread.
@@ -597,18 +597,18 @@ def navigationChecks : List ElispCheck :=
     let thread := threads.commentTreeNodes.get rootRef h
     let selection : SelectedComment := ⟨.current, thread, rootRef⟩
     let hWF := wellFormedSelection h rfl .current
-    [ check3 "lgtm-comment-thread-linearize" CommentThread.linearize thread threads manager,
-      check4 "lgtm-comment-threads-next-thread" CommentThreads.nextThread threads manager .current selection,
-      check4 "lgtm-comment-threads-previous-thread" CommentThreads.previousThread threads manager .current selection,
+    [ check3 "lgtm--comment-thread-linearize" CommentThread.linearize thread threads manager,
+      check4 "lgtm--comment-threads-next-thread" CommentThreads.nextThread threads manager .current selection,
+      check4 "lgtm--comment-threads-previous-thread" CommentThreads.previousThread threads manager .current selection,
       -- A selection from a *different* file version resets to the first/last thread.
-      check4 "lgtm-comment-threads-next-thread" CommentThreads.nextThread threads manager .base selection,
-      check4 "lgtm-comment-threads-previous-thread" CommentThreads.previousThread threads manager .base selection,
-      check "lgtm-comment-threads-next-comment-in-thread"
-        (elispCall "lgtm-comment-threads-next-comment-in-thread"
+      check4 "lgtm--comment-threads-next-thread" CommentThreads.nextThread threads manager .base selection,
+      check4 "lgtm--comment-threads-previous-thread" CommentThreads.previousThread threads manager .base selection,
+      check "lgtm--comment-threads-next-comment-in-thread"
+        (elispCall "lgtm--comment-threads-next-comment-in-thread"
           [toElisp threads, toElisp manager, toElisp selection])
         (threads.nextCommentInThread manager selection hWF),
-      check "lgtm-comment-threads-previous-comment-in-thread"
-        (elispCall "lgtm-comment-threads-previous-comment-in-thread"
+      check "lgtm--comment-threads-previous-comment-in-thread"
+        (elispCall "lgtm--comment-threads-previous-comment-in-thread"
           [toElisp threads, toElisp manager, toElisp selection])
         (threads.previousCommentInThread manager selection hWF) ]
   else
@@ -622,10 +622,10 @@ def assemblyChecks : List ElispCheck :=
     let hSameLocation : commentsAllInSameFileOrAllTopLevel topLevelComments := Or.inl (by decide)
     let assembled := assembleCommentTrees topLevelComments hSameLocation hBackend hParents hNodup hBefore
     let newComment := mkComment "c4" "s4" none 400 .topLevel "a thread added after assembly"
-    [ check "lgtm-assemble-comment-trees"
-        (elispCall "lgtm-assemble-comment-trees" [toElisp topLevelComments]) assembled,
-      check "lgtm-add-comment-to-thread"
-        (elispCall "lgtm-add-comment-to-thread" [toElisp CommentThreads.empty, toElisp newComment])
+    [ check "lgtm--assemble-comment-trees"
+        (elispCall "lgtm--assemble-comment-trees" [toElisp topLevelComments]) assembled,
+      check "lgtm--add-comment-to-thread"
+        (elispCall "lgtm--add-comment-to-thread" [toElisp CommentThreads.empty, toElisp newComment])
         (addCommentToThread CommentThreads.empty newComment rfl
           (by intro parentId hparent; simp [newComment, mkComment] at hparent)
           (by intro parentId _ hparent; simp [newComment, mkComment] at hparent)
@@ -638,21 +638,21 @@ def assemblyChecks : List ElispCheck :=
 def commentCreationChecks : List ElispCheck :=
   let published := completeCommentWithContent editingState "a brand new comment"
   let cancelled := cancelCommentCreation editingState
-  [ check "lgtm-complete-comment-with-content (value)"
-      (elispCall "lgtm-result-value"
-        [elispCall "lgtm-complete-comment-with-content" [editingStateElisp, toElisp "a brand new comment"]])
+  [ check "lgtm--complete-comment-with-content (value)"
+      (elispCall "lgtm--result-value"
+        [elispCall "lgtm--complete-comment-with-content" [editingStateElisp, toElisp "a brand new comment"]])
       published.value,
-    check "lgtm-complete-comment-with-content (comment manager)"
-      (elispCall "lgtm-state-comment-manager"
-        [elispCall "lgtm-result-updated-state"
-          [elispCall "lgtm-complete-comment-with-content" [editingStateElisp, toElisp "a brand new comment"]]])
+    check "lgtm--complete-comment-with-content (comment manager)"
+      (elispCall "lgtm--state-comment-manager"
+        [elispCall "lgtm--result-updated-state"
+          [elispCall "lgtm--complete-comment-with-content" [editingStateElisp, toElisp "a brand new comment"]]])
       published.updatedState.commentManager,
-    check "lgtm-cancel-comment-creation (value)"
-      (elispCall "lgtm-result-value" [elispCall "lgtm-cancel-comment-creation" [editingStateElisp]])
+    check "lgtm--cancel-comment-creation (value)"
+      (elispCall "lgtm--result-value" [elispCall "lgtm--cancel-comment-creation" [editingStateElisp]])
       cancelled.value,
-    check "lgtm-cancel-comment-creation (comment being edited)"
-      (elispCall "lgtm-state-comment-being-edited"
-        [elispCall "lgtm-result-updated-state" [elispCall "lgtm-cancel-comment-creation" [editingStateElisp]]])
+    check "lgtm--cancel-comment-creation (comment being edited)"
+      (elispCall "lgtm--state-comment-being-edited"
+        [elispCall "lgtm--result-updated-state" [elispCall "lgtm--cancel-comment-creation" [editingStateElisp]]])
       cancelled.updatedState.commentBeingEdited ]
 
 end Checks

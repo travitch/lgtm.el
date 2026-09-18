@@ -51,8 +51,6 @@ def toLispName (s : String) : String :=
     pure acc.reverse
   String.intercalate "-" ((String.ofList hyphenated).splitOn "-" |>.filter (· ≠ ""))
 
-def toLgtmName (s : String) : String := "lgtm-" ++ toLispName s
-
 structure SExprEnv where
   /-- We keep the original translations around so we can determine which globals are functions vs
   those that are global constants.  We need to generate their names differently in elisp. -/
@@ -107,8 +105,45 @@ def SExprM.run (indentation : Nat) (translations : Translations String) (s : SEx
   let env := SExprEnv.mk translations indentation none
   Id.run (ReaderT.run (StateT.run s emptyState) env)
 
+/-- The extracted structure the Lean name `name` belongs to: either a structure's name or one
+of the field accessors `cl-defstruct` derives from it.
+
+An accessor has to be resolved through its structure because it has no declaration of its own
+to consult. -/
+def referencedStructure? (name : String) : SExprM (Option LStructureDefinition) := do
+  let structures := (← read).translations.structures
+  match (name.split '.').toList with
+  | [typeName] => pure structures[typeName.toString]?
+  | [typeName, field] =>
+    match structures[typeName.toString]? with
+    | some d => pure (if d.fields.contains field.toString then some d else none)
+    | none => pure none
+  | _ => pure none
+
+/-- Whether the Lean declaration `name` (a function, a structure, or one of a structure's field
+accessors, spelled as in Lean) is part of the extracted library's public API. -/
+def isPublicApiName (name : String) : SExprM Bool := do
+  match (← read).translations.functions[name]? with
+  | some f => pure f.isPublic
+  | none =>
+    match ← referencedStructure? name with
+    | some d => pure d.isPublic
+    | none => pure false
+
+/-- The elisp name for the Lean declaration `name`.
+
+Lean names are namespaced (`CommentThreads.nextThread`), and a `.` is a valid constituent of an
+elisp symbol but reads as a hierarchy separator to nobody, so it becomes the `-` the rest of the
+name already uses.
+
+The prefix records whether the declaration is part of the library's public API: `lgtm-` is the elisp
+convention for the names a library's callers are meant to use and `lgtm--` for its internals. -/
+def toLgtmName (name : String) : SExprM String := do
+  let prefix' := if ← isPublicApiName name then "lgtm-" else "lgtm--"
+  pure (prefix' ++ toLispName (name.map (λ c => if c == '.' then '-' else c)))
+
 def LStructureDefinition.toSExpr (d : LStructureDefinition) : SExprM SExpr := do
-  let structName := toLgtmName d.name
+  let structName ← toLgtmName d.name
   let ctorName := s!"make-{structName}"
   modifyGet (λ s => ((), { s with definedFunctionNames := ctorName :: s.definedFunctionNames }))
   let fieldNames := d.fields.map toLispName
@@ -120,10 +155,6 @@ def LStructureDefinition.toSExpr (d : LStructureDefinition) : SExprM SExpr := do
   -- with a positional one, which is what a translated constructor application calls.
   let ctorSpec := SExpr.list [.atom ":constructor", .atom ctorName, .list (fieldNames.map SExpr.atom)]
   pure (.block [.atom "cl-defstruct", .list [.atom structName, ctorSpec]] (← indentBy) fields)
-
-/-- Global names from Lean are namespaced, so translate appropriately -/
-def translateGlobalName (name : String) : String :=
-  toLgtmName (toLispName (name.map (λ c => if c == '.' then '-' else c)))
 
 /-- The elisp symbol naming constructor `name` (fully-qualified, e.g. `ThreadLocation.topLevel`):
 the literal value of a nullary constructor, and the tag in position 0 of a non-nullary
@@ -188,7 +219,7 @@ partial def LPat.toQPat (p : LPat) : SExprM String := do
       if fieldNames.length == fields.length then
         let slots ← (fieldNames.zip fields).mapM fun (field, p) => do
           pure ("(" ++ toLispName field ++ " " ++ (← p.toUPat) ++ ")")
-        pure (",(cl-struct " ++ toLgtmName typeName ++ String.join (slots.map (" " ++ ·)) ++ ")")
+        pure (",(cl-struct " ++ (← toLgtmName typeName) ++ String.join (slots.map (" " ++ ·)) ++ ")")
       else
         LPat.toTaggedQPat name fields
     | none => LPat.toTaggedQPat name fields
@@ -467,28 +498,29 @@ partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=
   | .global "Prod.snd" => pure (.atom "#'lgtm--pair-snd")
   | .global name => do
     recordUsedNameInContext name
-    modifyGet (λ s => ((), { s with referencedGlobalNames := s.referencedGlobalNames.insert (translateGlobalName name) }))
+    let lispName ← toLgtmName name
+    modifyGet (λ s => ((), { s with referencedGlobalNames := s.referencedGlobalNames.insert lispName }))
     match (← read).translations.functions[name]? with
     | some lfunc => match lfunc.parameters with
-      | [] => pure (SExpr.atom (translateGlobalName name))
-      | _ => pure (SExpr.atom ("#'" ++ translateGlobalName name))
-    | none => pure (SExpr.atom ("#'" ++ translateGlobalName name))
+      | [] => pure (SExpr.atom lispName)
+      | _ => pure (SExpr.atom ("#'" ++ lispName))
+    | none => pure (SExpr.atom ("#'" ++ lispName))
   | .ctorRef "Option.none" => pure (SExpr.atom "nil")
   | .ctorRef "List.nil" => pure (SExpr.atom "nil")
   | .ctorRef "Bool.true" => pure (SExpr.atom "t")
   | .ctorRef "Bool.false" => pure (SExpr.atom "nil")
   -- `Decidable`'s constructors carry nothing but an erased proof by the time they reach here,
-  -- sothey are just the plain boolean answer, not a tagged value.
+  -- so they are just the plain boolean answer, not a tagged value.
   | .ctorRef "Decidable.isTrue" => pure (SExpr.atom "t")
   | .ctorRef "Decidable.isFalse" => pure (SExpr.atom "nil")
   | .ctorRef name => do
     match ← isInductiveConstructor name with
     | false =>
-      let conName := "make-" ++ toLgtmName (toLispName (name.dropEnd 3).toString)
+      let conName := "make-" ++ (← toLgtmName (name.dropEnd 3).toString)
       modifyGet (λ s => ((), { s with referencedGlobalNames := s.referencedGlobalNames.insert conName }))
       -- Constructors in Lean have a `.mk` suffix. Drop that and replace with the equivalent prefix for cl-defstruct.
       pure (SExpr.atom ("#'" ++ conName))
-    -- `translateConstructorTag`, not `translateGlobalName`: a constructor symbol is not a global
+    -- `translateConstructorTag`, not `toLgtmName`: a constructor symbol is not a global
     -- name, and the `pcase` patterns it has to match (`LPat.toQPat`) spell it without the `lgtm-`
     -- prefix. See [ref:inductive-type-representation].
     | true => pure (SExpr.atom ("'" ++ translateConstructorTag name))
@@ -502,8 +534,9 @@ partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=
       let sArgs ← args.mapM LExpr.toSExpr
       match fn with
       | .global name => do
-        modifyGet (λ s => ((), { s with referencedGlobalNames := s.referencedGlobalNames.insert (translateGlobalName name) }))
-        let sFunc := SExpr.atom (translateGlobalName name)
+        let lispName ← toLgtmName name
+        modifyGet (λ s => ((), { s with referencedGlobalNames := s.referencedGlobalNames.insert lispName }))
+        let sFunc := SExpr.atom lispName
         -- A nullary global is a `defconst`, not a `defun` (see `LFunction.toSExpr`). Calling one
         -- whose value happens to be a function has to go through `funcall`: elisp looks up a
         -- symbol's function and value cells separately, and only the value cell is bound here.
@@ -523,7 +556,7 @@ partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=
           let tag := SExpr.atom ("'" ++ translateConstructorTag name)
           pure (.block [sFunc] (← indentBy) (tag :: sArgs))
         else do
-          let conName := "make-" ++ toLgtmName (toLispName (name.dropEnd 3).toString)
+          let conName := "make-" ++ (← toLgtmName (name.dropEnd 3).toString)
           modifyGet (λ s => ((), { s with referencedGlobalNames := s.referencedGlobalNames.insert conName }))
           -- Special case the rendering of these because they usually have many arguments
           let sFunc := SExpr.atom conName
@@ -545,7 +578,8 @@ partial def LExpr.toSExpr (e : LExpr) : SExprM SExpr :=
   -- `structName`'s `cl-defstruct` accessor for `fieldName` is named `<lgtm-struct-name>-<field-name>`,
   -- matching how `LStructureDefinition.render` names the struct and its slots.
   | .proj structName fieldName target => do
-    pure (SExpr.list [SExpr.atom (toLgtmName structName ++ "-" ++ toLispName fieldName), ← target.toSExpr])
+    let accessor := (← toLgtmName structName) ++ "-" ++ toLispName fieldName
+    pure (SExpr.list [SExpr.atom accessor, ← target.toSExpr])
   | .matchE discrs alts => do
     let sDiscrs ← discrs.mapM LExpr.toSExpr
     let sAlts ← alts.mapM (λ (pats, body) => do
@@ -568,7 +602,7 @@ end
 def LFunction.toSExpr (f : LFunction) : SExprM SExpr := withReader (fun e => if f.parameters.isEmpty then { e with currentFunction := some f.name } else e) do
   -- Names of Lgtm functions look like Lgtm.foo, so translate to Lgtm-foo so that the rest of the
   -- transformations turn them into a reasonable elisp name
-  let name := translateGlobalName f.name
+  let name ← toLgtmName f.name
   modifyGet (λ s => ((), { s with definedFunctionNames := name :: s.definedFunctionNames }))
   let body ← f.body.toSExpr
   match f.parameters with
@@ -580,7 +614,13 @@ def LFunction.toSExpr (f : LFunction) : SExprM SExpr := withReader (fun e => if 
     | none => []
     pure (SExpr.block [SExpr.atom "defun", SExpr.atom name, arglist] (← indentBy) (docstring ++ [body]))
 
-def testRender (s : SExprM SExpr) : String := SExpr.render (SExprM.run 2 emptyTranslations s).1
+/-- Render `s` against `translations`, which is what decides the `lgtm-`/`lgtm--` prefix of every
+extracted name it mentions (see `isPublicApiName`). -/
+def testRenderWith (translations : Translations String) (s : SExprM SExpr) : String :=
+  SExpr.render (SExprM.run 2 translations s).1
+
+/-- Render `s` against no translations at all, so every name it mentions is internal. -/
+def testRender (s : SExprM SExpr) : String := testRenderWith emptyTranslations s
 
 /-- info: "comment-threads" -/
 #guard_msgs in
@@ -642,24 +682,24 @@ def testRender (s : SExprM SExpr) : String := SExpr.render (SExprM.run 2 emptyTr
 #guard_msgs in
 #eval toLispName "parentRef'"
 
-/-- info: "(cl-defstruct (lgtm-comment-ref (:constructor make-lgtm-comment-ref (id)))\n  (id nil :read-only t))" -/
+/-- info: "(cl-defstruct (lgtm--comment-ref (:constructor make-lgtm--comment-ref (id)))\n  (id nil :read-only t))" -/
 #guard_msgs in
 #eval testRender (LStructureDefinition.toSExpr { name := "CommentRef", fields := ["id"] })
 
-/-- info: "(cl-defstruct (lgtm-tree (:constructor make-lgtm-tree (value children)))\n  (value nil :read-only t)\n  (children nil :read-only t))" -/
+/-- info: "(cl-defstruct (lgtm--tree (:constructor make-lgtm--tree (value children)))\n  (value nil :read-only t)\n  (children nil :read-only t))" -/
 #guard_msgs in
 #eval testRender (LStructureDefinition.toSExpr { name := "Tree", fields := ["value", "children"] })
 
-/-- info: "(cl-defstruct (lgtm-modified-file-state (:constructor make-lgtm-modified-file-state ()))\n)" -/
+/-- info: "(cl-defstruct (lgtm--modified-file-state (:constructor make-lgtm--modified-file-state ()))\n)" -/
 #guard_msgs in
 #eval testRender (LStructureDefinition.toSExpr { name := "ModifiedFileState", fields := [] })
 
-/-- info: "(cl-defstruct (lgtm-comment-threads (:constructor make-lgtm-comment-threads (comment-tree-nodes server-comment-ids location-roots)))\n  (comment-tree-nodes nil :read-only t)\n  (server-comment-ids nil :read-only t)\n  (location-roots nil :read-only t))" -/
+/-- info: "(cl-defstruct (lgtm--comment-threads (:constructor make-lgtm--comment-threads (comment-tree-nodes server-comment-ids location-roots)))\n  (comment-tree-nodes nil :read-only t)\n  (server-comment-ids nil :read-only t)\n  (location-roots nil :read-only t))" -/
 #guard_msgs in
 #eval testRender (LStructureDefinition.toSExpr
   { name := "CommentThreads", fields := ["commentTreeNodes", "serverCommentIds", "locationRoots"] })
 
-/-- info: "(defun lgtm-comment-is-persisted-to-server (c)\n  (lgtm-comment-backend-id c))" -/
+/-- info: "(defun lgtm--comment-is-persisted-to-server (c)\n  (lgtm--comment-backend-id c))" -/
 #guard_msgs in
 #eval testRender (LFunction.toSExpr
   { name := "Comment.isPersistedToServer",
@@ -667,11 +707,54 @@ def testRender (s : SExprM SExpr) : String := SExpr.render (SExprM.run 2 emptyTr
     body := LExpr.app (LExpr.global "Option.isSome") [LExpr.app (LExpr.global "Comment.backendId") [LExpr.var "c"]],
     docstring := none })
 
+/-! Everything above renders under the internal `lgtm--` prefix, since none of those declarations
+are registered in the (empty) translations as `@[public_api]`. A declaration that *is* tagged
+takes the public `lgtm-` prefix instead, at its definition and at every reference to it. -/
+
+private def publicCommentRef : LStructureDefinition :=
+  { name := "CommentRef", fields := ["id"], isPublic := true }
+
+private def publicTranslations : Translations String :=
+  { emptyTranslations with
+    structures := Std.HashMap.emptyWithCapacity.insert publicCommentRef.name publicCommentRef }
+
+-- A public structure carries its prefix over to its `cl-defstruct` constructor and slots, which
+-- are named after it.
+/-- info: "(cl-defstruct (lgtm-comment-ref (:constructor make-lgtm-comment-ref (id)))\n  (id nil :read-only t))" -/
+#guard_msgs in
+#eval testRenderWith publicTranslations (LStructureDefinition.toSExpr publicCommentRef)
+
+-- ... and so to the field accessors a projection out of it calls, which `cl-defstruct` derives
+-- from those same names.
+/-- info: "(lgtm-comment-ref-id c)" -/
+#guard_msgs in
+#eval testRenderWith publicTranslations (LExpr.toSExpr (.proj "CommentRef" "id" (.var "c")))
+
+-- A structure's constructor is reached through the constructor's own (`.mk`-suffixed) name, which
+-- resolves to the structure's prefix just the same.
+/-- info: "(make-lgtm-comment-ref\n  \"c1\")" -/
+#guard_msgs in
+#eval testRenderWith publicTranslations (LExpr.toSExpr (.app (.ctorRef "CommentRef.mk") [.lit (.str "c1")]))
+
+-- A public function is defined, and called, under the public prefix; a call to an internal one
+-- from inside it is not affected.
+/-- info: "(defun lgtm-comment-is-persisted-to-server (c)\n  (lgtm--comment-backend-id c))" -/
+#guard_msgs in
+#eval
+  let f : LFunction :=
+    { name := "Comment.isPersistedToServer",
+      parameters := ["c"],
+      body := .app (.global "Option.isSome") [.app (.global "Comment.backendId") [.var "c"]],
+      docstring := none, isPublic := true }
+  testRenderWith
+    { emptyTranslations with functions := Std.HashMap.emptyWithCapacity.insert f.name f }
+    (LFunction.toSExpr f)
+
 -- A global nullary function (a "global constant", translated to a `defconst` by
 -- `LFunction.toSExpr`) is referenced by its bare elisp name, not prefixed with `#'` like ordinary
 -- function references: a `defconst` symbol's value is read directly, whereas calling a function
 -- via `funcall`/`apply` needs a sharp-quoted function reference.
-/-- info: "(defun lgtm-uses-constant (x)\n  lgtm-some-constant)" -/
+/-- info: "(defun lgtm--uses-constant (x)\n  lgtm--some-constant)" -/
 #guard_msgs in
 #eval
   let translations : Translations String :=
@@ -781,7 +864,7 @@ def testRender (s : SExprM SExpr) : String := SExpr.render (SExprM.run 2 emptyTr
 
 -- A structure appears on the pattern side as a `cl-struct` pattern matching its record, since the
 -- vector pattern an inductive constructor gets would never match one.
-/-- info: "(pcase r\n  (`,(cl-struct lgtm-comment-ref (id the-id)) the-id))" -/
+/-- info: "(pcase r\n  (`,(cl-struct lgtm--comment-ref (id the-id)) the-id))" -/
 #guard_msgs in
 #eval
   let translations : Translations String :=
