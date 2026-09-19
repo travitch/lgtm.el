@@ -190,6 +190,9 @@ public structure CommentThreads where
   /-- The tree node for each comment. -/
   commentTreeNodes : Std.HashMap CommentRef CommentThread
 
+  /-- A map from server side comment IDs to internal comment ref structures.
+
+      This is used to calculate parent/child relationships. -/
   serverCommentIds : Std.HashMap ServerId CommentRef
 
   /-- The comment tree roots at each location.
@@ -232,6 +235,7 @@ public structure CommentThreads where
   hServerCommentIdsRegistered : ∀ sid (h : serverCommentIds.contains sid),
     commentTreeNodes.contains (serverCommentIds.get sid h)
 
+/-- An empty `lgtm--comment-threads' structure. -/
 public def CommentThreads.empty : CommentThreads :=
   ⟨Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity, Std.HashMap.emptyWithCapacity,
     by simp, by simp, by simp, by simp, by simp, by simp, by simp⟩
@@ -246,12 +250,13 @@ public theorem CommentThreads.hParentThreadRegistered_mem (threads : CommentThre
   fun parentId h => Std.HashMap.mem_iff_contains.mpr
     (threads.hServerCommentIdsRegistered parentId (Std.HashMap.mem_iff_contains.mp h))
 
-/-- Whether there are any threads to show.
-
-Note: this is based on `locationRoots` (what's actually reachable/displayable), not
-`commentTreeNodes` (which can contain tree nodes that no location references). -/
+/-- Whether there are any comments to show in THREADS. -/
 public def CommentThreads.isEmpty (threads : CommentThreads) : Bool :=
   threads.locationRoots.toList.all (fun p => p.2.isEmpty)
+
+/-- Return the number of comments in THREADS. -/
+public def CommentThreads.commentCount (threads : CommentThreads) : Nat :=
+  threads.commentTreeNodes.size
 
 /-- The comment selected in the file review UI. -/
 public structure SelectedComment where
