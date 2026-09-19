@@ -1033,6 +1033,10 @@ def renderToFile (targetFile : System.FilePath) (rendered : Rendered) : IO Unit 
     hdl.putStrLn (funcSExpr.render)
     hdl.putStrLn ""
 
+  hdl.putStrLn "(provide 'lgtm-lean-core)"
+  hdl.putStrLn s!";;; {targetFile.fileName.getD (targetFile.toString)} ends here"
+  hdl.putStrLn ""
+
 unsafe def extractLgtm : IO (Translations String × Rendered × SExprState) := do
   -- `loadExts` defaults to `false`, which leaves environment extensions unpopulated from the
   -- imported `.olean`s, even though the declarations themselves are visible. Without it,
