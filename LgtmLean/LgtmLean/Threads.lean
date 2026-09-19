@@ -23,29 +23,40 @@ public def CommentThreads.asAlist.sortThreadLists (threads : CommentThreads) (ma
   let sortedThreads := List.mergeSort commentThreads (compareThreadsByTimestamp manager)
   (loc, sortedThreads)
 
-/-- Extract an alist of threads grouped by location.
+/-- Flatten THREADS into an alist of comment trees grouped by location.
 
-The list is sorted by location.  Each list at a given location is sorted by comment timestamp.
-The comment manager is required to get access to those timestamps. -/
+The list is sorted by location.  Each list at a given location is sorted
+by comment timestamp.  The comment MANAGER is required to get access to
+those timestamps. -/
 public def CommentThreads.asAlist (threads : CommentThreads) (manager : CommentManager) : List (ThreadLocation × List CommentThread) :=
   let threadsAtLocationsWithMemberProofs := threads.locationRoots.toList.attach
   let unsorted := threadsAtLocationsWithMemberProofs.map (CommentThreads.asAlist.sortThreadLists threads manager)
   unsorted.mergeSort compareLocatedCommentThreads
 
-/-- Return the threads in sorted order. -/
+/-- Return the threads in THREADS in sorted order.
+
+    Threads are ordered as they are in `lgtm--comment-threads-as-alist'.
+    The comment MANAGER is required to sort by timestamp. -/
 public def CommentThreads.toThreadsOrdered (threads : CommentThreads) (manager : CommentManager) : List CommentThread :=
   List.flatMap (λ p => Prod.snd p) (threads.asAlist manager)
 
+/-- Return the root comments of each thread in THREADS.
+
+    The comments are in the same order as determined by
+    `lgtm--comment-threads-as-alist'.  The comment MANAGER is
+    required to map refs back to comment values. -/
+public def CommentThreads.rootComments (threads : CommentThreads) (manager : CommentManager) : List Comment :=
+  (threads.toThreadsOrdered manager).map (λ tree => manager.get tree.value)
+
 /--
-Given a collection of threads and a selection, return the next thread to select linearly.
+Given a current SELECTION, select the next available thread (if any).
 
-The VERSION is included because the user can switch files; as there is only one global selection,
-if the user selects the next comment in a different file, the whole selection resets.
+The VERSION is included because the user can switch files; as there is
+only one global selection, if the user selects the next comment in a
+different file, the whole selection resets.
 
-The linear order is as established in the ordering defined by CommentThreads.
-
-Note: It would be nice to keep the association between the selection and the threads objects it references.  Future work.
--/
+The linear order is as established in the ordering defined by THREADS.
+The MANAGER is required to get information about comments. -/
 public def CommentThreads.nextThread (threads : CommentThreads) (manager : CommentManager) (version : FileVersion) (selection : SelectedComment) : Option SelectedComment :=
   let orderedThreads := threads.toThreadsOrdered manager
   match version == selection.version, orderedThreads with

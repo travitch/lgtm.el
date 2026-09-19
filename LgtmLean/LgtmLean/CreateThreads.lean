@@ -1066,18 +1066,17 @@ private theorem bootstrapCommentTrees_serverCommentIdsRegistered
     (bootstrapCommentTreeNodesInv comments hCommentsHaveBackendIds emptyBootstrapState
       (fun _sid h => absurd h Std.HashMap.not_mem_emptyWithCapacity)) rfl
 
-/- Assemble a list of comments into their respective threads.
+/-- Assemble a list of COMMENTS into their respective threads.
 
-This creates trees of comments with each tree rooted at a comment with a known location.
+This creates trees of comments with each tree rooted at a comment with
+a known location.  All of the comments must be in the same file or all
+be top-level comments.
 
-All of the comments must be in the same file or all be top-level comments.
-
-Note that this function is only used when receiving new comments from the server.  In that context,
-all of the comments should have a backend id.  We use that when constructing the
-serverCommentIds map.  Comments are added to the tree separately (but even then they have a backend
-id since we only add them to the tree after we get the id from the server).
-
- -/
+Note that this function is only used when receiving new comments from the
+server.  In that context, all of the comments should have a backend id.
+We use that when constructing the serverCommentIds map.  Comments are added
+to the tree separately (but even then they have a backend id since we only
+add them to the tree after we get the id from the server). -/
 public def assembleCommentTrees (comments : List Comment)
                          (hSameLocation : commentsAllInSameFileOrAllTopLevel comments)
                          (hCommentsHaveBackendIds : allCommentsHaveBackendId comments)
@@ -1517,6 +1516,10 @@ private theorem hAllCommentTreeNodesAreLive_insert_reply
       commentThreads.hAllCommentTreeNodesAreLive commentRef (Std.HashMap.mem_keys.mpr hold)
     exact ⟨loc', threadsList', hpair, root, hrootmem, NodeReachable_mono hMonoOldToFinal hreach⟩
 
+/-- Add COMMENT to COMMENT-THREADS.
+
+    This is an incremental update to the `lgtm--comment-threads' structure
+    while maintaining all of the required invariants. -/
 public def addCommentToThread (commentThreads : CommentThreads) (comment : Comment) (hHasBackendId : comment.backendId.isSome)
     (hParentValid : ∀ parentId, comment.parent = some parentId → parentId ∈ commentThreads.serverCommentIds)
     (hParentThreadRegistered : ∀ parentId (h : parentId ∈ commentThreads.serverCommentIds),
