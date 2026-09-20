@@ -48,8 +48,7 @@ public def CommentThreads.toThreadsOrdered (threads : CommentThreads) (manager :
 public def CommentThreads.rootComments (threads : CommentThreads) (manager : CommentManager) : List Comment :=
   (threads.toThreadsOrdered manager).map (λ tree => manager.get tree.value)
 
-/--
-Given a current SELECTION, select the next available thread (if any).
+/-- Given a current SELECTION, select the next available thread (if any).
 
 The VERSION is included because the user can switch files; as there is
 only one global selection, if the user selects the next comment in a
@@ -71,6 +70,14 @@ public def CommentThreads.nextThread (threads : CommentThreads) (manager : Comme
       let nextThread := orderedThreads[nextIdx]!
       some ⟨version, nextThread, nextThread.value⟩
 
+/-- Given a current SELECTION, select the previous available thread (if any).
+
+The VERSION is included because the user can switch files; as there is
+only one global selection, if the user selects the next comment in a
+different file, the whole selection resets.
+
+The linear order is as established in the ordering defined by THREADS.
+The MANAGER is required to get information about comments. -/
 public def CommentThreads.previousThread (threads : CommentThreads) (manager : CommentManager) (version : FileVersion) (selection : SelectedComment) : Option SelectedComment :=
   let orderedThreads := threads.toThreadsOrdered manager
   match version == selection.version, orderedThreads with
@@ -350,12 +357,10 @@ theorem SelectedComment.WellFormed.currentlySelectedIndex_eq {threads : CommentT
   have hlt := List.idxOf_lt_length_of_mem (hWF.comment_mem_linearizedCommentRefs manager hCoverage)
   exact ⟨hlt, List.getElem_idxOf hlt⟩
 
-/-- Given a selection, select the next comment in the linear order.
+/-- Given a SELECTION, select the next comment in the linear order.
 
-`hWF` certifies that `selection` is well-formed with respect to `threads`, which is what makes the
-indexing into the thread's linearization provably in-bounds (see
-`SelectedComment.WellFormed.linearizedCommentRefs_ne_nil`) instead of relying on a `!`-panic
-fallback. -/
+    This requires the comment MANAGER to sort comments and the THREADS
+    structure to find the other comments in the thread. -/
 public def CommentThreads.nextCommentInThread (threads : CommentThreads) (manager : CommentManager)
     (selection : SelectedComment) (hWF : SelectedComment.WellFormed threads selection) : SelectedComment :=
   let selectedThread := selection.thread
@@ -372,10 +377,10 @@ public def CommentThreads.nextCommentInThread (threads : CommentThreads) (manage
   ⟨selection.version, selection.thread, linearizedCommentRefs[nextIdx]'hBound⟩
 
 
-/-- Given a selection, select the previous comment in the linear order.
+/-- Given a SELECTION, select the previous comment in the linear order.
 
-`hWF` certifies that `selection` is well-formed with respect to `threads`; see
-`CommentThreads.nextCommentInThread` for why this makes the indexing provably in-bounds. -/
+    This requires the comment MANAGER to sort comments and the THREADS
+    structure to find the other comments in the thread. -/
 public def CommentThreads.previousCommentInThread (threads : CommentThreads) (manager : CommentManager)
     (selection : SelectedComment) (hWF : SelectedComment.WellFormed threads selection) : SelectedComment :=
   let selectedThread := selection.thread
