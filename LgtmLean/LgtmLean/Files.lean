@@ -22,3 +22,10 @@ match m with
 | .typechange => "T"
 | .renamed => "R"
 | .copied => "C"
+
+/-- Calculate the number of comments attached to FILE-REF.
+
+    Requires the file MANAGER to look up the mutable state for files. -/
+public def modifiedFileCommentCount (manager : ModifiedFileManager) (fileRef : ModifiedFileRef) : Nat :=
+  let fileState := manager.state.get! fileRef
+  fileState.baseThreads.commentCount + fileState.currentThreads.commentCount

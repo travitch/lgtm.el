@@ -511,6 +511,20 @@ public structure ModifiedFileState where
   /-- The `currentThreads` counterpart of `hBaseThreadsFileScoped`. -/
   hCurrentThreadsFileScoped : ∀ loc, loc ∈ currentThreads.locationRoots.keys → loc.isTopLevel = false
 
+public instance : Inhabited ModifiedFileState where
+  default :=
+    { ref := { repositoryRef := { name := "", path := ⟨""⟩, baseRevision := ⟨""⟩ },
+               modificationType := .modified,
+               baseFileName := "", baseFileHash := ⟨""⟩,
+               currentFileName := "", currentFileHash := ⟨""⟩ },
+      fileRef := ⟨""⟩,
+      selectedComment := none,
+      baseThreads := CommentThreads.empty,
+      currentThreads := CommentThreads.empty,
+      hSelectedCommentWellFormed := by simp,
+      hBaseThreadsFileScoped := by simp [CommentThreads.empty],
+      hCurrentThreadsFileScoped := by simp [CommentThreads.empty] }
+
 /-- `baseThreads`'s location keys stay in scope for a comment whose location actually is
 file-scoped (non-top-level): they're all non-top-level themselves (`hBaseThreadsFileScoped`), which
 is exactly what a file-scoped comment's location reduces to. The `ModifiedFileState` counterpart of
