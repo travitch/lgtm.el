@@ -667,6 +667,49 @@ def isTrivialClause (pats : List LPat) (params : List String) : Bool :=
     | .var m => m == n
     | _ => false
 
+/-- The column indices of `clauses`' pattern lists that actually discriminate, i.e. those where
+some clause's pattern is something other than a plain variable binding the parameter back under
+its own name.
+
+A parameter that no equation destructures still occupies a column in every clause, because an
+equation lemma's left-hand side is a saturated application of the whole parameter list, not just
+of the scrutinees (see `translateFunction`). Emitting those columns yields a `pcase` over a
+bundled `list` of every parameter whose extra columns only ever rebind a parameter to itself, so
+they're dropped.
+
+Deliberately conservative on two counts:
+
+* A column is kept unless *every* clause leaves it alone. A column that's a variable in one clause
+  and a constructor in another is a real match column.
+* A column is kept unless every clause binds it under exactly the parameter's own name. The
+  equation compiler is free to rename a clause's binders (it already does for the erased proof
+  binders of `applyBaseThreads.go`), and the clause's body refers to that renamed local, so
+  dropping such a column would leave the body referring to an unbound name.
+
+Returns every column when that would otherwise drop them all, which keeps the caller's `matchE`
+well-formed (a `pcase` needs something to dispatch on) for the degenerate all-passthrough case. -/
+def discriminatingColumns (paramNames : List String) (clauses : List (List LPat × LExpr)) :
+    List Nat :=
+  let allColumns := List.range paramNames.length
+  -- An arity disagreement means the columns don't line up with `paramNames` in the first place,
+  -- so there's no sound way to say which ones are passthrough.
+  if clauses.any (fun (pats, _) => pats.length != paramNames.length) then allColumns else
+  let isPassthrough (i : Nat) : Bool :=
+    clauses.all fun (pats, _) =>
+      match pats[i]?, paramNames[i]? with
+      | some (.var m), some n => m == n
+      | _, _ => false
+  let kept := allColumns.filter (fun i => !isPassthrough i)
+  if kept.isEmpty then allColumns else kept
+
+/-- Build the `matchE` recombining `clauses` into a single multi-way match over `paramNames`,
+keeping only the columns that `discriminatingColumns` reports as load-bearing. -/
+def mkClauseMatch (paramNames : List String) (clauses : List (List LPat × LExpr)) : LExpr :=
+  let cols := discriminatingColumns paramNames clauses
+  let discrs := (cols.filterMap (paramNames[·]?)).map LExpr.var
+  let clauses := clauses.map (fun (pats, body) => (cols.filterMap (pats[·]?), body))
+  .matchE discrs clauses
+
 /-- Translate a single top-level `LgtmLean` function into its `LFunction` representation.
 
 Reads the function's parameter names directly off its declared type, throwing if any non-erasable
@@ -680,7 +723,8 @@ combinators they actually compile to.  Falls back to directly reading off `lambd
 the definition's value for functions with no equations (e.g. a one-line non-recursive `def` with no
 internal `match`). Multiple equation clauses (or a single clause that does destructure its
 arguments, e.g. a single-constructor structure) are recombined into one `LExpr.matchE` over the
-declared parameters. -/
+declared parameters -- but only over those parameters some clause actually destructures, see
+`discriminatingColumns`. -/
 def translateFunction (name : Name) : Meta.MetaM LFunction := do
   let info ← getConstInfo name
   let docstring ← findDocString? (← getEnv) name
@@ -737,8 +781,8 @@ def translateFunction (name : Name) : Meta.MetaM LFunction := do
       (List.range arity).map (s!"arg{·}")
     let body := match clauses with
       | [(pats, bodyL)] =>
-        if isTrivialClause pats paramNames then bodyL else .matchE (paramNames.map LExpr.var) clauses
-      | _ => .matchE (paramNames.map LExpr.var) clauses
+        if isTrivialClause pats paramNames then bodyL else mkClauseMatch paramNames clauses
+      | _ => mkClauseMatch paramNames clauses
     pure { name := toString name, parameters := paramNames, body, docstring, isPublic }
   | none =>
     match info.value? with
@@ -765,6 +809,41 @@ def translateFunction (name : Name) : Meta.MetaM LFunction := do
   match f.body with
   | .matchE _ alts => pure (", ".intercalate (alts.map (fun (pats, _) => reprStr pats.head!)))
   | _ => pure "no matchE"
+
+-- Regression test: `applyBaseThreads.go` takes five parameters but matches on only one of them
+-- (`l`). Its equation lemmas still mention all five on their left-hand sides, so without
+-- `discriminatingColumns` the recombined match would scrutinize every parameter that survived
+-- erasure (`comments₁`, `origState`, `l`, `bs`) and rebind three of them to themselves in each
+-- alternative.
+/-- info: "discrs: [LExpr.var \"l\"] | pats: [LPat.ctor \"List.nil\" []], [LPat.ctor \"List.cons\" [LPat.var \"entry\", LPat.var \"rest\"]]" -/
+#guard_msgs in
+#eval show Meta.MetaM String from do
+  let f ← translateFunction `applyBaseThreads.go
+  match f.body with
+  | .matchE discrs alts =>
+    pure s!"discrs: {reprStr discrs} | pats: \
+      {", ".intercalate (alts.map (fun (pats, _) => reprStr pats))}"
+  | _ => pure "no matchE"
+
+-- A column every clause leaves alone is dropped; one some clause destructures is kept, as is one
+-- whose binder name doesn't match the parameter's in every clause (`b` vs `renamed`), since that
+-- clause's body refers to the renamed local.
+/-- info: "[1], [0, 1], [0, 1]" -/
+#guard_msgs in
+#eval show String from
+  let body := LExpr.var "whatever"
+  let passthrough := [([LPat.var "a", .ctor "C" []], body), ([.var "a", .ctor "D" []], body)]
+  let destructured := [([LPat.ctor "C" [], .ctor "C" []], body), ([.var "a", .ctor "D" []], body)]
+  let renamed := [([LPat.var "renamed", .ctor "C" []], body), ([.var "a", .ctor "D" []], body)]
+  ", ".intercalate
+    ([passthrough, destructured, renamed].map (reprStr <| discriminatingColumns ["a", "b"] ·))
+
+-- With nothing left to dispatch on, every column is kept rather than emitting a discriminant-less
+-- match.
+/-- info: "[0, 1]" -/
+#guard_msgs in
+#eval show String from
+  reprStr (discriminatingColumns ["a", "b"] [([LPat.var "a", .var "b"], LExpr.var "whatever")])
 
 /-- Whether `name`'s declared type has no run-time representation once its full arrow
 telescope is peeled off: either a `Prop` (a proof-producing predicate like

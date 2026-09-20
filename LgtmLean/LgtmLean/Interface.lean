@@ -378,7 +378,7 @@ match l with
     (let ⟨hFound, hSameLoc, hFileLoc, hBackend, hParents, hNodup, hBefore, hSubset⟩ := hAll entry List.mem_cons_self
      bs.applyBase entry.1 entry.2 hFound hSameLoc hFileLoc hBackend hParents hNodup hBefore hSubset)
 
-/-- The `.current`-version counterpart of `applyBaseThreads.go`. -/
+/-- The `.current`-version counterpart of `lgtm--apply-base-threads-go`. -/
 public def applyCurrentThreads.go (comments₁ : Std.HashMap CommentRef Comment)
     (origState : Std.HashMap ModifiedFileRef ModifiedFileState)
     (l : List (ModifiedFileRef × List Comment))
