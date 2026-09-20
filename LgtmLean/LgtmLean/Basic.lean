@@ -46,6 +46,12 @@ public structure GitRevision where
   hash : String
   deriving Hashable, DecidableEq
 
+/-- A reference to a repository in the repository list.
+
+    The full list of repositories is stored in the `lgtm-configuration'.
+    Repositories should be referenced using this type because the full
+    repository object contains a lot of data that shouldn't be included
+    in hash/equality calculations. -/
 public structure RepositoryRef where
   /-- The name of the repository -/
   name : String
@@ -72,6 +78,17 @@ public structure ModifiedFileRef where
   currentFileName : String
   currentFileHash : GitRevision
   deriving Hashable, DecidableEq
+
+/-- Return the path of VERSION of the MODIFIED-FILE.
+
+    NOTE: This was complicated in the original because the path
+    of the base file could be nil if it is the same as the current
+    file.  It would probably be best to just keep the data model
+    simple and require the frontends to fix things up. -/
+public def pathOfFileAtVersion (version : FileVersion) (modifiedFile : ModifiedFileRef) : String :=
+  match version with
+  | .current => modifiedFile.currentFileName
+  | .base => modifiedFile.baseFileName
 
 @[public_api]
 public structure CommentFileLocation where
@@ -460,6 +477,10 @@ public structure Repository where
   The strings are the commit messages corresponding to each revision.
   -/
   commits : List (GitRevision × String)
+
+/-- Test of REPOSITORY-REF refers to REPOSITORY. -/
+public def repositoryRefMatches (repository : Repository) (repositoryRef : RepositoryRef) : Bool :=
+  repository.name == repositoryRef.name && repository.path == repositoryRef.path && repository.baseRevision == repositoryRef.baseRevision
 
 /--
 The mutable state for a file that can be reviewed.
