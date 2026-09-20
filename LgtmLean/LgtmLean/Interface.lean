@@ -357,10 +357,17 @@ public def FileThreadsBootstrapState.applyCurrent
         rw [Std.HashMap.get_insert_of_ne hne h hc']
         exact bs.hPublished fileRef' hc' }
 
-/-- Folds `FileThreadsBootstrapState.applyBase` over every `(fileRef, comments)` entry of a file
-bucket (e.g. `bootstrapState.baseComments.toList`), threading the per-entry validity facts through
-via `List.mem_cons_of_mem`/`List.mem_cons_self` at each step (mirroring `commentsByRef.go`'s
-threading style). -/
+/-- Merges the comments in L into the bootstrap state BS.
+
+    Each entry in L is a list of comments for the referenced file.  The
+    comments are added to the bootstrap state, which is used to organize
+    comments retrieved from the server.  This helper maintains necessary
+    bootstrapping invariants.
+
+    COMMENTS₁ and ORIG-STATE are used to look up necessary metadata about
+    comments and files, respectively.
+
+    This version works over the base threads. -/
 public def applyBaseThreads.go (comments₁ : Std.HashMap CommentRef Comment)
     (origState : Std.HashMap ModifiedFileRef ModifiedFileState)
     (l : List (ModifiedFileRef × List Comment))
@@ -378,7 +385,17 @@ match l with
     (let ⟨hFound, hSameLoc, hFileLoc, hBackend, hParents, hNodup, hBefore, hSubset⟩ := hAll entry List.mem_cons_self
      bs.applyBase entry.1 entry.2 hFound hSameLoc hFileLoc hBackend hParents hNodup hBefore hSubset)
 
-/-- The `.current`-version counterpart of `lgtm--apply-base-threads-go`. -/
+/-- Merges the comments in L into the bootstrap state BS.
+
+    Each entry in L is a list of comments for the referenced file.  The
+    comments are added to the bootstrap state, which is used to organize
+    comments retrieved from the server.  This helper maintains necessary
+    bootstrapping invariants.
+
+    COMMENTS₁ and ORIG-STATE are used to look up necessary metadata about
+    comments and files, respectively.
+
+    This version works over the current threads. -/
 public def applyCurrentThreads.go (comments₁ : Std.HashMap CommentRef Comment)
     (origState : Std.HashMap ModifiedFileRef ModifiedFileState)
     (l : List (ModifiedFileRef × List Comment))
