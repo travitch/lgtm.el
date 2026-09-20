@@ -13,9 +13,9 @@ public structure Result α where
   value : α
   updatedState : State
 
-/-- Delete all of the comments in the current review state.
+/-- Delete all of the comments in the current state S₀.
 
-This is used to prepare to fetch an updated state from the server. -/
+    This is used to prepare to fetch an updated state from the server. -/
 @[public_api]
 public def resetCommentState (s₀ : State) : Result Unit :=
   let manager₁ := s₀.fileManager.resetCommentState
@@ -605,49 +605,48 @@ public def addRemoteComments (s₀ : State) : Result (Except String Unit) :=
       else Result.mk (Except.error "Received malformed comment data from the server") s₀
     else Result.mk (Except.error "Received malformed comment data from the server") s₀
 
-/-- Finalizes publishing a top-level being-edited comment: threads `comment₂` into
-`s₀.commentManager.topLevelThreads` and assembles the resulting `State`. `comments₁` (the new
-`CommentManager.comments`) is recomputed from `comment₀`/`comment₂`/`href2` rather than taken as a
-parameter, since it must stay *definitionally* `s₀.commentManager.comments.insert comment₀.ref
-comment₂` for the proofs below to typecheck -- an opaque parameter would lose that. -/
-public def completeCommentWithContent.finalizeTopLevel (s₀ : State) (comment₀ comment₂ : Comment)
-    (hloc : comment₂.location = CommentLocation.topLevel) (hHasBackendId : comment₂.backendId.isSome)
-    (href2 : comment₂.ref = comment₀.ref) (hFresh0 : ¬ s₀.commentManager.comments.contains comment₀.ref)
-    (hparent2 : ∀ parentId, comment₂.parent = some parentId →
+/-- Add COMMENT-WITH-BACKEND-ID to state S₀.
+
+    This helper is for top-level comments, which are added to the comment
+    manager.  COMMENT-BEING-EDITED is used for proof terms. -/
+public def completeCommentWithContent.finalizeTopLevel (s₀ : State) (commentBeingEdited commentWithBackendId : Comment)
+    (hloc : commentWithBackendId.location = CommentLocation.topLevel) (hHasBackendId : commentWithBackendId.backendId.isSome)
+    (href2 : commentWithBackendId.ref = commentBeingEdited.ref) (hFresh0 : ¬ s₀.commentManager.comments.contains commentBeingEdited.ref)
+    (hparent2 : ∀ parentId, commentWithBackendId.parent = some parentId →
       parentId ∈ s₀.commentManager.topLevelThreads.serverCommentIds)
     (hFileThreadsPublished₁ : ∀ modifiedFileRef (h : s₀.fileManager.state.contains modifiedFileRef),
       (∀ ref (_hc : (s₀.fileManager.state.get modifiedFileRef h).baseThreads.commentTreeNodes.contains ref),
-        ∃ h' : (s₀.commentManager.comments.insert comment₀.ref comment₂).contains ref,
-          ((s₀.commentManager.comments.insert comment₀.ref comment₂).get ref h').backendId.isSome) ∧
+        ∃ h' : (s₀.commentManager.comments.insert commentBeingEdited.ref commentWithBackendId).contains ref,
+          ((s₀.commentManager.comments.insert commentBeingEdited.ref commentWithBackendId).get ref h').backendId.isSome) ∧
       (∀ ref (_hc : (s₀.fileManager.state.get modifiedFileRef h).currentThreads.commentTreeNodes.contains ref),
-        ∃ h' : (s₀.commentManager.comments.insert comment₀.ref comment₂).contains ref,
-          ((s₀.commentManager.comments.insert comment₀.ref comment₂).get ref h').backendId.isSome)) :
+        ∃ h' : (s₀.commentManager.comments.insert commentBeingEdited.ref commentWithBackendId).contains ref,
+          ((s₀.commentManager.comments.insert commentBeingEdited.ref commentWithBackendId).get ref h').backendId.isSome)) :
     State :=
-  let comments₁ := s₀.commentManager.comments.insert comment₀.ref comment₂
+  let comments₁ := s₀.commentManager.comments.insert commentBeingEdited.ref commentWithBackendId
   have hCommentsKeyedByRef₁ : ∀ ref (h : comments₁.contains ref), (comments₁.get ref h).ref = ref :=
-    s₀.commentManager.hCommentsKeyedByRef_insert comment₀.ref comment₂ href2
+    s₀.commentManager.hCommentsKeyedByRef_insert commentBeingEdited.ref commentWithBackendId href2
   have hParentThreadRegistered : ∀ parentId (h : parentId ∈ s₀.commentManager.topLevelThreads.serverCommentIds),
-      comment₂.parent = some parentId →
+      commentWithBackendId.parent = some parentId →
         s₀.commentManager.topLevelThreads.serverCommentIds.get parentId h ∈
           s₀.commentManager.topLevelThreads.commentTreeNodes :=
     fun parentId h _ => s₀.commentManager.hParentThreadRegistered_mem parentId h
-  have hRefFresh : ¬ comment₂.ref ∈ s₀.commentManager.topLevelThreads.commentTreeNodes := by
+  have hRefFresh : ¬ commentWithBackendId.ref ∈ s₀.commentManager.topLevelThreads.commentTreeNodes := by
     rw [href2]
-    exact s₀.commentManager.notMem_topLevelThreads_of_unpublished comment₀.ref hFresh0
+    exact s₀.commentManager.notMem_topLevelThreads_of_unpublished commentBeingEdited.ref hFresh0
   have hLocationScope : ∀ loc', loc' ∈ s₀.commentManager.topLevelThreads.locationRoots.keys →
-      loc'.isTopLevel = comment₂.location.asThreadLocation.isTopLevel :=
+      loc'.isTopLevel = commentWithBackendId.location.asThreadLocation.isTopLevel :=
     s₀.commentManager.locationScope_of_topLevel hloc
-  let topLevelThreads₁ := addCommentToThread s₀.commentManager.topLevelThreads comment₂
+  let topLevelThreads₁ := addCommentToThread s₀.commentManager.topLevelThreads commentWithBackendId
     hHasBackendId hparent2 hParentThreadRegistered hRefFresh hLocationScope
   have hTopLevelThreadsAllTopLevel₁ : ∀ loc', loc' ∈ topLevelThreads₁.locationRoots.keys →
       loc'.isTopLevel = true :=
-    addCommentToThread_locationRoots_isTopLevel s₀.commentManager.topLevelThreads comment₂
+    addCommentToThread_locationRoots_isTopLevel s₀.commentManager.topLevelThreads commentWithBackendId
       hHasBackendId hparent2 hParentThreadRegistered hRefFresh hLocationScope true
       s₀.commentManager.hTopLevelThreadsAllTopLevel
       (hloc ▸ CommentLocation.topLevel_asThreadLocation_isTopLevel)
   have hTopLevelThreadsPublished₁ : ∀ ref' (h : topLevelThreads₁.commentTreeNodes.contains ref'),
       ∃ h' : comments₁.contains ref', (comments₁.get ref' h').backendId.isSome :=
-    s₀.commentManager.hTopLevelThreadsPublished_insert comment₀.ref comment₂ href2
+    s₀.commentManager.hTopLevelThreadsPublished_insert commentBeingEdited.ref commentWithBackendId href2
       hHasBackendId hparent2 hParentThreadRegistered hRefFresh hLocationScope
   let commentManager₁ : CommentManager :=
     { comments := comments₁,

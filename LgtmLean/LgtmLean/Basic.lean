@@ -70,12 +70,23 @@ public inductive ModificationType where
 | typechange
 deriving Hashable, DecidableEq
 
+/-- Immutable descriptors for each modified file.
+
+    These are meant to be cheap to compare for equality and to
+    hash. Generally, files should be referred to with this type
+    rather than with raw references. -/
 public structure ModifiedFileRef where
+  /-- A reference to the repository containing the file. -/
   repositoryRef : RepositoryRef
+  /-- The type of modification applied to the file. -/
   modificationType : ModificationType
+  /-- The path in the repository for the base version of the file. -/
   baseFileName : String
+  /-- The content hash of the base version of the file. -/
   baseFileHash : GitRevision
+  /-- The path in the repository for the current version of the file. -/
   currentFileName : String
+  /-- The content hash of the current version of the file. -/
   currentFileHash : GitRevision
   deriving Hashable, DecidableEq
 
@@ -544,6 +555,7 @@ public theorem ModifiedFileState.locationScope_of_current (modifiedFileState : M
   rw [hloc]
   exact modifiedFileState.hCurrentThreadsFileScoped
 
+/-- Stores the mutable state for each file in the changeset. -/
 public structure ModifiedFileManager where
   state : Std.HashMap ModifiedFileRef ModifiedFileState
   /-- The files affected by the change in a server-defined order.  This is stored
