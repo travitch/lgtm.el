@@ -872,3 +872,9 @@ theorem CommentThreads.previousThread.selectPreviousIfNotFirstThreadSelected (th
   · unfold CommentThreads.previousThread
     simp only [hVerEq, hFindIdx₀, hPrevIdxEq, hGetElem₁]
   · simpa using hFindIdx₁
+
+/-- Return all of the unpublished top-level comments in MANAGER. -/
+public def topLevelUnpublishedComments (manager : CommentManager) : List Comment :=
+  let threads := manager.topLevelThreads.toThreadsOrdered manager
+  let allComments := List.flatten (threads.map (λ thread => thread.linearize manager.topLevelThreads manager))
+  allComments.filter (λ c => !c.isPersistedToServer)

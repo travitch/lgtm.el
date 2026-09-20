@@ -316,6 +316,10 @@ partial def translatePrimitives (fn : LExpr) (args : List LExpr) : SExprM (Optio
     let f ← LExpr.toSExpr args[0]!
     let lst ← LExpr.toSExpr args[1]!
     pure (some (.list [.atom "seq-mapcat", f, lst]))
+  | .global "List.filter" => do
+    let p ← LExpr.toSExpr args[0]!
+    let lst ← LExpr.toSExpr args[1]!
+    pure (some (.list [.atom "seq-filter", p, lst]))
   | .global "List.length" => do
     let lst ← LExpr.toSExpr args[0]!
     pure (some (.list [.atom "length", lst]))
