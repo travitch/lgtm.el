@@ -541,11 +541,11 @@ public def FileThreadsBootstrapState.toModifiedFileManager {comments₁ : Std.Ha
       exact fileManager.resetCommentState.hConsistentState mf,
     hStateKeyedByRef := bs.hKeyedByRef }
 
-/-- Bulk-loads a fresh batch of comments from the server, replacing whatever comment state was
-there before.
+/-- Bulk-loads all comments from the server.
 
-Fails (leaving the state unchanged) if the server's batch doesn't satisfy the structural invariants
-that we expect (see `assembleCommentTrees`). -/
+    This creates a new state based on S₀.  Fails (leaving the state unchanged)
+    if the server's batch doesn't satisfy the structural invariants that we
+    expect (see `lgtm--assemble-comment-trees`). -/
 @[public_api]
 public def addRemoteComments (s₀ : State) : Result (Except String Unit) :=
   match s₀.configuration.getRemoteConversations s₀.fileManager with

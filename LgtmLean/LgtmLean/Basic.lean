@@ -901,6 +901,10 @@ public theorem State.hFileThreadsPublished_insert_current (s : State)
     · obtain ⟨hc', hpub'⟩ := hCurrent ref hc
       exact hPreserve ref hc' hpub'
 
+/-- Add VALUE to the list at KEY in M.
+
+    If there was no binding for KEY in M before the call,
+    add a singleton list at KEY. -/
 public def addToListAt [BEq α] [Hashable α] (key : α) (value : β) (m : Std.HashMap α (List β)) : Std.HashMap α (List β) :=
   match m.get? key with
   | none => m.insert key [value]
