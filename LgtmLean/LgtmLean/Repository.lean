@@ -99,7 +99,7 @@ public def assignCommitsToRepositoryHistories (historyIndex : List (String × Ar
         refine info.referencedCommitsHaveBase lastIdx ?_
         rw [hRefs]
         exact List.getLast_mem _)
-      let repoName := (System.FilePath.mk repoPath).fileName.getD "No Name"
+      let repoName := (System.FilePath.mk repoPath).fileName.getD repoPath
       let r := Repository.mk repoName repoPath ⟨baseRevision.1⟩ (info.repoCommits.map (λ (rev, msg) => (GitRevision.mk rev, msg))).toList
       repositories := r :: repositories
 
