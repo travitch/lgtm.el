@@ -573,7 +573,11 @@ partial def walkMatcherBody (topPos : Std.HashMap FVarId Nat) (varPos : Std.Hash
 
 /-- Decompose one `indName.casesOn params motive major minor₁ ... minorₖ` node (`k` = number of
 constructors of `indName`, in declaration order) and recurse into each `minorᵢ`, which is a
-function of that constructor's fields. Only handles non-indexed inductives (true of every type
+function of that constructor's fields followed by any of the matcher's discriminants still left to
+consume (a multi-discriminant `match` abstracts those in its motive, so each minor re-binds them;
+e.g. `applyBaseThreads.go.match_3`'s `match l, hAll with` gives `List.nil`'s minor one binder and
+`List.cons`'s three). Only the leading `numFields` of them are the constructor's own, so only those
+become pattern slots. Only handles non-indexed inductives (true of every type
 `LgtmLean` actually pattern-matches on: `Bool`, `List`, `Option`, `Nat`, and its own plain enums).
 
 `major` need not be one of the matcher's own top-level discriminants directly (`varPos[·]` covers
@@ -596,12 +600,28 @@ partial def decomposeCasesOn (topPos : Std.HashMap FVarId Nat) (varPos : Std.Has
         let mut allRows : List (List (Nat × List Nat × LPat) × FVarId) := []
         for i in [0:indInfo.ctors.length] do
           let ctorName := indInfo.ctors[i]!
+          let numFields ← match (← getEnv).find? ctorName with
+            | some (.ctorInfo ctorInfo) => pure ctorInfo.numFields
+            | _ => pure 0
           let minor := args[base + i]!
-          let rows ← Meta.lambdaTelescope minor fun fieldVars minorBody => do
-            let placeholders := fieldVars.toList.map (fun _ => LPat.var "_")
+          let rows ← Meta.lambdaTelescope minor fun binders minorBody => do
+            if binders.size < numFields then return []
+            let placeholders := (List.replicate numFields (LPat.var "_"))
             let mut varPos' := varPos
-            for j in [0:fieldVars.size] do
-              varPos' := varPos'.insert fieldVars[j]!.fvarId! (rootPos, path ++ [j])
+            for j in [0:numFields] do
+              varPos' := varPos'.insert binders[j]!.fvarId! (rootPos, path ++ [j])
+            -- Whatever the minor binds past the constructor's own fields is one of the matcher's
+            -- *remaining* discriminants, re-bound because the motive abstracts them. Those live at
+            -- the top-level positions immediately after this one, since the match compiler consumes
+            -- discriminants left to right and they occupy contiguous binders.
+            --
+            -- That's only recoverable while this `casesOn` is on a discriminant itself rather than
+            -- on a field of one (`path` empty), so leave them unmapped otherwise: a nested `casesOn`
+            -- reaching an unmapped major aborts the decode (`tryDecodeMatcher` returns `none` and
+            -- the caller falls back) rather than mislabelling a column.
+            if path.isEmpty then
+              for k in [numFields:binders.size] do
+                varPos' := varPos'.insert binders[k]!.fvarId! (rootPos + 1 + (k - numFields), [])
             let subRows ← walkMatcherBody topPos varPos' minorBody
             pure (subRows.map (fun (assoc, altFv) =>
               ((rootPos, path, LPat.ctor (toString ctorName) placeholders) :: assoc, altFv)))
@@ -710,6 +730,59 @@ def mkClauseMatch (paramNames : List String) (clauses : List (List LPat × LExpr
   let clauses := clauses.map (fun (pats, body) => (cols.filterMap (pats[·]?), body))
   .matchE discrs clauses
 
+/-- Whether `body` still calls one of Lean's auto-generated `match_N` auxiliaries, which happens
+when `tryDecodeMatcher` doesn't recognize a matcher's shape and `translateApp` falls back to
+treating it as an ordinary call. Nothing emits an elisp definition for those, so such a body is
+unusable. -/
+def refersToRawMatcher (body : LExpr) : Bool :=
+  body.globalRefs.any (isLikelyMatcherName ·.toName)
+
+/-- Translate `name`'s body from its unfolding lemma (`name.eq_def`), whose right-hand side is the
+whole body with both its `match` and its `let` bindings still intact.
+
+This is preferred over the per-clause equation lemmas because generating those zeta-reduces the
+right-hand sides: every `let` the equation generator's traversal reaches is substituted away (and
+duplicated at each use site), so a `let` written above -- or directly inside -- the clause-splitting
+`match` never survives to be translated. Only a `let` sitting under a `match` too dependent to split
+comes through. `registerServerCommentIds` is the canonical example: both of its `let`s are gone from
+`registerServerCommentIds.eq_2` but present in `registerServerCommentIds.eq_def`.
+
+The per-clause `LPat`s that `translateFunction` would otherwise read off each equation's left-hand
+side come from `tryDecodeMatcher` instead, which also makes `discriminatingColumns` unnecessary: the
+unfolding lemma's `match` already scrutinizes only the parameters the source actually matches on.
+
+Returns `none` -- falling back to the equation lemmas -- unless the lemma has the expected
+`name p₁ .. pₙ = body` shape with one binder per declared parameter, or if the translated body still
+refers to a raw matcher because `tryDecodeMatcher` couldn't decode it. -/
+def translateViaUnfoldEqn (name : Name) (paramNames : List String) : Meta.MetaM (Option LExpr) := do
+  let some eqnName ← Meta.getUnfoldEqnFor? name | return none
+  Meta.forallTelescope (← getConstInfo eqnName).type fun xs eqType => do
+    let some (_, lhs, rhs) := eqType.eq? | return none
+    -- The binders have to be exactly the arguments the left-hand side applies `name` to, in order,
+    -- so that the non-erasable ones line up positionally with `paramNames`. A definition whose body
+    -- is a bare lambda (`def f : Nat → Nat := fun x => x`) yields an under-applied left-hand side
+    -- instead, and is left to the paths below.
+    unless lhs.getAppFn.isConstOf name && lhs.getAppArgs == xs do return none
+    let mut varNames : Std.HashMap FVarId String := {}
+    let mut unassigned := paramNames
+    for x in xs do
+      let ld ← x.fvarId!.getDecl
+      if ← isErasableType ld.type then
+        -- Erased binders still get a name because the body does reference them: a dependent `match`
+        -- scrutinizes its proof arguments alongside its data ones. `tryDecodeMatcher` drops those
+        -- columns from the emitted patterns.
+        varNames := (bindFresh varNames x.fvarId! (readableBinderName ld.userName)).1
+      else
+        match unassigned with
+        | [] => return none
+        | n :: rest =>
+          varNames := varNames.insert x.fvarId! n
+          unassigned := rest
+    unless unassigned.isEmpty do return none
+    let body ← translateExpr varNames rhs
+    if refersToRawMatcher body then return none
+    return some body
+
 /-- Translate a single top-level `LgtmLean` function into its `LFunction` representation.
 
 Reads the function's parameter names directly off its declared type, throwing if any non-erasable
@@ -717,14 +790,18 @@ parameter's name was invented by the elaborator rather than written by the user.
 for the pattern-bound function definition forms, so extractable code should avoid that definition
 style.
 
-The body then prefers Lean's auto-generated equation lemmas, which is what lets recursive functions
-come through as ordinary pattern matching instead of the raw well-founded/structural recursion
-combinators they actually compile to.  Falls back to directly reading off `lambdaTelescope` of
-the definition's value for functions with no equations (e.g. a one-line non-recursive `def` with no
-internal `match`). Multiple equation clauses (or a single clause that does destructure its
-arguments, e.g. a single-constructor structure) are recombined into one `LExpr.matchE` over the
-declared parameters -- but only over those parameters some clause actually destructures, see
-`discriminatingColumns`. -/
+The body comes from one of Lean's auto-generated equational lemmas, which is what lets recursive
+functions come through as ordinary pattern matching instead of the raw well-founded/structural
+recursion combinators they actually compile to.
+
+The unfolding lemma (`translateViaUnfoldEqn`) is tried first because it is the only one that
+preserves the definition's `let` bindings. Where it doesn't apply, the per-clause equation lemmas
+are used instead: multiple clauses (or a single clause that does destructure its arguments, e.g. a
+single-constructor structure) are recombined into one `LExpr.matchE` over the declared parameters --
+but only over those parameters some clause actually destructures, see `discriminatingColumns`.
+
+Falls back to directly reading off `lambdaTelescope` of the definition's value for functions with no
+equations at all. -/
 def translateFunction (name : Name) : Meta.MetaM LFunction := do
   let info ← getConstInfo name
   let docstring ← findDocString? (← getEnv) name
@@ -749,6 +826,8 @@ def translateFunction (name : Name) : Meta.MetaM LFunction := do
         else
           names := names ++ [toString ld.userName]
     pure names
+  if let some body ← translateViaUnfoldEqn name paramNames then
+    return { name := toString name, parameters := paramNames, body, docstring, isPublic }
   match eqns? with
   | some eqns => do
     let mut clauses : List (List LPat × LExpr) := []

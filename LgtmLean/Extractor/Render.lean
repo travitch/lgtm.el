@@ -198,10 +198,13 @@ partial def LPat.toQPat (p : LPat) : SExprM String := do
   -- `List` is likewise special-cased, to elisp's own empty list and cons cell
   | .ctor "List.nil" [] => pure "nil"
   | .ctor "List.cons" [head, tail] => pure ("(" ++ (← head.toQPat) ++ " . " ++ (← tail.toQPat) ++ ")")
-  -- A `Nat` is an elisp integer, not a tagged value, so a `n + 1` pattern (`Nat.succ n`, as a
-  -- structurally recursive function's non-zero case is written) can't be a vector pattern: it is a
-  -- positive integer, whose predecessor is what the pattern binds. `app` runs `1-` on the matched
-  -- value and matches the result against the sub-pattern.
+  -- A `Nat` is an elisp integer, not a tagged value, so neither of its constructors can become the
+  -- usual symbol/vector encoding. `Nat.zero` is the integer `0` (it also reaches here as an
+  -- `LLit.nat 0` above, when the pattern was read off an equation lemma's left-hand side rather
+  -- than decoded from a matcher). A `n + 1` pattern (`Nat.succ n`, as a structurally recursive
+  -- function's non-zero case is written) is a positive integer whose predecessor is what the pattern
+  -- binds: `app` runs `1-` on the matched value and matches the result against the sub-pattern.
+  | .ctor "Nat.zero" [] => pure "0"
   | .ctor "Nat.succ" [p] =>
     pure (",(and (pred integerp) (pred (< 0)) (app 1- " ++ (← p.toUPat) ++ "))")
   -- A tuple is an untagged vector (`translatePrimitives` builds `Prod.mk` as `(vector fst snd)`,

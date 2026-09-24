@@ -1,0 +1,10 @@
+name = "LgtmDeepLean"
+version = "0.1.0"
+defaultTargets = ["lgtmdeeplean"]
+
+[[lean_lib]]
+name = "LgtmDeepLean"
+
+[[lean_exe]]
+name = "lgtmdeeplean"
+root = "Main"
