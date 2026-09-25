@@ -16,6 +16,7 @@ public def Expression.infer (ctx : Context) : Expression → Option Ty
   | .intLit _ => some .int
   | .plus l r | .minus l r =>
     if l.infer ctx == some .int && r.infer ctx == some .int then some .int else none
+  | .stringLit _ => some .string
   | .lnil t => some (.list t)
   | .lcons hd tl => do
     let t ← hd.infer ctx
@@ -34,6 +35,10 @@ decomposes into premises about `e`'s subterms automatically. -/
 
 @[simp, grind =] public theorem Expression.infer_intLit {ctx : Context} {i : Int} :
     (Expression.intLit i).infer ctx = some .int := by
+  simp [Expression.infer]
+
+@[simp, grind =] public theorem Expression.infer_stringLit {ctx : Context} {s : String} :
+    (Expression.stringLit s).infer ctx = some .string := by
   simp [Expression.infer]
 
 @[simp, grind =] public theorem Expression.infer_lnil {ctx : Context} {t : Ty} :
@@ -99,15 +104,22 @@ at what `WellTyped` says: inference on the body finds exactly the declared resul
 
 section Tests
 
-private def ctx : Context := [("xs", .list .int), ("n", .int)]
+private def ctx : Context := [("xs", .list .int), ("n", .int), ("s", .string)]
 
 -- Inference determines the type of every form.
 #guard (Expression.intLit 3).infer ctx == some .int
+#guard (Expression.stringLit "hi").infer ctx == some .string
 #guard (Expression.varRef "n").infer ctx == some .int
+#guard (Expression.varRef "s").infer ctx == some .string
 #guard (Expression.varRef "xs").infer ctx == some (.list .int)
 #guard (Expression.varRef "nope").infer ctx == none
 #guard (Expression.plus (.varRef "n") (.intLit 1)).infer ctx == some .int
 #guard (Expression.minus (.intLit 1) (.varRef "xs")).infer ctx == none
+
+-- Arithmetic is on `int`s only: a string operand is rejected on either side.
+#guard (Expression.plus (.stringLit "a") (.stringLit "b")).infer ctx == none
+#guard (Expression.plus (.varRef "n") (.stringLit "b")).infer ctx == none
+#guard (Expression.minus (.stringLit "a") (.varRef "n")).infer ctx == none
 
 -- An empty list takes its type from its annotation, not from its context.
 #guard (Expression.lnil .int).infer ctx == some (.list .int)
@@ -121,6 +133,12 @@ private def ctx : Context := [("xs", .list .int), ("n", .int)]
 #guard (Expression.lcons (.intLit 1) (.lnil (.list .int))).infer ctx == none
 #guard (Expression.lcons (.varRef "xs") (.varRef "xs")).infer ctx == none
 
+-- Lists are homogeneous across the new type too, so a mixed list has no type.
+#guard (Expression.lcons (.stringLit "a") (.lnil .string)).infer ctx == some (.list .string)
+#guard (Expression.lcons (.stringLit "a") (.lnil .int)).infer ctx == none
+#guard (Expression.lcons (.intLit 1) (.lnil .string)).infer ctx == none
+#guard (Expression.lcons (.stringLit "a") (.varRef "xs")).infer ctx == none
+
 -- A list of empty lists needs no expected type to be inferred, only agreeing annotations.
 #guard (Expression.lcons (.lnil .int) (.lnil (.list .int))).infer ctx == some (.list (.list .int))
 #guard (Expression.lcons (.lnil .int) (.lnil .int)).infer ctx == none
@@ -131,6 +149,8 @@ private def ctx : Context := [("xs", .list .int), ("n", .int)]
 #guard (Expression.plus (.varRef "n") (.intLit 1)).check ctx .int
 #guard !(Expression.plus (.varRef "n") (.intLit 1)).check ctx (.list .int)
 #guard !(Expression.plus (.varRef "n") (.lnil .int)).check ctx .int
+#guard (Expression.stringLit "hi").check ctx .string
+#guard !(Expression.stringLit "hi").check ctx .int
 
 /-- `fun (x : int) (y : int) => x + (y - 1)` -/
 private def addPred : Decl where
@@ -147,5 +167,17 @@ private def addPred : Decl where
 -- The parameter list is all the body has to work with, and it is checked at the types it gives.
 #guard !({ addPred with parameters := [("x", .int)] } : Decl).check
 #guard !({ addPred with parameters := [("x", .int), ("y", .list .int)] } : Decl).check
+
+/-- `fun (s : string) => ["!", s]` -/
+private def bang : Decl where
+  docstring := "Put `s` after an exclamation mark."
+  name := "bang"
+  parameters := [("s", .string)]
+  body := .lcons (.stringLit "!") (.lcons (.varRef "s") (.lnil .string))
+  resultType := .list .string
+
+#guard bang.check
+#guard !({ bang with resultType := .list .int } : Decl).check
+#guard !({ bang with parameters := [("s", .int)] } : Decl).check
 
 end Tests

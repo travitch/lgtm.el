@@ -2,11 +2,13 @@ module
 
 public inductive Ty where
 | int
+| string
 | list : Ty → Ty
   deriving Repr, DecidableEq
 
 public def Ty.denote : Ty → Type
 | .int => Int
+| .string => String
 | .list t => List t.denote
 
 public inductive Expression where
@@ -14,6 +16,7 @@ public inductive Expression where
 | intLit : Int → Expression
 | plus : Expression → Expression → Expression
 | minus : Expression → Expression → Expression
+| stringLit : String → Expression
 /-- The empty list annotated with its element type -/
 | lnil : Ty → Expression
 | lcons : Expression → Expression → Expression

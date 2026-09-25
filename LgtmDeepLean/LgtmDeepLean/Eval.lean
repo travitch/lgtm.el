@@ -5,6 +5,7 @@ public import LgtmDeepLean.TypeCheck
 
 public inductive Value where
 | int : Int → Value
+| string : String → Value
 | list : List Value → Value
 
 /-- The `Ty` a value's representation agrees with.
@@ -12,6 +13,7 @@ public inductive Value where
 A list value is homogeneous: every element has the list's single element type. -/
 public inductive Value.HasType : Value → Ty → Prop where
 | int (i : Int) : HasType (.int i) .int
+| string (s : String) : HasType (.string s) .string
 | list {vs : List Value} {t : Ty} : (∀ v ∈ vs, HasType v t) → HasType (.list vs) (.list t)
 
 public abbrev Env := List (String × Value)
@@ -28,6 +30,7 @@ public inductive Eval (env : Env) : Expression → Value → Prop where
 | EIntLit (i : Int) : Eval env (.intLit i) (.int i)
 | EPlus (e₁ : Expression) (e₂ : Expression) : Eval env e₁ (.int n₁) → Eval env e₂ (.int n₂) → Eval env (.plus e₁ e₂) (.int (n₁ + n₂))
 | EMinus (e₁ : Expression) (e₂ : Expression) : Eval env e₁ (.int n₁) → Eval env e₂ (.int n₂) → Eval env (.minus e₁ e₂) (.int (n₁ - n₂))
+| EStringLit (s : String) : Eval env (.stringLit s) (.string s)
 | ENil (ty : Ty) : Eval env (.lnil ty) (.list [])
 | ECons (e₁ : Expression) (e₂ : Expression) : Eval env e₁ v → Eval env e₂ (.list vs) → Eval env (.lcons e₁ e₂) (.list (v :: vs))
 
