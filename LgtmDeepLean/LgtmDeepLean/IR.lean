@@ -18,9 +18,9 @@ public inductive Expression where
 | lnil : Ty → Expression
 | lcons : Expression → Expression → Expression
 
-public structure Function where
+public structure Decl where
   docstring : String
   name : String
-  parameters : List String
+  parameters : List (String × Ty)
   body : Expression
   resultType : Ty

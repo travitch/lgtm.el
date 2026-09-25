@@ -79,6 +79,24 @@ public theorem Expression.wellTyped_iff_infer_isSome (ctx : Context) (e : Expres
     e.WellTyped ctx ↔ (e.infer ctx).isSome := by
   simp [Expression.WellTyped, Expression.check, Option.isSome_iff_exists]
 
+/-- Check a declaration: its body has to check against the declared result type under the
+parameters.
+
+`Decl.parameters` is a `Context`, so a declaration needs no context of its own to be checked in:
+the parameters are the only names its body may mention, and they arrive carrying their types. -/
+public def Decl.check (d : Decl) : Bool :=
+  d.body.check d.parameters d.resultType
+
+/-- `d`'s body agrees with the types `d` declares for its parameters and its result. -/
+public def Decl.WellTyped (d : Decl) : Prop :=
+  d.check = true
+
+/-- `Decl.check`'s body is not visible outside this module, so this is how a proof elsewhere gets
+at what `WellTyped` says: inference on the body finds exactly the declared result type. -/
+@[simp, grind =] public theorem Decl.wellTyped_iff_infer_eq_some {d : Decl} :
+    d.WellTyped ↔ d.body.infer d.parameters = some d.resultType := by
+  simp [Decl.WellTyped, Decl.check, Expression.check]
+
 section Tests
 
 private def ctx : Context := [("xs", .list .int), ("n", .int)]
@@ -113,5 +131,21 @@ private def ctx : Context := [("xs", .list .int), ("n", .int)]
 #guard (Expression.plus (.varRef "n") (.intLit 1)).check ctx .int
 #guard !(Expression.plus (.varRef "n") (.intLit 1)).check ctx (.list .int)
 #guard !(Expression.plus (.varRef "n") (.lnil .int)).check ctx .int
+
+/-- `fun (x : int) (y : int) => x + (y - 1)` -/
+private def addPred : Decl where
+  docstring := "Add `x` to one less than `y`."
+  name := "add-pred"
+  parameters := [("x", .int), ("y", .int)]
+  body := .plus (.varRef "x") (.minus (.varRef "y") (.intLit 1))
+  resultType := .int
+
+-- A declaration checks when its body agrees with the result type it declares.
+#guard addPred.check
+#guard !({ addPred with resultType := .list .int } : Decl).check
+
+-- The parameter list is all the body has to work with, and it is checked at the types it gives.
+#guard !({ addPred with parameters := [("x", .int)] } : Decl).check
+#guard !({ addPred with parameters := [("x", .int), ("y", .list .int)] } : Decl).check
 
 end Tests
