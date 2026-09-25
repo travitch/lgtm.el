@@ -6,11 +6,13 @@ meta import LgtmDeepLean.IR
 /-- The types of the variables in scope, innermost binding first. -/
 public abbrev Context := List (String × Ty)
 
+mutual
+
 /-- Infer the type of `e` under `ctx`, or `none` if `e` is ill typed.
 
-Every form determines its own type: `lnil` carries the element type of the empty list it builds,
-so inference never has to guess and needs no expected type to work from.  `Expression.check` is
-therefore just this function plus a comparison. -/
+Every form determines its own type: `lnil` carries the element type of the empty list it builds and
+`lam` carries the types of its parameters, so inference never has to guess and needs no expected
+type to work from.  `Expression.check` is therefore just this function plus a comparison. -/
 public def Expression.infer (ctx : Context) : Expression → Option Ty
   | .varRef x => ctx.lookup x
   | .intLit _ => some .int
@@ -22,6 +24,26 @@ public def Expression.infer (ctx : Context) : Expression → Option Ty
     let t ← hd.infer ctx
     guard (tl.infer ctx == some (.list t))
     some (.list t)
+  | .lam ps body => do
+    let r ← body.infer (ps ++ ctx)
+    some (.fn (ps.map Prod.snd) r)
+  | .app f args =>
+    match f.infer ctx with
+    | some (.fn ps r) => if Expression.inferList ctx args == some ps then some r else none
+    | _ => none
+
+/-- Infer the types of `es`, in order, or `none` if any one of them is ill typed.
+
+This is mutual with `Expression.infer` because `app` holds a `List Expression`, which is how
+`Expression.rec` offers the nesting: one motive for `Expression`, one for `List Expression`. -/
+public def Expression.inferList (ctx : Context) : List Expression → Option (List Ty)
+  | [] => some []
+  | e :: es => do
+    let t ← e.infer ctx
+    let ts ← Expression.inferList ctx es
+    some (t :: ts)
+
+end
 
 /-! Inversion principles for `infer`, one per syntactic form.
 
@@ -70,6 +92,44 @@ and then *required* of the tail, so one `Ty` covers every element. -/
   simp [Expression.infer, Option.bind_eq_some_iff, guard]
   grind
 
+/-- A `lam` is typeable exactly when its body is, under its parameters extended with the enclosing
+context, and then it is a function from the parameters' types to the body's.
+
+Parameters go on the front of the context, so they shadow same-named bindings from outside, and — as
+in `Decl.callEnv` — a name repeated in the parameter list refers to its leftmost occurrence. -/
+@[simp, grind =] public theorem Expression.infer_lam_eq_some {ctx : Context}
+    {ps : List (String × Ty)} {body : Expression} {t : Ty} :
+    (Expression.lam ps body).infer ctx = some t ↔
+      ∃ r, body.infer (ps ++ ctx) = some r ∧ t = .fn (ps.map Prod.snd) r := by
+  simp [Expression.infer, Option.bind_eq_some_iff]
+  grind
+
+/-- An `app` is typeable exactly when its function's type is a function type whose parameter types
+are the types of the arguments, in order, and then it is that function type's result.
+
+Because `Ty.fn` records all the parameters at once, arity is part of that one comparison: a call
+passing too few arguments is ill typed rather than partially applied. -/
+@[simp, grind =] public theorem Expression.infer_app_eq_some {ctx : Context} {f : Expression}
+    {args : List Expression} {t : Ty} :
+    (Expression.app f args).infer ctx = some t ↔
+      ∃ ps, f.infer ctx = some (.fn ps t) ∧ Expression.inferList ctx args = some ps := by
+  simp only [Expression.infer]
+  split <;> grind
+
+/-! Inversion principles for `inferList`.  Together these say what it computes: the argument types
+in order, and `none` as soon as one argument has no type. -/
+
+@[simp, grind =] public theorem Expression.inferList_nil {ctx : Context} :
+    Expression.inferList ctx [] = some [] := by
+  simp [Expression.inferList]
+
+@[simp, grind =] public theorem Expression.inferList_cons_eq_some {ctx : Context} {e : Expression}
+    {es : List Expression} {ts : List Ty} :
+    Expression.inferList ctx (e :: es) = some ts ↔
+      ∃ t ts', e.infer ctx = some t ∧ Expression.inferList ctx es = some ts' ∧ ts = t :: ts' := by
+  simp [Expression.inferList, Option.bind_eq_some_iff]
+  grind
+
 /-- Check `e` against the expected type `ty` under `ctx`. -/
 public def Expression.check (ctx : Context) (e : Expression) (ty : Ty) : Bool :=
   e.infer ctx == some ty
@@ -104,7 +164,8 @@ at what `WellTyped` says: inference on the body finds exactly the declared resul
 
 section Tests
 
-private def ctx : Context := [("xs", .list .int), ("n", .int), ("s", .string)]
+private def ctx : Context :=
+  [("xs", .list .int), ("n", .int), ("s", .string), ("f", .fn [.int, .string] .int)]
 
 -- Inference determines the type of every form.
 #guard (Expression.intLit 3).infer ctx == some .int
@@ -112,6 +173,7 @@ private def ctx : Context := [("xs", .list .int), ("n", .int), ("s", .string)]
 #guard (Expression.varRef "n").infer ctx == some .int
 #guard (Expression.varRef "s").infer ctx == some .string
 #guard (Expression.varRef "xs").infer ctx == some (.list .int)
+#guard (Expression.varRef "f").infer ctx == some (.fn [.int, .string] .int)
 #guard (Expression.varRef "nope").infer ctx == none
 #guard (Expression.plus (.varRef "n") (.intLit 1)).infer ctx == some .int
 #guard (Expression.minus (.intLit 1) (.varRef "xs")).infer ctx == none
@@ -143,6 +205,51 @@ private def ctx : Context := [("xs", .list .int), ("n", .int), ("s", .string)]
 #guard (Expression.lcons (.lnil .int) (.lnil (.list .int))).infer ctx == some (.list (.list .int))
 #guard (Expression.lcons (.lnil .int) (.lnil .int)).infer ctx == none
 
+-- A `lam` takes its parameter types from its annotation and its result type from its body.
+#guard (Expression.lam [("x", .int)] (.varRef "x")).infer ctx == some (.fn [.int] .int)
+#guard (Expression.lam [("x", .int), ("y", .string)] (.varRef "y")).infer ctx
+  == some (.fn [.int, .string] .string)
+#guard (Expression.lam [] (.intLit 1)).infer ctx == some (.fn [] .int)
+#guard (Expression.lam [("x", .int)] (.varRef "nope")).infer ctx == none
+#guard (Expression.lam [("x", .string)] (.plus (.varRef "x") (.intLit 1))).infer ctx == none
+
+-- A body sees the enclosing context as well as the parameters, and the parameters shadow it.
+#guard (Expression.lam [("x", .int)] (.plus (.varRef "x") (.varRef "n"))).infer ctx
+  == some (.fn [.int] .int)
+#guard (Expression.lam [("n", .string)] (.varRef "n")).infer ctx == some (.fn [.string] .string)
+#guard (Expression.lam [("x", .int), ("x", .string)] (.varRef "x")).infer ctx
+  == some (.fn [.int, .string] .int)
+
+-- Function types are types like any other: a `lam` can return one, and a list can hold them.
+#guard (Expression.lam [("x", .int)] (.lam [("y", .string)] (.varRef "x"))).infer ctx
+  == some (.fn [.int] (.fn [.string] .int))
+#guard (Expression.lcons (.varRef "f") (.lnil (.fn [.int, .string] .int))).infer ctx
+  == some (.list (.fn [.int, .string] .int))
+#guard (Expression.lcons (.varRef "f") (.lnil (.fn [.int] .int))).infer ctx == none
+
+-- An `app` needs a function, and arguments whose types are the parameter types in order.
+#guard (Expression.app (.varRef "f") [.intLit 1, .stringLit "a"]).infer ctx == some .int
+#guard (Expression.app (.lam [("x", .int)] (.plus (.varRef "x") (.intLit 1))) [.intLit 2]).infer ctx
+  == some .int
+#guard (Expression.app (.lam [] (.intLit 1)) []).infer ctx == some .int
+#guard (Expression.app (.varRef "f") [.stringLit "a", .intLit 1]).infer ctx == none
+#guard (Expression.app (.varRef "f") [.varRef "nope", .stringLit "a"]).infer ctx == none
+#guard (Expression.app (.varRef "n") [.intLit 1]).infer ctx == none
+#guard (Expression.app (.lnil .int) []).infer ctx == none
+
+-- Arity is part of the function type, so a call with the wrong number of arguments is ill typed
+-- rather than partially applied.
+#guard (Expression.app (.varRef "f") [.intLit 1]).infer ctx == none
+#guard (Expression.app (.varRef "f") []).infer ctx == none
+#guard (Expression.app (.varRef "f") [.intLit 1, .stringLit "a", .intLit 2]).infer ctx == none
+
+-- Applying a function that returns a function gives the inner function type, which can then be
+-- applied in turn.
+#guard (Expression.app (.lam [("x", .int)] (.lam [("y", .string)] (.varRef "x"))) [.intLit 1]).infer
+  ctx == some (.fn [.string] .int)
+#guard (Expression.app (.app (.lam [("x", .int)] (.lam [("y", .string)] (.varRef "x"))) [.intLit 1])
+  [.stringLit "a"]).infer ctx == some .int
+
 -- Checking agrees with inference.
 #guard (Expression.lnil .int).check ctx (.list .int)
 #guard !(Expression.lnil .int).check ctx .int
@@ -151,6 +258,9 @@ private def ctx : Context := [("xs", .list .int), ("n", .int), ("s", .string)]
 #guard !(Expression.plus (.varRef "n") (.lnil .int)).check ctx .int
 #guard (Expression.stringLit "hi").check ctx .string
 #guard !(Expression.stringLit "hi").check ctx .int
+#guard (Expression.lam [("x", .int)] (.varRef "x")).check ctx (.fn [.int] .int)
+#guard !(Expression.lam [("x", .int)] (.varRef "x")).check ctx (.fn [.string] .string)
+#guard !(Expression.lam [("x", .int)] (.varRef "x")).check ctx .int
 
 /-- `fun (x : int) (y : int) => x + (y - 1)` -/
 private def addPred : Decl where
@@ -179,5 +289,32 @@ private def bang : Decl where
 #guard bang.check
 #guard !({ bang with resultType := .list .int } : Decl).check
 #guard !({ bang with parameters := [("s", .int)] } : Decl).check
+
+/-- `fun (g : (int) -> int) (x : int) => g(x)` -/
+private def applyTo : Decl where
+  docstring := "Call `g` on `x`."
+  name := "apply-to"
+  parameters := [("g", .fn [.int] .int), ("x", .int)]
+  body := .app (.varRef "g") [.varRef "x"]
+  resultType := .int
+
+-- A parameter of function type is callable, at the arity and types its type gives.
+#guard applyTo.check
+#guard !({ applyTo with parameters := [("g", .fn [.string] .int), ("x", .int)] } : Decl).check
+#guard !({ applyTo with parameters := [("g", .fn [.int, .int] .int), ("x", .int)] } : Decl).check
+#guard !({ applyTo with resultType := .string } : Decl).check
+
+/-- `fun (n : int) => fun (m : int) => n + m` -/
+private def adder : Decl where
+  docstring := "Build a function that adds `n` to its argument."
+  name := "adder"
+  parameters := [("n", .int)]
+  body := .lam [("m", .int)] (.plus (.varRef "n") (.varRef "m"))
+  resultType := .fn [.int] .int
+
+-- A declaration can return a function, and its result type is checked like any other.
+#guard adder.check
+#guard !({ adder with resultType := .int } : Decl).check
+#guard !({ adder with resultType := .fn [.string] .int } : Decl).check
 
 end Tests
