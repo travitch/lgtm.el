@@ -119,6 +119,28 @@ private def addPred : Decl where
   body := .plus (.varRef "x") (.minus (.varRef "y") (.intLit 1))
   resultType := .int
 
+-- This is a simple proof demonstrating how proofs work through the
+-- relational evaluator
+private theorem addPred.trivial_positive
+  (x y res : Value)
+  (hXPos : ∀ xv, .int xv = x → xv >= 1)
+  (hYPos : ∀ yv, .int yv = y → yv >= 1)
+  (hRes : Decl.Apply addPred [ x, y ] res) :
+  ∃ resv, res = .int resv ∧ resv > 0 := by
+  obtain ⟨-, -, hbody⟩ := hRes
+  cases hbody with
+  | EPlus _ _ h₁ h₂ =>
+    cases h₁ with
+    | EVarRef _ hlx =>
+      cases h₂ with
+      | EMinus _ _ h₃ h₄ =>
+        cases h₃ with
+        | EVarRef _ hly =>
+          cases h₄ with
+          | EIntLit _ =>
+            simp [addPred, Decl.callEnv, List.lookup] at hlx hly
+            grind
+
 -- A call evaluates its body under the arguments, read back out by `EVarRef`.
 example : Decl.Apply addPred [.int 2, .int 5] (.int 6) :=
   .EApply _ (.cons "x" (.int 2) (.cons "y" (.int 5) .nil))
