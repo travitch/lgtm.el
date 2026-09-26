@@ -6,6 +6,19 @@ meta import LgtmDeepLean.IR
 /-- The types of the variables in scope, innermost binding first. -/
 public abbrev Context := List (String × Ty)
 
+/-- A name is looked up in the left half of an appended context first, so what is on the left
+shadows what is on the right. -/
+public theorem Context.lookup_append {ctx₁ ctx₂ : Context} {x : String} :
+    (ctx₁ ++ ctx₂).lookup x =
+      match ctx₁.lookup x with
+      | some t => some t
+      | none => ctx₂.lookup x := by
+  induction ctx₁ with
+  | nil => rfl
+  | cons p ps ih =>
+      obtain ⟨k, t⟩ := p
+      by_cases h : x == k <;> simp [List.lookup_cons, h, ih]
+
 mutual
 
 /-- Infer the type of `e` under `ctx`, or `none` if `e` is ill typed.
@@ -160,23 +173,186 @@ public theorem Expression.wellTyped_iff_infer_isSome (ctx : Context) (e : Expres
     e.WellTyped ctx ↔ (e.infer ctx).isSome := by
   simp [Expression.WellTyped, Expression.check, Option.isSome_iff_exists]
 
-/-- Check a declaration: its body has to check against the declared result type under the
-parameters.
+/-! ## Globals
 
-`Decl.parameters` is a `Context`, so a declaration needs no context of its own to be checked in:
-the parameters are the only names its body may mention, and they arrive carrying their types. -/
-public def Decl.check (d : Decl) : Bool :=
-  d.body.check d.parameters d.resultType
+The declarations a body may mention besides its own parameters.  A `Globals` is a table of
+*declarations*, not of values: every global is a function, and a global variable is a function of
+no arguments, written `g()`.
 
-/-- `d`'s body agrees with the types `d` declares for its parameters and its result. -/
-public def Decl.WellTyped (d : Decl) : Prop :=
-  d.check = true
+One mechanism covers both because recursion needs it to.  A table of values would have to be built
+before anything could mention it, so a declaration could never refer to itself or to one defined
+after it; a table of declarations is just syntax, and a body can be checked against a context
+listing every entry including its own. -/
+
+/-- The declarations in scope everywhere, each under the name it is referred to by. -/
+public abbrev Globals := List (String × Decl)
+
+/-- Key each declaration by the name it declares. -/
+@[expose] public def Globals.ofDecls (ds : List Decl) : Globals := ds.map fun d => (d.name, d)
+
+/-- The type a declaration has where its name is mentioned: a function from its parameters' types
+to its result type.
+
+A declaration of no parameters gets `.fn [] t` rather than `t`, which is what makes a global
+variable a call. -/
+@[expose] public def Decl.ty (d : Decl) : Ty := .fn (d.parameters.map Prod.snd) d.resultType
+
+/-- The context `gs` supplies: every global's name at the type of the declaration stored for it. -/
+public def Globals.types : Globals → Context
+  | [] => []
+  | (x, d) :: gs => (x, d.ty) :: Globals.types gs
+
+@[simp] public theorem Globals.types_nil : Globals.types [] = [] := by simp [Globals.types]
+
+@[simp] public theorem Globals.types_cons (x : String) (d : Decl) (gs : Globals) :
+    Globals.types ((x, d) :: gs) = (x, d.ty) :: Globals.types gs := by simp [Globals.types]
+
+/-- `Globals.types` is `Decl.ty` under the lookup, which is how a proof gets from the type a name
+was inferred at back to the declaration that gave it. -/
+@[simp, grind =] public theorem Globals.lookup_types {gs : Globals} {x : String} :
+    (Globals.types gs).lookup x = (gs.lookup x).map Decl.ty := by
+  induction gs with
+  | nil => rfl
+  | cons p gs ih =>
+      obtain ⟨k, d⟩ := p
+      by_cases h : x == k <;> simp [Globals.types, List.lookup_cons, h, ih]
+
+/-- Check a declaration: its body has to check against the declared result type under its own
+parameters over the globals.
+
+The parameters come first, so a parameter shadows a global of the same name.  `Env.lookup` resolves
+a name the same way round, and that agreement is what `Eval.hasType` rests on. -/
+public def Decl.check (d : Decl) (gs : Globals) : Bool :=
+  d.body.check (d.parameters ++ Globals.types gs) d.resultType
+
+/-- `d`'s body agrees with the types `d` declares for its parameters and its result, given `gs`. -/
+public def Decl.WellTyped (d : Decl) (gs : Globals) : Prop :=
+  d.check gs = true
 
 /-- `Decl.check`'s body is not visible outside this module, so this is how a proof elsewhere gets
 at what `WellTyped` says: inference on the body finds exactly the declared result type. -/
-@[simp, grind =] public theorem Decl.wellTyped_iff_infer_eq_some {d : Decl} :
-    d.WellTyped ↔ d.body.infer d.parameters = some d.resultType := by
+@[simp, grind =] public theorem Decl.wellTyped_iff_infer_eq_some {d : Decl} {gs : Globals} :
+    d.WellTyped gs ↔ d.body.infer (d.parameters ++ Globals.types gs) = some d.resultType := by
   simp [Decl.WellTyped, Decl.check, Expression.check]
+
+/-- Every declaration in `gs` checks, each under a context holding all of them.
+
+Itself included — which is what lets a global call itself, and two globals call each other.  This
+is a condition on syntax alone: no value occurs in it.  That is what keeps it provable at all.  A
+value-level version would have to type each global's closure, which carries the globals table,
+which would need typing again, and no inductive relation survives that regress.
+
+Exposed, unlike the rest of this module's definitions: it is a specification rather than an
+algorithm, there is nothing in it for an inversion principle to recover, and every consumer needs to
+instantiate it at a name. -/
+@[expose] public def Globals.WellTyped (gs : Globals) : Prop :=
+  ∀ x d, gs.lookup x = some d → d.WellTyped gs
+
+/-- A program with no globals has nothing to check. -/
+public theorem Globals.wellTyped_nil : Globals.WellTyped [] := by
+  intro x d hx; simp at hx
+
+/-- A lookup only ever hands back an entry the table contains. -/
+public theorem Globals.mem_of_lookup {gs : Globals} {x : String} {d : Decl}
+    (h : gs.lookup x = some d) : (x, d) ∈ gs := by
+  induction gs with
+  | nil => simp at h
+  | cons p gs ih =>
+      obtain ⟨k, e⟩ := p
+      rw [List.lookup_cons] at h
+      split at h
+      · obtain rfl : x = k := by grind
+        obtain rfl : d = e := by grind
+        exact List.mem_cons_self ..
+      · exact List.mem_cons_of_mem _ (ih h)
+
+/-- A table checks if each of its entries does.
+
+Stated over membership rather than lookup because that is what a table written out as a literal can
+be discharged against, one entry at a time. -/
+public theorem Globals.wellTyped_of_forall {gs : Globals}
+    (h : ∀ p ∈ gs, Decl.WellTyped p.2 gs) : Globals.WellTyped gs :=
+  fun x d hx => h (x, d) (Globals.mem_of_lookup hx)
+
+/-- Run the checker over a whole table.  Decides `Globals.WellTyped`, which `#guard` can report on
+even where the kernel cannot reduce `Expression.infer`. -/
+public def Globals.check (gs : Globals) : Bool := gs.all fun p => p.2.check gs
+
+/-- `Globals.check` is what it says it is.  It is the stronger of the two: it checks every entry,
+where `Globals.WellTyped` only constrains the ones a lookup can reach. -/
+public theorem Globals.wellTyped_of_check {gs : Globals} (h : Globals.check gs = true) :
+    Globals.WellTyped gs :=
+  Globals.wellTyped_of_forall fun p hp => List.all_eq_true.mp h p hp
+
+@[simp] public theorem Globals.ofDecls_nil : Globals.ofDecls [] = [] := by simp [Globals.ofDecls]
+
+@[simp] public theorem Globals.ofDecls_cons (d : Decl) (ds : List Decl) :
+    Globals.ofDecls (d :: ds) = (d.name, d) :: Globals.ofDecls ds := by simp [Globals.ofDecls]
+
+/-- With no repeated names, `Globals.ofDecls` resolves every declaration to itself. -/
+public theorem Globals.lookup_ofDecls_self {ds : List Decl} (hu : (ds.map Decl.name).Nodup)
+    {d : Decl} (hd : d ∈ ds) : (Globals.ofDecls ds).lookup d.name = some d := by
+  induction ds with
+  | nil => simp at hd
+  | cons e es ih =>
+      rw [List.map_cons, List.nodup_cons] at hu
+      simp only [Globals.ofDecls_cons, List.lookup_cons]
+      rcases List.mem_cons.mp hd with rfl | hd'
+      · simp
+      · have hne : ¬ (d.name == e.name) = true := fun h =>
+          hu.1 (List.mem_map.mpr ⟨d, hd', by grind⟩)
+        simpa [hne] using ih hu.2 hd'
+
+/-! ## Programs
+
+A `Program` is the source-level artifact — a file's worth of declarations — where a `Globals` is the
+table those declarations are checked and run against.  `Program.globals` is the bridge.
+
+The definitions below are exposed, unlike the rest of this module's: each is a projection or an
+alias with nothing an inversion principle could recover.  `Program.check` is not, for the same
+reason `Globals.check` is not — it runs `Expression.infer`, which stays hidden. -/
+
+/-- The globals table `p` presents to its own bodies: each declaration under the name it declares.
+
+Derived rather than stored, so a declaration can never be filed under a name other than its own. -/
+@[expose] public def Program.globals (p : Program) : Globals := Globals.ofDecls p.decls
+
+/-- The declaration `x` names in `p`, or `none` if it names nothing. -/
+@[expose] public def Program.lookup (p : Program) (x : String) : Option Decl := p.globals.lookup x
+
+/-- Check a whole program: every declaration against the signatures of all of them, its own
+included. -/
+public def Program.check (p : Program) : Bool := Globals.check p.globals
+
+/-- Every declaration in `p` checks, under `p`. -/
+@[expose] public def Program.WellTyped (p : Program) : Prop := Globals.WellTyped p.globals
+
+public theorem Program.wellTyped_of_check {p : Program} (h : p.check = true) : p.WellTyped :=
+  Globals.wellTyped_of_check h
+
+/-- No two declarations share a name.
+
+`Program.lookup` takes the leftmost of a repeated name, so without this a second declaration of a
+name already used is dead: `Program.check` still checks it, but nothing can call it.  Soundness does
+not need this — a lookup is deterministic either way — but `Program.lookup_self` does, and so does
+reading a program as "these declarations" rather than "these declarations, some of them shadowed". -/
+@[expose] public def Program.NamesUnique (p : Program) : Prop := (p.decls.map Decl.name).Nodup
+
+public instance (p : Program) : Decidable p.NamesUnique :=
+  inferInstanceAs (Decidable (p.decls.map Decl.name).Nodup)
+
+/-- With no repeated names, every declaration in the program is the one its own name resolves to.
+
+This is what turns "`d` is one of `p`'s declarations" into "`d` is callable", which is what carrying
+soundness from `Program.WellTyped` to a particular declaration needs. -/
+public theorem Program.lookup_self {p : Program} (hu : p.NamesUnique) {d : Decl}
+    (hd : d ∈ p.decls) : p.lookup d.name = some d :=
+  Globals.lookup_ofDecls_self hu hd
+
+/-- Everything a well-typed program declares is well typed under it. -/
+public theorem Program.wellTyped_decl {p : Program} (hp : p.WellTyped) (hu : p.NamesUnique)
+    {d : Decl} (hd : d ∈ p.decls) : d.WellTyped p.globals :=
+  hp d.name d (Program.lookup_self hu hd)
 
 section Tests
 
@@ -307,12 +483,12 @@ private def addPred : Decl where
   resultType := .int
 
 -- A declaration checks when its body agrees with the result type it declares.
-#guard addPred.check
-#guard !({ addPred with resultType := .list .int } : Decl).check
+#guard addPred.check []
+#guard !({ addPred with resultType := .list .int } : Decl).check []
 
 -- The parameter list is all the body has to work with, and it is checked at the types it gives.
-#guard !({ addPred with parameters := [("x", .int)] } : Decl).check
-#guard !({ addPred with parameters := [("x", .int), ("y", .list .int)] } : Decl).check
+#guard !({ addPred with parameters := [("x", .int)] } : Decl).check []
+#guard !({ addPred with parameters := [("x", .int), ("y", .list .int)] } : Decl).check []
 
 /-- `fun (s : string) => ["!", s]` -/
 private def bang : Decl where
@@ -322,9 +498,9 @@ private def bang : Decl where
   body := .lcons (.stringLit "!") (.lcons (.varRef "s") (.lnil .string))
   resultType := .list .string
 
-#guard bang.check
-#guard !({ bang with resultType := .list .int } : Decl).check
-#guard !({ bang with parameters := [("s", .int)] } : Decl).check
+#guard bang.check []
+#guard !({ bang with resultType := .list .int } : Decl).check []
+#guard !({ bang with parameters := [("s", .int)] } : Decl).check []
 
 /-- `fun (g : (int) -> int) (x : int) => g(x)` -/
 private def applyTo : Decl where
@@ -335,10 +511,10 @@ private def applyTo : Decl where
   resultType := .int
 
 -- A parameter of function type is callable, at the arity and types its type gives.
-#guard applyTo.check
-#guard !({ applyTo with parameters := [("g", .fn [.string] .int), ("x", .int)] } : Decl).check
-#guard !({ applyTo with parameters := [("g", .fn [.int, .int] .int), ("x", .int)] } : Decl).check
-#guard !({ applyTo with resultType := .string } : Decl).check
+#guard applyTo.check []
+#guard !({ applyTo with parameters := [("g", .fn [.string] .int), ("x", .int)] } : Decl).check []
+#guard !({ applyTo with parameters := [("g", .fn [.int, .int] .int), ("x", .int)] } : Decl).check []
+#guard !({ applyTo with resultType := .string } : Decl).check []
 
 /-- `fun (n : int) => fun (m : int) => n + m` -/
 private def adder : Decl where
@@ -349,8 +525,8 @@ private def adder : Decl where
   resultType := .fn [.int] .int
 
 -- A declaration can return a function, and its result type is checked like any other.
-#guard adder.check
-#guard !({ adder with resultType := .int } : Decl).check
-#guard !({ adder with resultType := .fn [.string] .int } : Decl).check
+#guard adder.check []
+#guard !({ adder with resultType := .int } : Decl).check []
+#guard !({ adder with resultType := .fn [.string] .int } : Decl).check []
 
 end Tests

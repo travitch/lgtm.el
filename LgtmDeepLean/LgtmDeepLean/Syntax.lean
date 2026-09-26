@@ -236,7 +236,7 @@ example : addPred =
       resultType := .int } := rfl
 
 -- And what it builds type checks, which is the point of writing it this way.
-#guard addPred.check
+#guard addPred.check []
 
 /-- Put `s` after an exclamation mark. -/
 lgtm def bang (s : string) : list string :=
@@ -244,39 +244,39 @@ lgtm def bang (s : string) : list string :=
 
 -- With no `as`, the IR name is the Lean name.
 example : bang.name = "bang" := rfl
-#guard bang.check
+#guard bang.check []
 
 lgtm def applyTo as "apply-to" (g : (int) -> int) (x : int) : int :=
   g(x)
 
-#guard applyTo.check
+#guard applyTo.check []
 
 /-- Build a function that adds `n` to its argument. -/
 lgtm def adder (n : int) : (int) -> int :=
   fun (m : int) => n + m
 
-#guard adder.check
+#guard adder.check []
 
 /-- Reverse `xs` with `x` on the front. -/
 lgtm def revCons as "rev-cons" (x : int) (xs : list int) : list int :=
   reverse (x :: xs)
 
-#guard revCons.check
+#guard revCons.check []
 
 -- A declaration with no parameters is fine, and so is one that returns a function.
 lgtm def three : int := 3
-#guard three.check
+#guard three.check []
 
 -- `lgtm private def` makes the Lean declaration private; the `Decl` it builds is the same.
 /-- One more than `x`. -/
 lgtm private def succ as "succ-one" (x : int) : int := x + 1
 example : succ.name = "succ-one" := rfl
 example : succ.docstring = "One more than `x`." := rfl
-#guard succ.check
+#guard succ.check []
 
 -- The DSL builds ill-typed programs as readily as well-typed ones; checking is still what rejects
 -- them.
-#guard !({ three with body := [lgtm| 1 + "a"] } : Decl).check
-#guard !({ revCons with body := [lgtm| reverse x] } : Decl).check
+#guard !({ three with body := [lgtm| 1 + "a"] } : Decl).check []
+#guard !({ revCons with body := [lgtm| reverse x] } : Decl).check []
 
 end Tests
