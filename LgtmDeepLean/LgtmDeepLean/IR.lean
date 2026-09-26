@@ -8,8 +8,8 @@ public inductive Ty where
 | fn : List Ty → Ty → Ty
   deriving Repr
 
-/-! `Ty` is a nested inductive — `fn` holds a `List Ty` — which the `DecidableEq` deriving handler
-does not cover, so equality is written out by hand.  The recursion is mutual with a version over
+/-! `Ty` is a nested inductive because `fn` holds a `List Ty`.  The `DecidableEq` deriving handler
+cannot handle this, so we write out equality by hand.  The recursion is mutual with a version over
 lists of types, which is how `Ty.rec` offers the nesting: one motive for `Ty`, one for `List Ty`. -/
 
 mutual
@@ -44,29 +44,11 @@ public theorem Ty.beqList_iff_eq : ∀ (as bs : List Ty), Ty.beqList as bs = tru
 
 end
 
-/-- `==` on types is equality, which is what lets the type checker's comparisons be read as the
-equations the proofs about it are stated with. -/
 public instance : LawfulBEq Ty where
   eq_of_beq h := (Ty.beq_iff_eq _ _).mp h
   rfl := (Ty.beq_iff_eq _ _).mpr rfl
 
 public instance : DecidableEq Ty := fun a b => decidable_of_iff _ (Ty.beq_iff_eq a b)
-
-mutual
-
-/-- A function's parameters are taken all at once, but Lean's are not, so an n-ary function type
-denotes the curried Lean type. -/
-public def Ty.denote : Ty → Type
-  | .int => Int
-  | .string => String
-  | .list t => List t.denote
-  | .fn args res => Ty.denoteFn args res.denote
-
-public def Ty.denoteFn : List Ty → Type → Type
-  | [], res => res
-  | a :: as, res => a.denote → Ty.denoteFn as res
-
-end
 
 public inductive Expression where
 | varRef : String → Expression
