@@ -6,3 +6,4 @@ public import LgtmDeepLean.Eval
 public import LgtmDeepLean.IR
 public import LgtmDeepLean.Syntax
 public import LgtmDeepLean.TypeCheck
+public import LgtmDeepLean.Value
