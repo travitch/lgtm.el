@@ -4,10 +4,7 @@ public inductive Ty where
 | int
 | string
 | list : Ty → Ty
-/-- A function from the types of its parameters to the type of its result.
-
-Parameters are taken all at once, as in `Decl`: a function of two `int`s is `.fn [.int, .int] _`
-rather than a function returning a function, so there is no partial application to give a type to. -/
+/-- A function from the types of its parameters to the type of its result. -/
 | fn : List Ty → Ty → Ty
   deriving Repr
 
