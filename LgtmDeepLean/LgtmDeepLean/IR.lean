@@ -51,6 +51,11 @@ public instance : LawfulBEq Ty where
 public instance : DecidableEq Ty := fun a b => decidable_of_iff _ (Ty.beq_iff_eq a b)
 
 public inductive Expression where
+/-- A function, annotated with the name and type of each of its parameters -/
+| lam : List (String × Ty) → Expression → Expression
+/-- Apply a function to all of its arguments at once -/
+| app : Expression → List Expression → Expression
+/-- A variable reference. -/
 | varRef : String → Expression
 | intLit : Int → Expression
 | plus : Expression → Expression → Expression
@@ -59,10 +64,7 @@ public inductive Expression where
 /-- The empty list annotated with its element type -/
 | lnil : Ty → Expression
 | lcons : Expression → Expression → Expression
-/-- A function, annotated with the name and type of each of its parameters -/
-| lam : List (String × Ty) → Expression → Expression
-/-- Apply a function to all of its arguments at once -/
-| app : Expression → List Expression → Expression
+| listReverse : Expression → Expression
 
 public structure Decl where
   docstring : String

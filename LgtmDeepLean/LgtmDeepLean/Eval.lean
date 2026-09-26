@@ -117,13 +117,6 @@ public theorem Env.hasType_zip {ps : Context} {args : List Value}
 /-- `env` is an index rather than a parameter because `EApp` evaluates a body in the environment its
 closure captured, not in the one the call was made from. -/
 public inductive Eval : Env → Expression → Value → Prop where
-| EVarRef (x : String) : env.lookup x = some v → Eval env (.varRef x) v
-| EIntLit (i : Int) : Eval env (.intLit i) (.int i)
-| EPlus (e₁ : Expression) (e₂ : Expression) : Eval env e₁ (.int n₁) → Eval env e₂ (.int n₂) → Eval env (.plus e₁ e₂) (.int (n₁ + n₂))
-| EMinus (e₁ : Expression) (e₂ : Expression) : Eval env e₁ (.int n₁) → Eval env e₂ (.int n₂) → Eval env (.minus e₁ e₂) (.int (n₁ - n₂))
-| EStringLit (s : String) : Eval env (.stringLit s) (.string s)
-| ENil (ty : Ty) : Eval env (.lnil ty) (.list [])
-| ECons (e₁ : Expression) (e₂ : Expression) : Eval env e₁ v → Eval env e₂ (.list vs) → Eval env (.lcons e₁ e₂) (.list (v :: vs))
 /-- A `lam` evaluates to itself plus the environment it was reached in; nothing in its body runs
 until it is applied. -/
 | ELam (ps : List (String × Ty)) (body : Expression) : Eval env (.lam ps body) (.closure env ps body)
@@ -143,6 +136,15 @@ junk, and it pins the arity that `Env.extend` needs. -/
     ArgsHaveType ps vs →
     Eval (Env.extend cenv ps vs) body v →
     Eval env (.app f args) v
+| EVarRef (x : String) : env.lookup x = some v → Eval env (.varRef x) v
+| EIntLit (i : Int) : Eval env (.intLit i) (.int i)
+| EPlus (e₁ : Expression) (e₂ : Expression) : Eval env e₁ (.int n₁) → Eval env e₂ (.int n₂) → Eval env (.plus e₁ e₂) (.int (n₁ + n₂))
+| EMinus (e₁ : Expression) (e₂ : Expression) : Eval env e₁ (.int n₁) → Eval env e₂ (.int n₂) → Eval env (.minus e₁ e₂) (.int (n₁ - n₂))
+| EStringLit (s : String) : Eval env (.stringLit s) (.string s)
+| ENil (ty : Ty) : Eval env (.lnil ty) (.list [])
+| ECons (e₁ : Expression) (e₂ : Expression) : Eval env e₁ v → Eval env e₂ (.list vs) → Eval env (.lcons e₁ e₂) (.list (v :: vs))
+| EListReverse (e : Expression) : Eval env e (.list vs) → Eval env (.listReverse e) (.list vs.reverse)
+
 
 /-- Evaluating a well-typed expression produces a value of its inferred type.
 
@@ -288,6 +290,61 @@ example (v : Value) : ¬ Decl.Apply cons [.int 1, .int 2] v := by
   rintro ⟨-, hargs, -⟩
   cases hargs with
   | cons _ _ hrest => cases hrest with | cons _ hv _ => cases hv
+
+/-- `fun (x : int) (xs : list int) => reverse(x :: xs)` -/
+private def revCons : Decl where
+  docstring := "Reverse `xs` with `x` on the front."
+  name := "rev-cons"
+  parameters := [("x", .int), ("xs", .list .int)]
+  body := .listReverse (.lcons (.varRef "x") (.varRef "xs"))
+  resultType := .list .int
+
+/-- A list of `int`s is homogeneous at `.list .int`, whatever its length. -/
+private theorem hasType_intList {is : List Int} :
+    Value.HasType (.list (is.map .int)) (.list .int) :=
+  .list (by simpa using fun i (_ : i ∈ is) => Value.HasType.int i)
+
+-- `EListReverse` runs on the list `ECons` has just built, so the element pushed on the front comes
+-- back last.
+example : Decl.Apply revCons [.int 1, .list [.int 2, .int 3]] (.list [.int 3, .int 2, .int 1]) :=
+  .EApply _ (.cons "x" (.int 1) (.cons "xs" (hasType_intList (is := [2, 3])) .nil))
+    (.EListReverse (vs := [.int 1, .int 2, .int 3]) _
+      (.ECons _ _ (.EVarRef "x" rfl) (.EVarRef "xs" rfl)))
+
+-- Reversing preserves the element type, so soundness gives the declared result type back with no
+-- reasoning about this particular list.
+example (v : Value) (h : Decl.Apply revCons [.int 1, .list [.int 2, .int 3]] v) :
+    v.HasType (.list .int) :=
+  h.hasType (by simp [revCons, List.lookup])
+
+-- Only a list can be reversed, so a body reversing one of the `int` parameters does not check.
+example : ¬ ({ revCons with body := .listReverse (.varRef "x") } : Decl).WellTyped := by
+  simp [revCons, List.lookup]
+
+/-- `fun (xs : list int) => reverse(reverse(xs))` -/
+private def reverseTwice : Decl where
+  docstring := "Reverse `xs` twice, which gives `xs` back."
+  name := "reverse-twice"
+  parameters := [("xs", .list .int)]
+  body := .listReverse (.listReverse (.varRef "xs"))
+  resultType := .list .int
+
+/-- Reversing twice is the identity.
+
+Inverting the two `EListReverse` steps down to the `EVarRef` that read `xs` leaves exactly
+`List.reverse_reverse`, so this is a property of the program proved from the evaluator rather than
+from any one input. -/
+private theorem reverseTwice.eq_self {vs : List Value} {res : Value}
+    (h : Decl.Apply reverseTwice [.list vs] res) : res = .list vs := by
+  obtain ⟨-, -, hbody⟩ := h
+  cases hbody with
+  | EListReverse _ h₁ =>
+    cases h₁ with
+    | EListReverse _ h₂ =>
+      cases h₂ with
+      | EVarRef _ hlx =>
+        simp [reverseTwice, Decl.callEnv] at hlx
+        grind
 
 /-- The body of the inner lambda of `adderExpr`, `x + n`, which needs an `n` from outside itself. -/
 private def adderInner : Expression := .plus (.varRef "x") (.varRef "n")

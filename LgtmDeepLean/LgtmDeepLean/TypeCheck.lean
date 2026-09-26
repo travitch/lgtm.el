@@ -14,6 +14,13 @@ Every form determines its own type: `lnil` carries the element type of the empty
 `lam` carries the types of its parameters, so inference never has to guess and needs no expected
 type to work from.  `Expression.check` is therefore just this function plus a comparison. -/
 public def Expression.infer (ctx : Context) : Expression → Option Ty
+  | .lam ps body => do
+    let r ← body.infer (ps ++ ctx)
+    some (.fn (ps.map Prod.snd) r)
+  | .app f args =>
+    match f.infer ctx with
+    | some (.fn ps r) => if Expression.inferList ctx args == some ps then some r else none
+    | _ => none
   | .varRef x => ctx.lookup x
   | .intLit _ => some .int
   | .plus l r | .minus l r =>
@@ -24,12 +31,9 @@ public def Expression.infer (ctx : Context) : Expression → Option Ty
     let t ← hd.infer ctx
     guard (tl.infer ctx == some (.list t))
     some (.list t)
-  | .lam ps body => do
-    let r ← body.infer (ps ++ ctx)
-    some (.fn (ps.map Prod.snd) r)
-  | .app f args =>
-    match f.infer ctx with
-    | some (.fn ps r) => if Expression.inferList ctx args == some ps then some r else none
+  | .listReverse l =>
+    match l.infer ctx with
+    | some (.list t) => some (.list t)
     | _ => none
 
 /-- Infer the types of `es`, in order, or `none` if any one of them is ill typed.
@@ -91,6 +95,18 @@ and then *required* of the tail, so one `Ty` covers every element. -/
       ∃ t', hd.infer ctx = some t' ∧ tl.infer ctx = some (.list t') ∧ t = .list t' := by
   simp [Expression.infer, Option.bind_eq_some_iff, guard]
   grind
+
+/-- A `listReverse` is typeable exactly when its operand is a list, and then it has that same list
+type.
+
+Reversing preserves both the length and the element type, so the operand's type is also the
+result's: unlike `lcons`, this form introduces no new type structure. -/
+@[simp, grind =] public theorem Expression.infer_listReverse_eq_some {ctx : Context}
+    {l : Expression} {t : Ty} :
+    (Expression.listReverse l).infer ctx = some t ↔
+      ∃ t', l.infer ctx = some (.list t') ∧ t = .list t' := by
+  simp only [Expression.infer]
+  split <;> grind
 
 /-- A `lam` is typeable exactly when its body is, under its parameters extended with the enclosing
 context, and then it is a function from the parameters' types to the body's.
@@ -204,6 +220,26 @@ private def ctx : Context :=
 -- A list of empty lists needs no expected type to be inferred, only agreeing annotations.
 #guard (Expression.lcons (.lnil .int) (.lnil (.list .int))).infer ctx == some (.list (.list .int))
 #guard (Expression.lcons (.lnil .int) (.lnil .int)).infer ctx == none
+
+-- Reversing a list keeps its type, whatever the element type is.
+#guard (Expression.listReverse (.varRef "xs")).infer ctx == some (.list .int)
+#guard (Expression.listReverse (.lnil .string)).infer ctx == some (.list .string)
+#guard (Expression.listReverse (.lcons (.intLit 1) (.lnil .int))).infer ctx == some (.list .int)
+#guard (Expression.listReverse (.lnil (.list .int))).infer ctx == some (.list (.list .int))
+
+-- Only a list can be reversed, so a non-list operand is ill typed rather than passed through.
+#guard (Expression.listReverse (.intLit 1)).infer ctx == none
+#guard (Expression.listReverse (.stringLit "a")).infer ctx == none
+#guard (Expression.listReverse (.varRef "n")).infer ctx == none
+#guard (Expression.listReverse (.varRef "f")).infer ctx == none
+
+-- An ill-typed operand makes the whole reversal ill typed.
+#guard (Expression.listReverse (.varRef "nope")).infer ctx == none
+#guard (Expression.listReverse (.lcons (.intLit 1) (.lnil .string))).infer ctx == none
+
+-- Reversals nest, since each one gives back a list.
+#guard (Expression.listReverse (.listReverse (.varRef "xs"))).infer ctx == some (.list .int)
+#guard (Expression.listReverse (.listReverse (.intLit 1))).infer ctx == none
 
 -- A `lam` takes its parameter types from its annotation and its result type from its body.
 #guard (Expression.lam [("x", .int)] (.varRef "x")).infer ctx == some (.fn [.int] .int)
