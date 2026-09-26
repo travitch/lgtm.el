@@ -2,9 +2,9 @@ module
 
 public import LgtmDeepLean.IR
 public import LgtmDeepLean.TypeCheck
--- The `Tests` section below writes its programs in the surface syntax; nothing above it depends on
--- this import.
 import LgtmDeepLean.Syntax
+
+mutual
 
 public inductive Value where
 | int : Int → Value
@@ -13,11 +13,39 @@ public inductive Value where
 /-- A function together with the environment it was written in.
 
 The parameters are annotated the way `lam` annotates them, so a closure carries everything needed
-to say what type it has.  Spelled `List (String × Value)` rather than `Env` only because `Env` is
-this type's own abbreviation and cannot be named yet. -/
-| closure : List (String × Value) → List (String × Ty) → Expression → Value
+to say what type it has. -/
+| closure : Env → List (String × Ty) → Expression → Value
 
-public abbrev Env := List (String × Value)
+/-- What a name is bound to while an expression runs.
+
+A structure with one field rather than the association list itself, so that an environment can
+grow to carry more than its bindings without every use site having to change.  It is mutual with
+`Value` because a closure captures one.
+
+`bindings` is ordered: `Env.lookup` reads the first binding of a name, so pushing onto the front
+shadows what was there. -/
+public structure Env where
+  bindings : List (String × Value)
+
+end
+
+/-- The value `x` is bound to, or `none` when it is unbound. -/
+@[expose] public def Env.lookup (env : Env) (x : String) : Option Value := env.bindings.lookup x
+
+/-- The environment binding nothing. -/
+public instance : EmptyCollection Env := ⟨⟨[]⟩⟩
+
+/-! Being declared in a `mutual` block costs `Env` the definitional eta and projection reduction a
+plain structure would have, so the three steps every proof below takes through `Env.mk` —
+projecting out of it, looking up in it, and rebuilding it — have to be lemmas. -/
+
+@[simp] public theorem Env.bindings_empty : (∅ : Env).bindings = [] := by
+  simp [EmptyCollection.emptyCollection]
+
+@[simp] public theorem Env.lookup_mk (bs : List (String × Value)) (x : String) :
+    (Env.mk bs).lookup x = bs.lookup x := by simp [Env.lookup]
+
+@[simp] public theorem Env.mk_bindings (env : Env) : Env.mk env.bindings = env := by cases env; rfl
 
 /-- The `Ty` a value's representation agrees with.
 
@@ -77,7 +105,7 @@ whatever it captured was enough to type its body. -/
 `List.zip` stops at the shorter list, so this only describes a call once the two are known to be the
 same length; `ArgsHaveType` is what supplies that. -/
 public def Env.extend (env : Env) (ps : Context) (vs : List Value) : Env :=
-  (ps.map Prod.fst).zip vs ++ env
+  ⟨(ps.map Prod.fst).zip vs ++ env.bindings⟩
 
 /-- `ArgsHaveType ps args`: `args` are values a function with parameters `ps` can be called with,
 one argument per parameter and each of the type its parameter declares.
@@ -101,7 +129,7 @@ public theorem Env.hasType_extend {ps : Context} {vs : List Value} {env : Env} {
   | nil => simpa [Env.extend] using henv
   | cons _ hv _ ih =>
       intro x t hx
-      simp only [Env.extend, List.map_cons, List.zip_cons_cons, List.cons_append,
+      simp only [Env.extend, Env.lookup_mk, List.map_cons, List.zip_cons_cons, List.cons_append,
         List.lookup_cons] at hx ⊢
       split at hx
       · exact ⟨_, rfl, by grind⟩
@@ -113,8 +141,8 @@ describes.
 `Decl.parameters` is a `Context`, so this is what lets a call use it as one: the types the
 body was written against and the types the arguments arrive with are the same list. -/
 public theorem Env.hasType_zip {ps : Context} {args : List Value}
-    (h : ArgsHaveType ps args) : Env.HasType ((ps.map Prod.fst).zip args) ps := by
-  have hnil : Env.HasType [] [] := by intro x t hx; simp at hx
+    (h : ArgsHaveType ps args) : Env.HasType ⟨(ps.map Prod.fst).zip args⟩ ps := by
+  have hnil : Env.HasType ∅ [] := by intro x t hx; simp at hx
   simpa [Env.extend] using Env.hasType_extend h hnil
 
 /-- `env` is an index rather than a parameter because `EApp` evaluates a body in the environment its
@@ -188,10 +216,10 @@ public theorem Eval.hasType {env : Env} {ctx : Context} {e : Expression} {v : Va
 /-- The environment a call to `d` evaluates its body in: each parameter name bound to its
 argument, and nothing else.
 
-`List.lookup` reads the first binding of a name, so a parameter repeated in `d.parameters` takes
+`Env.lookup` reads the first binding of a name, so a parameter repeated in `d.parameters` takes
 the argument of its leftmost occurrence. -/
 public def Decl.callEnv (d : Decl) (args : List Value) : Env :=
-  (d.parameters.map Prod.fst).zip args
+  ⟨(d.parameters.map Prod.fst).zip args⟩
 
 /-- `Apply d args v`: calling `d` with `args` returns `v`.
 
@@ -342,17 +370,17 @@ private def adderExpr : Expression := [lgtm| fun (n : int) => fun (x : int) => ~
 
 /-- The empty environment describes the empty context, which is all these examples need to say
 about their environment. -/
-private theorem hasType_nil : Env.HasType [] [] := by intro x t hx; simp at hx
+private theorem hasType_nil : Env.HasType ∅ [] := by intro x t hx; simp at hx
 
 -- Nothing in a lambda's body runs until it is applied; evaluating one only captures the
 -- environment it was reached in.
-example : Eval [] adderExpr (.closure [] [("n", .int)] [lgtm| fun (x : int) => ~(adderInner)]) :=
+example : Eval ∅ adderExpr (.closure ∅ [("n", .int)] [lgtm| fun (x : int) => ~(adderInner)]) :=
   .ELam _ _
 
 /-- Applying the outer lambda runs its body, which is itself a lambda, so what comes back is a
 closure that has captured `n`. -/
 private theorem eval_adder10 :
-    Eval [] [lgtm| ~(adderExpr)(10)] (.closure [("n", .int 10)] [("x", .int)] adderInner) :=
+    Eval ∅ [lgtm| ~(adderExpr)(10)] (.closure ⟨[("n", .int 10)]⟩ [("x", .int)] adderInner) :=
   .EApp (vs := [.int 10]) _ _ (.ELam _ _) rfl
     (by rintro ⟨e, v⟩ hp; simp at hp; obtain ⟨rfl, rfl⟩ := hp; exact .EIntLit 10)
     (.cons "n" (.int 10) .nil) (.ELam _ _)
@@ -360,7 +388,7 @@ private theorem eval_adder10 :
 -- Applying that closure is what finally runs `x + n`, and it runs in the environment the closure
 -- captured rather than the one the call was made from: `n` is in scope even though the caller's
 -- environment is empty.
-example : Eval [] [lgtm| ~(adderExpr)(10)(1)] (.int 11) :=
+example : Eval ∅ [lgtm| ~(adderExpr)(10)(1)] (.int 11) :=
   .EApp (vs := [.int 1]) _ _ eval_adder10 rfl
     (by rintro ⟨e, v⟩ hp; simp at hp; obtain ⟨rfl, rfl⟩ := hp; exact .EIntLit 1)
     (.cons "x" (.int 1) .nil)
@@ -368,12 +396,12 @@ example : Eval [] [lgtm| ~(adderExpr)(10)(1)] (.int 11) :=
 
 -- Soundness covers the new forms: a value of function type comes back, and which context the
 -- closure captured is the theorem's business rather than the caller's.
-example (v : Value) (h : Eval [] [lgtm| ~(adderExpr)(10)] v) : v.HasType (.fn [.int] .int) :=
+example (v : Value) (h : Eval ∅ [lgtm| ~(adderExpr)(10)] v) : v.HasType (.fn [.int] .int) :=
   h.hasType hasType_nil (by simp [adderExpr, adderInner, List.lookup])
 
 -- A call with the wrong number of arguments is stuck, just as it is for a declaration: the
 -- parameters `ArgsHaveType` walks are the closure's own, so the lengths cannot disagree.
-example (v : Value) : ¬ Eval [] [lgtm| ~(adderExpr)(1, 2)] v := by
+example (v : Value) : ¬ Eval ∅ [lgtm| ~(adderExpr)(1, 2)] v := by
   intro h
   cases h with
   | EApp f args hf hlen hargs hat hbody =>
@@ -384,7 +412,7 @@ example (v : Value) : ¬ Eval [] [lgtm| ~(adderExpr)(1, 2)] v := by
 
 -- An argument of the wrong type is stuck too, so a closure cannot be entered with arguments its
 -- parameters do not describe.
-example (v : Value) : ¬ Eval [] [lgtm| ~(adderExpr)("a")] v := by
+example (v : Value) : ¬ Eval ∅ [lgtm| ~(adderExpr)("a")] v := by
   intro h
   cases h with
   | EApp f args hf hlen hargs hat hbody =>
