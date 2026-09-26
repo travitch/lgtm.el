@@ -2,6 +2,9 @@ module
 
 public import LgtmDeepLean.IR
 public import LgtmDeepLean.TypeCheck
+-- The `Tests` section below writes its programs in the surface syntax; nothing above it depends on
+-- this import.
+import LgtmDeepLean.Syntax
 
 public inductive Value where
 | int : Int → Value
@@ -215,13 +218,9 @@ public theorem Decl.Apply.hasType {d : Decl} {args : List Value} {v : Value}
 
 section Tests
 
-/-- `fun (x : int) (y : int) => x + (y - 1)` -/
-private def addPred : Decl where
-  docstring := "Add `x` to one less than `y`."
-  name := "add-pred"
-  parameters := [("x", .int), ("y", .int)]
-  body := .plus (.varRef "x") (.minus (.varRef "y") (.intLit 1))
-  resultType := .int
+/-- Add `x` to one less than `y`. -/
+lgtm private def addPred as "add-pred" (x : int) (y : int) : int :=
+  x + (y - 1)
 
 -- This is a simple proof demonstrating how proofs work through the
 -- relational evaluator
@@ -268,13 +267,9 @@ example (v : Value) : ¬ Decl.Apply addPred [.int 2, .int 5, .int 8] v := by
   cases hargs with
   | cons _ _ hrest => cases hrest with | cons _ _ hrest => cases hrest
 
-/-- `fun (x : int) (xs : list int) => x :: xs` -/
-private def cons : Decl where
-  docstring := "Put `x` on the front of `xs`."
-  name := "cons"
-  parameters := [("x", .int), ("xs", .list .int)]
-  body := .lcons (.varRef "x") (.varRef "xs")
-  resultType := .list .int
+/-- Put `x` on the front of `xs`. -/
+lgtm private def cons (x : int) (xs : list int) : list int :=
+  x :: xs
 
 /-- A one-element list is homogeneous for the reason its only element is. -/
 private theorem hasType_singleton {v : Value} {t : Ty} (h : v.HasType t) :
@@ -291,13 +286,9 @@ example (v : Value) : ¬ Decl.Apply cons [.int 1, .int 2] v := by
   cases hargs with
   | cons _ _ hrest => cases hrest with | cons _ hv _ => cases hv
 
-/-- `fun (x : int) (xs : list int) => reverse(x :: xs)` -/
-private def revCons : Decl where
-  docstring := "Reverse `xs` with `x` on the front."
-  name := "rev-cons"
-  parameters := [("x", .int), ("xs", .list .int)]
-  body := .listReverse (.lcons (.varRef "x") (.varRef "xs"))
-  resultType := .list .int
+/-- Reverse `xs` with `x` on the front. -/
+lgtm private def revCons as "rev-cons" (x : int) (xs : list int) : list int :=
+  reverse (x :: xs)
 
 /-- A list of `int`s is homogeneous at `.list .int`, whatever its length. -/
 private theorem hasType_intList {is : List Int} :
@@ -318,16 +309,12 @@ example (v : Value) (h : Decl.Apply revCons [.int 1, .list [.int 2, .int 3]] v) 
   h.hasType (by simp [revCons, List.lookup])
 
 -- Only a list can be reversed, so a body reversing one of the `int` parameters does not check.
-example : ¬ ({ revCons with body := .listReverse (.varRef "x") } : Decl).WellTyped := by
+example : ¬ ({ revCons with body := [lgtm| reverse x] } : Decl).WellTyped := by
   simp [revCons, List.lookup]
 
-/-- `fun (xs : list int) => reverse(reverse(xs))` -/
-private def reverseTwice : Decl where
-  docstring := "Reverse `xs` twice, which gives `xs` back."
-  name := "reverse-twice"
-  parameters := [("xs", .list .int)]
-  body := .listReverse (.listReverse (.varRef "xs"))
-  resultType := .list .int
+/-- Reverse `xs` twice, which gives `xs` back. -/
+lgtm private def reverseTwice as "reverse-twice" (xs : list int) : list int :=
+  reverse (reverse xs)
 
 /-- Reversing twice is the identity.
 
@@ -347,10 +334,11 @@ private theorem reverseTwice.eq_self {vs : List Value} {res : Value}
         grind
 
 /-- The body of the inner lambda of `adderExpr`, `x + n`, which needs an `n` from outside itself. -/
-private def adderInner : Expression := .plus (.varRef "x") (.varRef "n")
+private def adderInner : Expression := [lgtm| x + n]
 
-/-- `fun (n : int) => fun (x : int) => x + n`: a function that builds a function. -/
-private def adderExpr : Expression := .lam [("n", .int)] (.lam [("x", .int)] adderInner)
+/-- A function that builds a function.  Spliced together from `adderInner` rather than written out
+so that the two are the same term, which the closures below are stated in terms of. -/
+private def adderExpr : Expression := [lgtm| fun (n : int) => fun (x : int) => ~(adderInner)]
 
 /-- The empty environment describes the empty context, which is all these examples need to say
 about their environment. -/
@@ -358,13 +346,13 @@ private theorem hasType_nil : Env.HasType [] [] := by intro x t hx; simp at hx
 
 -- Nothing in a lambda's body runs until it is applied; evaluating one only captures the
 -- environment it was reached in.
-example : Eval [] adderExpr (.closure [] [("n", .int)] (.lam [("x", .int)] adderInner)) :=
+example : Eval [] adderExpr (.closure [] [("n", .int)] [lgtm| fun (x : int) => ~(adderInner)]) :=
   .ELam _ _
 
 /-- Applying the outer lambda runs its body, which is itself a lambda, so what comes back is a
 closure that has captured `n`. -/
 private theorem eval_adder10 :
-    Eval [] (.app adderExpr [.intLit 10]) (.closure [("n", .int 10)] [("x", .int)] adderInner) :=
+    Eval [] [lgtm| ~(adderExpr)(10)] (.closure [("n", .int 10)] [("x", .int)] adderInner) :=
   .EApp (vs := [.int 10]) _ _ (.ELam _ _) rfl
     (by rintro ⟨e, v⟩ hp; simp at hp; obtain ⟨rfl, rfl⟩ := hp; exact .EIntLit 10)
     (.cons "n" (.int 10) .nil) (.ELam _ _)
@@ -372,7 +360,7 @@ private theorem eval_adder10 :
 -- Applying that closure is what finally runs `x + n`, and it runs in the environment the closure
 -- captured rather than the one the call was made from: `n` is in scope even though the caller's
 -- environment is empty.
-example : Eval [] (.app (.app adderExpr [.intLit 10]) [.intLit 1]) (.int 11) :=
+example : Eval [] [lgtm| ~(adderExpr)(10)(1)] (.int 11) :=
   .EApp (vs := [.int 1]) _ _ eval_adder10 rfl
     (by rintro ⟨e, v⟩ hp; simp at hp; obtain ⟨rfl, rfl⟩ := hp; exact .EIntLit 1)
     (.cons "x" (.int 1) .nil)
@@ -380,12 +368,12 @@ example : Eval [] (.app (.app adderExpr [.intLit 10]) [.intLit 1]) (.int 11) :=
 
 -- Soundness covers the new forms: a value of function type comes back, and which context the
 -- closure captured is the theorem's business rather than the caller's.
-example (v : Value) (h : Eval [] (.app adderExpr [.intLit 10]) v) : v.HasType (.fn [.int] .int) :=
+example (v : Value) (h : Eval [] [lgtm| ~(adderExpr)(10)] v) : v.HasType (.fn [.int] .int) :=
   h.hasType hasType_nil (by simp [adderExpr, adderInner, List.lookup])
 
 -- A call with the wrong number of arguments is stuck, just as it is for a declaration: the
 -- parameters `ArgsHaveType` walks are the closure's own, so the lengths cannot disagree.
-example (v : Value) : ¬ Eval [] (.app adderExpr [.intLit 1, .intLit 2]) v := by
+example (v : Value) : ¬ Eval [] [lgtm| ~(adderExpr)(1, 2)] v := by
   intro h
   cases h with
   | EApp f args hf hlen hargs hat hbody =>
@@ -396,7 +384,7 @@ example (v : Value) : ¬ Eval [] (.app adderExpr [.intLit 1, .intLit 2]) v := by
 
 -- An argument of the wrong type is stuck too, so a closure cannot be entered with arguments its
 -- parameters do not describe.
-example (v : Value) : ¬ Eval [] (.app adderExpr [.stringLit "a"]) v := by
+example (v : Value) : ¬ Eval [] [lgtm| ~(adderExpr)("a")] v := by
   intro h
   cases h with
   | EApp f args hf hlen hargs hat hbody =>
@@ -408,13 +396,9 @@ example (v : Value) : ¬ Eval [] (.app adderExpr [.stringLit "a"]) v := by
           cases hargs _ (List.mem_cons_self ..)
           cases hv
 
-/-- `fun (n : int) => fun (m : int) => n + m` -/
-private def adder : Decl where
-  docstring := "Build a function that adds `n` to its argument."
-  name := "adder"
-  parameters := [("n", .int)]
-  body := .lam [("m", .int)] (.plus (.varRef "n") (.varRef "m"))
-  resultType := .fn [.int] .int
+/-- Build a function that adds `n` to its argument. -/
+lgtm private def adder (n : int) : (int) -> int :=
+  fun (m : int) => n + m
 
 -- A declaration can return a function, and `Decl.Apply.hasType` covers that result type like any
 -- other: what comes back is a closure, and the theorem says it is one of the declared type.
