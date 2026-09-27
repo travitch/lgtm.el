@@ -29,6 +29,14 @@ is the way to build one of these from an environment, and `Env.HasType` is what 
 belong together. -/
 | closure : List (String × Value) → Globals → List (String × Ty) → Expression → Value
 
+/-- The values of the variables in scope, innermost binding first.
+
+This could be thought of as the `Value`-level counterpart of `Context`.
+
+It cannot be used in `Value.closure`, which is where the first such list appears: an abbreviation
+mentioning `Value` has to come after it to avoid a `mutual` group that makes proofs more difficult. -/
+public abbrev Bindings := List (String × Value)
+
 /-- What a name is bound to while an expression runs: the local bindings, innermost first, over the
 globals every expression can see.
 
@@ -40,7 +48,7 @@ of values would have to contain, for each global function, a closure that had ca
 a value that is its own descendant, which no inductive type has.  Resolving a global's name to its
 closure is deferred to `Env.lookup` instead, where the table is to hand. -/
 public structure Env where
-  bindings : List (String × Value)
+  bindings : Bindings
   globals : Globals
 
 /-- The closure a `lam` reached in `env` evaluates to: the two halves of `env`, kept apart the way
@@ -121,7 +129,7 @@ public inductive Value.HasType : Value → Ty → Prop where
 | int (i : Int) : HasType (.int i) .int
 | string (s : String) : HasType (.string s) .string
 | list {vs : List Value} {t : Ty} : (∀ v ∈ vs, HasType v t) → HasType (.list vs) (.list t)
-| closure {cbindings : List (String × Value)} {cglobals : Globals} {ps : Context}
+| closure {cbindings : Bindings} {cglobals : Globals} {ps : Context}
     {body : Expression} {cctx : Context} {r : Ty} :
     Globals.WellTyped cglobals →
     (∀ x, (cctx.lookup x).isSome → (cbindings.lookup x).isSome) →
@@ -155,7 +163,7 @@ whatever it captured was enough to type its body.
 
 The two halves the closure stores are put back together here as the `Env` they came from, which is
 what lets `Eval.hasType` hand `Env.HasType` straight to the induction hypothesis for the body. -/
-@[simp] public theorem Value.hasType_closure_iff {cbindings : List (String × Value)}
+@[simp] public theorem Value.hasType_closure_iff {cbindings : Bindings}
     {cglobals : Globals} {ps : Context} {body : Expression} {t : Ty} :
     Value.HasType (.closure cbindings cglobals ps body) t ↔
       ∃ cctx r, Env.HasType ⟨cbindings, cglobals⟩ cctx
