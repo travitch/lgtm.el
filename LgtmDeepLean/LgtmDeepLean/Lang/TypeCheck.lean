@@ -298,7 +298,7 @@ result's: unlike `lcons`, this form introduces no new type structure. -/
 context, and then it is a function from the parameters' types to the body's.
 
 Parameters go on the front of the context, so they shadow same-named bindings from outside, and — as
-in `Decl.callEnv` — a name repeated in the parameter list refers to its leftmost occurrence. -/
+in `FuncDecl.callEnv` — a name repeated in the parameter list refers to its leftmost occurrence. -/
 @[simp, grind =] public theorem Expression.infer_lam_eq_some {td : TypeDecls} {ctx : Context}
     {ps : List (String × Ty)} {body : Expression} {t : Ty} :
     (Expression.lam ps body).infer td ctx = some t ↔
@@ -474,17 +474,17 @@ after it; a table of declarations is just syntax, and a body can be checked agai
 listing every entry including its own. -/
 
 /-- The declarations in scope everywhere, each under the name it is referred to by. -/
-public abbrev Globals := List (String × Decl)
+public abbrev Globals := List (String × FuncDecl)
 
 /-- Key each declaration by the name it declares. -/
-@[expose] public def Globals.ofDecls (ds : List Decl) : Globals := ds.map fun d => (d.name, d)
+@[expose] public def Globals.ofDecls (ds : List FuncDecl) : Globals := ds.map fun d => (d.name, d)
 
 /-- The type a declaration has where its name is mentioned: a function from its parameters' types
 to its result type.
 
 A declaration of no parameters gets `.fn [] t` rather than `t`, which is what makes a global
 variable a call. -/
-@[expose] public def Decl.ty (d : Decl) : Ty := .fn (d.parameters.map Prod.snd) d.resultType
+@[expose] public def FuncDecl.ty (d : FuncDecl) : Ty := .fn (d.parameters.map Prod.snd) d.resultType
 
 /-- The context `gs` supplies: every global's name at the type of the declaration stored for it. -/
 public def Globals.types : Globals → Context
@@ -493,13 +493,13 @@ public def Globals.types : Globals → Context
 
 @[simp] public theorem Globals.types_nil : Globals.types [] = [] := by simp [Globals.types]
 
-@[simp] public theorem Globals.types_cons (x : String) (d : Decl) (gs : Globals) :
+@[simp] public theorem Globals.types_cons (x : String) (d : FuncDecl) (gs : Globals) :
     Globals.types ((x, d) :: gs) = (x, d.ty) :: Globals.types gs := by simp [Globals.types]
 
-/-- `Globals.types` is `Decl.ty` under the lookup, which is how a proof gets from the type a name
-was inferred at back to the declaration that gave it. -/
+/-- `Globals.types` is `FuncDecl.ty` under the lookup, which is how a proof gets from the type a
+name was inferred at back to the declaration that gave it. -/
 @[simp, grind =] public theorem Globals.lookup_types {gs : Globals} {x : String} :
-    (Globals.types gs).lookup x = (gs.lookup x).map Decl.ty := by
+    (Globals.types gs).lookup x = (gs.lookup x).map FuncDecl.ty := by
   induction gs with
   | nil => rfl
   | cons p gs ih =>
@@ -511,20 +511,20 @@ parameters over the globals.
 
 The parameters come first, so a parameter shadows a global of the same name.  `Env.lookup` resolves
 a name the same way round, and that agreement is what `Eval.hasType` rests on. -/
-public def Decl.check (d : Decl) (td : TypeDecls) (gs : Globals) : Bool :=
+public def FuncDecl.check (d : FuncDecl) (td : TypeDecls) (gs : Globals) : Bool :=
   d.body.check td (d.parameters ++ Globals.types gs) d.resultType
 
 /-- `d`'s body agrees with the types `d` declares for its parameters and its result, given `td` and
 `gs`. -/
-public def Decl.WellTyped (d : Decl) (td : TypeDecls) (gs : Globals) : Prop :=
+public def FuncDecl.WellTyped (d : FuncDecl) (td : TypeDecls) (gs : Globals) : Prop :=
   d.check td gs = true
 
-/-- `Decl.check`'s body is not visible outside this module, so this is how a proof elsewhere gets
-at what `WellTyped` says: inference on the body finds exactly the declared result type. -/
-@[simp, grind =] public theorem Decl.wellTyped_iff_infer_eq_some {d : Decl} {td : TypeDecls}
+/-- `FuncDecl.check`'s body is not visible outside this module, so this is how a proof elsewhere
+gets at what `WellTyped` says: inference on the body finds exactly the declared result type. -/
+@[simp, grind =] public theorem FuncDecl.wellTyped_iff_infer_eq_some {d : FuncDecl} {td : TypeDecls}
     {gs : Globals} :
     d.WellTyped td gs ↔ d.body.infer td (d.parameters ++ Globals.types gs) = some d.resultType := by
-  simp [Decl.WellTyped, Decl.check, Expression.check]
+  simp [FuncDecl.WellTyped, FuncDecl.check, Expression.check]
 
 /-- Every declaration in `gs` checks, each under a context holding all of them.
 
@@ -544,7 +544,7 @@ public theorem Globals.wellTyped_nil {td : TypeDecls} : Globals.WellTyped td [] 
   intro x d hx; simp at hx
 
 /-- A lookup only ever hands back an entry the table contains. -/
-public theorem Globals.mem_of_lookup {gs : Globals} {x : String} {d : Decl}
+public theorem Globals.mem_of_lookup {gs : Globals} {x : String} {d : FuncDecl}
     (h : gs.lookup x = some d) : (x, d) ∈ gs :=
   List.mem_of_lookup h
 
@@ -553,7 +553,7 @@ public theorem Globals.mem_of_lookup {gs : Globals} {x : String} {d : Decl}
 Stated over membership rather than lookup because that is what a table written out as a literal can
 be discharged against, one entry at a time. -/
 public theorem Globals.wellTyped_of_forall {td : TypeDecls} {gs : Globals}
-    (h : ∀ p ∈ gs, Decl.WellTyped p.2 td gs) : Globals.WellTyped td gs :=
+    (h : ∀ p ∈ gs, FuncDecl.WellTyped p.2 td gs) : Globals.WellTyped td gs :=
   fun x d hx => h (x, d) (Globals.mem_of_lookup hx)
 
 /-- Run the checker over a whole table.  Decides `Globals.WellTyped`, which `#guard` can report on
@@ -568,12 +568,12 @@ public theorem Globals.wellTyped_of_check {td : TypeDecls} {gs : Globals}
 
 @[simp] public theorem Globals.ofDecls_nil : Globals.ofDecls [] = [] := by simp [Globals.ofDecls]
 
-@[simp] public theorem Globals.ofDecls_cons (d : Decl) (ds : List Decl) :
+@[simp] public theorem Globals.ofDecls_cons (d : FuncDecl) (ds : List FuncDecl) :
     Globals.ofDecls (d :: ds) = (d.name, d) :: Globals.ofDecls ds := by simp [Globals.ofDecls]
 
 /-- With no repeated names, `Globals.ofDecls` resolves every declaration to itself. -/
-public theorem Globals.lookup_ofDecls_self {ds : List Decl} (hu : (ds.map Decl.name).Nodup)
-    {d : Decl} (hd : d ∈ ds) : (Globals.ofDecls ds).lookup d.name = some d := by
+public theorem Globals.lookup_ofDecls_self {ds : List FuncDecl} (hu : (ds.map FuncDecl.name).Nodup)
+    {d : FuncDecl} (hd : d ∈ ds) : (Globals.ofDecls ds).lookup d.name = some d := by
   simpa [Globals.ofDecls] using List.lookup_keyed_self hu hd
 
 /-- With no repeated names, `Structs.ofDecls` resolves every structure declaration to itself.  This
@@ -596,7 +596,7 @@ reason `Globals.check` is not — it runs `Expression.infer`, which stays hidden
 /-- The globals table `p` presents to its own bodies: each declaration under the name it declares.
 
 Derived rather than stored, so a declaration can never be filed under a name other than its own. -/
-@[expose] public def Program.globals (p : Program) : Globals := Globals.ofDecls p.decls
+@[expose] public def Program.globals (p : Program) : Globals := Globals.ofDecls p.funcDecls
 
 /-- The struct table `p` presents to its own bodies: each structure type under the name it declares.
 
@@ -612,7 +612,8 @@ added here too and nowhere else. -/
   ss := p.structs
 
 /-- The declaration `x` names in `p`, or `none` if it names nothing. -/
-@[expose] public def Program.lookup (p : Program) (x : String) : Option Decl := p.globals.lookup x
+@[expose] public def Program.lookup (p : Program) (x : String) : Option FuncDecl :=
+  p.globals.lookup x
 
 /-- The structure type `name` names in `p`, or `none` if it names nothing. -/
 @[expose] public def Program.lookupStruct (p : Program) (name : String) : Option StructDecl :=
@@ -635,17 +636,18 @@ public theorem Program.wellTyped_of_check {p : Program} (h : p.check = true) : p
 name already used is dead: `Program.check` still checks it, but nothing can call it.  Soundness does
 not need this — a lookup is deterministic either way — but `Program.lookup_self` does, and so does
 reading a program as "these declarations" rather than "these declarations, some of them shadowed". -/
-@[expose] public def Program.NamesUnique (p : Program) : Prop := (p.decls.map Decl.name).Nodup
+@[expose] public def Program.NamesUnique (p : Program) : Prop :=
+  (p.funcDecls.map FuncDecl.name).Nodup
 
 public instance (p : Program) : Decidable p.NamesUnique :=
-  inferInstanceAs (Decidable (p.decls.map Decl.name).Nodup)
+  inferInstanceAs (Decidable (p.funcDecls.map FuncDecl.name).Nodup)
 
 /-- With no repeated names, every declaration in the program is the one its own name resolves to.
 
 This is what turns "`d` is one of `p`'s declarations" into "`d` is callable", which is what carrying
 soundness from `Program.WellTyped` to a particular declaration needs. -/
-public theorem Program.lookup_self {p : Program} (hu : p.NamesUnique) {d : Decl}
-    (hd : d ∈ p.decls) : p.lookup d.name = some d :=
+public theorem Program.lookup_self {p : Program} (hu : p.NamesUnique) {d : FuncDecl}
+    (hd : d ∈ p.funcDecls) : p.lookup d.name = some d :=
   Globals.lookup_ofDecls_self hu hd
 
 /-- No two structure declarations share a name.
@@ -669,7 +671,7 @@ public theorem Program.lookupStruct_self {p : Program} (hu : p.StructNamesUnique
 
 /-- Everything a well-typed program declares is well typed under it. -/
 public theorem Program.wellTyped_decl {p : Program} (hp : p.WellTyped) (hu : p.NamesUnique)
-    {d : Decl} (hd : d ∈ p.decls) : d.WellTyped p.typeDecls p.globals :=
+    {d : FuncDecl} (hd : d ∈ p.funcDecls) : d.WellTyped p.typeDecls p.globals :=
   hp d.name d (Program.lookup_self hu hd)
 
 section Tests
@@ -851,7 +853,7 @@ private def ctx : Context :=
 #guard !(Expression.lam [("x", .int)] (.varRef "x")).check types ctx .int
 
 /-- `fun (x : int) (y : int) => x + (y - 1)` -/
-private def addPred : Decl where
+private def addPred : FuncDecl where
   docstring := "Add `x` to one less than `y`."
   name := "add-pred"
   parameters := [("x", .int), ("y", .int)]
@@ -860,14 +862,14 @@ private def addPred : Decl where
 
 -- A declaration checks when its body agrees with the result type it declares.
 #guard addPred.check {} []
-#guard !({ addPred with resultType := .list .int } : Decl).check {} []
+#guard !({ addPred with resultType := .list .int } : FuncDecl).check {} []
 
 -- The parameter list is all the body has to work with, and it is checked at the types it gives.
-#guard !({ addPred with parameters := [("x", .int)] } : Decl).check {} []
-#guard !({ addPred with parameters := [("x", .int), ("y", .list .int)] } : Decl).check {} []
+#guard !({ addPred with parameters := [("x", .int)] } : FuncDecl).check {} []
+#guard !({ addPred with parameters := [("x", .int), ("y", .list .int)] } : FuncDecl).check {} []
 
 /-- `fun (s : string) => ["!", s]` -/
-private def bang : Decl where
+private def bang : FuncDecl where
   docstring := "Put `s` after an exclamation mark."
   name := "bang"
   parameters := [("s", .string)]
@@ -875,11 +877,11 @@ private def bang : Decl where
   resultType := .list .string
 
 #guard bang.check {} []
-#guard !({ bang with resultType := .list .int } : Decl).check {} []
-#guard !({ bang with parameters := [("s", .int)] } : Decl).check {} []
+#guard !({ bang with resultType := .list .int } : FuncDecl).check {} []
+#guard !({ bang with parameters := [("s", .int)] } : FuncDecl).check {} []
 
 /-- `fun (g : (int) -> int) (x : int) => g(x)` -/
-private def applyTo : Decl where
+private def applyTo : FuncDecl where
   docstring := "Call `g` on `x`."
   name := "apply-to"
   parameters := [("g", .fn [.int] .int), ("x", .int)]
@@ -888,13 +890,14 @@ private def applyTo : Decl where
 
 -- A parameter of function type is callable, at the arity and types its type gives.
 #guard applyTo.check {} []
-#guard !({ applyTo with parameters := [("g", .fn [.string] .int), ("x", .int)] } : Decl).check {} []
+#guard !({ applyTo with parameters := [("g", .fn [.string] .int), ("x", .int)] }
+  : FuncDecl).check {} []
 #guard !({ applyTo with parameters := [("g", .fn [.int, .int] .int), ("x", .int)] }
-  : Decl).check {} []
-#guard !({ applyTo with resultType := .string } : Decl).check {} []
+  : FuncDecl).check {} []
+#guard !({ applyTo with resultType := .string } : FuncDecl).check {} []
 
 /-- `fun (n : int) => fun (m : int) => n + m` -/
-private def adder : Decl where
+private def adder : FuncDecl where
   docstring := "Build a function that adds `n` to its argument."
   name := "adder"
   parameters := [("n", .int)]
@@ -903,8 +906,8 @@ private def adder : Decl where
 
 -- A declaration can return a function, and its result type is checked like any other.
 #guard adder.check {} []
-#guard !({ adder with resultType := .int } : Decl).check {} []
-#guard !({ adder with resultType := .fn [.string] .int } : Decl).check {} []
+#guard !({ adder with resultType := .int } : FuncDecl).check {} []
+#guard !({ adder with resultType := .fn [.string] .int } : FuncDecl).check {} []
 
 /-! ### Structs
 
@@ -1000,7 +1003,7 @@ private def pair : StructDecl where
 #guard (Expression.structUpdate (.varRef "p") [("x", .intLit 1)]).infer {} ctx == none
 
 /-- `fun (p : Point) => new Point { x = p.y, y = p.x }` -/
-private def swap : Decl where
+private def swap : FuncDecl where
   docstring := "Swap `p`'s coordinates."
   name := "swap"
   parameters := [("p", .struct "Point")]
@@ -1012,10 +1015,10 @@ private def swap : Decl where
 -- than the globals that has to supply the declaration its parameter names.
 #guard swap.check types []
 #guard !swap.check {} []
-#guard !({ swap with resultType := .struct "Pair" } : Decl).check types []
+#guard !({ swap with resultType := .struct "Pair" } : FuncDecl).check types []
 
 /-- `fun (p : Point) => { p with x = p.x + 1 }` -/
-private def shift : Decl where
+private def shift : FuncDecl where
   docstring := "Move `p` one step along the x axis."
   name := "shift"
   parameters := [("p", .struct "Point")]

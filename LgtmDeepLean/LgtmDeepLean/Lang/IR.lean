@@ -104,7 +104,7 @@ Example: { x with field1 = value1, field2 = value2 } -/
 | lcons : Expression → Expression → Expression
 | listReverse : Expression → Expression
 
-public structure Decl where
+public structure FuncDecl where
   docstring : String
   name : String
   parameters : List (String × Ty)
@@ -114,8 +114,8 @@ public structure Decl where
 /-- A whole program: the declarations it is made of, in the order they were written, and the
 structure types they may mention.
 
-There is no entry point, because nothing here needs one: a program is what a `Decl` is checked and
-evaluated *against*, and which of its declarations gets called is the caller's business.
+There is no entry point, because nothing here needs one: a program is what a `FuncDecl` is checked
+and evaluated *against*, and which of its declarations gets called is the caller's business.
 
 Order is kept rather than sorted into a map so that a program is exactly the list of `lgtm def`s a
 file contains.  What it means for a name to resolve is then `Program.lookup`'s business, and
@@ -127,5 +127,5 @@ lets two declarations pass the same struct to each other, and `Program.StructNam
 counterpart of `Program.NamesUnique` for them.  It defaults to empty so that a program using no
 structs is written exactly as before. -/
 public structure Program where
-  decls : List Decl
+  funcDecls : List FuncDecl
   structDecls : List StructDecl := []

@@ -136,8 +136,8 @@ public theorem Eval.hasType {td : TypeDecls} {env : Env} {ctx : Context} {e : Ex
           obtain rfl : v = Globals.value env.globals d := (Option.some.inj hx).symm
           refine Value.hasType_closure_iff.mpr ⟨[], d.resultType, ?_, ?_, ?_⟩
           · exact Globals.hasType_env hgs
-          · simpa using Decl.wellTyped_iff_infer_eq_some.mp (hgs x d hd)
-          · simp [Decl.ty]
+          · simpa using FuncDecl.wellTyped_iff_infer_eq_some.mp (hgs x d hd)
+          · simp [FuncDecl.ty]
   | ECons e₁ e₂ h₁ h₂ ih₁ ih₂ =>
       obtain ⟨t', ht₁, ht₂, rfl⟩ := Expression.infer_lcons_eq_some.mp ht
       have hv := ih₁ henv ht₁
@@ -203,8 +203,8 @@ value.
 The `ArgsHaveType` premise is what makes a call with the wrong arguments stuck rather than junk:
 arguments of the wrong type, or the wrong number of them, produce no value at all.  It is also
 all `Apply.hasType` needs to read `d.parameters` as the context the body was checked in. -/
-public inductive Decl.Apply (d : Decl) (td : TypeDecls) (gs : Globals) : List Value → Value → Prop
-where
+public inductive FuncDecl.Apply (d : FuncDecl) (td : TypeDecls) (gs : Globals) :
+    List Value → Value → Prop where
 | EApply (args : List Value) :
     ArgsHaveType td d.parameters args → Eval td (d.callEnv gs args) d.body v → Apply d td gs args v
 
@@ -215,16 +215,16 @@ Unlike `Eval.hasType` this needs no hypothesis about the local environment: `App
 the arguments to match the parameters, and `Env.hasType_callEnv` turns that into the agreement
 between environment and context that `Eval.hasType` asks for.  What is left is a property of the
 declaration and the globals alone — nothing about this particular call. -/
-public theorem Decl.Apply.hasType {d : Decl} {td : TypeDecls} {gs : Globals} {args : List Value}
-    {v : Value} (h : d.Apply td gs args v) (hgs : Globals.WellTyped td gs)
+public theorem FuncDecl.Apply.hasType {d : FuncDecl} {td : TypeDecls} {gs : Globals}
+    {args : List Value} {v : Value} (h : d.Apply td gs args v) (hgs : Globals.WellTyped td gs)
     (hd : d.WellTyped td gs) : v.HasType td d.resultType := by
   cases h with
   | EApply _ hargs hbody =>
-      exact hbody.hasType (Env.hasType_callEnv hgs hargs) (by simpa [Decl.callEnv] using hd)
+      exact hbody.hasType (Env.hasType_callEnv hgs hargs) (by simpa [FuncDecl.callEnv] using hd)
 
 /-- Every declaration in a well-typed globals table is well typed, so a call to any of them returns
 a value of the type it declares. -/
-public theorem Globals.apply_hasType {td : TypeDecls} {gs : Globals} {x : String} {d : Decl}
+public theorem Globals.apply_hasType {td : TypeDecls} {gs : Globals} {x : String} {d : FuncDecl}
     {args : List Value} {v : Value} (hgs : Globals.WellTyped td gs) (hx : gs.lookup x = some d)
     (h : d.Apply td gs args v) : v.HasType td d.resultType :=
   h.hasType hgs (hgs x d hx)
@@ -233,16 +233,17 @@ public theorem Globals.apply_hasType {td : TypeDecls} {gs : Globals} {x : String
 
 The body runs among `p`'s own globals and its own structure types, so it may call anything else `p`
 declares — itself included — and mention any struct it declares.  A name `p` does not declare has no
-call at all, which is the only way this differs from `Decl.Apply` on `p.globals`. -/
+call at all, which is the only way this differs from `FuncDecl.Apply` on `p.globals`. -/
 public inductive Program.Apply (p : Program) (x : String) : List Value → Value → Prop where
-| call (d : Decl) : p.lookup x = some d → d.Apply p.typeDecls p.globals args v → Apply p x args v
+| call (d : FuncDecl) :
+    p.lookup x = some d → d.Apply p.typeDecls p.globals args v → Apply p x args v
 
 /-- Calling a name in a well-typed program returns a value of the type the declaration under that
 name declares.
 
 This is the top of the stack: `Program.WellTyped` is a property of the program alone, checked once
 by `Program.check`, and it covers every call to every name in it. -/
-public theorem Program.Apply.hasType {p : Program} {x : String} {d : Decl} {args : List Value}
+public theorem Program.Apply.hasType {p : Program} {x : String} {d : FuncDecl} {args : List Value}
     {v : Value} (h : p.Apply x args v) (hp : p.WellTyped) (hx : p.lookup x = some d) :
     v.HasType p.typeDecls d.resultType := by
   cases h with
@@ -262,7 +263,7 @@ private theorem addPred.trivial_positive
   (x y res : Value)
   (hXPos : ∀ xv, .int xv = x → xv >= 1)
   (hYPos : ∀ yv, .int yv = y → yv >= 1)
-  (hRes : Decl.Apply addPred {} [] [ x, y ] res) :
+  (hRes : FuncDecl.Apply addPred {} [] [ x, y ] res) :
   ∃ resv, res = .int resv ∧ resv > 0 := by
   obtain ⟨-, -, hbody⟩ := hRes
   cases hbody with
@@ -275,29 +276,29 @@ private theorem addPred.trivial_positive
         | EVarRef _ hly =>
           cases h₄ with
           | EIntLit _ =>
-            simp [addPred, Decl.callEnv, Env.extend, Globals.env, Env.lookup, List.lookup]
+            simp [addPred, FuncDecl.callEnv, Env.extend, Globals.env, Env.lookup, List.lookup]
               at hlx hly
             grind
 
 -- A call evaluates its body under the arguments, read back out by `EVarRef`.
-example : Decl.Apply addPred {} [] [.int 2, .int 5] (.int 6) :=
+example : FuncDecl.Apply addPred {} [] [.int 2, .int 5] (.int 6) :=
   .EApply _ (.cons "x" (.int 2) (.cons "y" (.int 5) .nil))
     (.EPlus (n₁ := 2) (n₂ := 5 - 1) _ _ (.EVarRef "x" rfl)
       (.EMinus _ _ (.EVarRef "y" rfl) (.EIntLit 1)))
 
 -- Whatever a call returns has the declared result type, and it is `addPred` being well typed that
 -- says so, not anything about these particular arguments.
-example (v : Value) (h : Decl.Apply addPred {} [] [.int 2, .int 5] v) : v.HasType {} .int :=
+example (v : Value) (h : FuncDecl.Apply addPred {} [] [.int 2, .int 5] v) : v.HasType {} .int :=
   h.hasType Globals.wellTyped_nil (by simp [addPred, List.lookup])
 
 -- A call with the wrong number of arguments is stuck, whether or not the body would have needed
 -- the missing one.
-example (v : Value) : ¬ Decl.Apply addPred {} [] [.int 2] v := by
+example (v : Value) : ¬ FuncDecl.Apply addPred {} [] [.int 2] v := by
   rintro ⟨-, hargs, -⟩
   cases hargs with
   | cons _ _ hrest => cases hrest
 
-example (v : Value) : ¬ Decl.Apply addPred {} [] [.int 2, .int 5, .int 8] v := by
+example (v : Value) : ¬ FuncDecl.Apply addPred {} [] [.int 2, .int 5, .int 8] v := by
   rintro ⟨-, hargs, -⟩
   cases hargs with
   | cons _ _ hrest => cases hrest with | cons _ _ hrest => cases hrest
@@ -310,13 +311,13 @@ lgtm private def cons (x : int) (xs : list int) : list int :=
 private theorem hasType_singleton {v : Value} {t : Ty} (h : v.HasType td t) :
     Value.HasType td (.list [v]) (.list t) := .list (by simpa using h)
 
-example : Decl.Apply cons {} [] [.int 1, .list [.int 2]] (.list [.int 1, .int 2]) :=
+example : FuncDecl.Apply cons {} [] [.int 1, .list [.int 2]] (.list [.int 1, .int 2]) :=
   .EApply _ (.cons "x" (.int 1) (.cons "xs" (hasType_singleton (.int 2)) .nil))
     (.ECons _ _ (.EVarRef "x" rfl) (.EVarRef "xs" rfl))
 
 -- An argument of the wrong type is now rejected at the call itself, rather than getting the body
 -- stuck once it is looked up.
-example (v : Value) : ¬ Decl.Apply cons {} [] [.int 1, .int 2] v := by
+example (v : Value) : ¬ FuncDecl.Apply cons {} [] [.int 1, .int 2] v := by
   rintro ⟨-, hargs, -⟩
   cases hargs with
   | cons _ _ hrest => cases hrest with | cons _ hv _ => cases hv
@@ -332,20 +333,20 @@ private theorem hasType_intList {is : List Int} :
 
 -- `EListReverse` runs on the list `ECons` has just built, so the element pushed on the front comes
 -- back last.
-example :
-    Decl.Apply revCons {} [] [.int 1, .list [.int 2, .int 3]] (.list [.int 3, .int 2, .int 1]) :=
+example : FuncDecl.Apply revCons {} [] [.int 1, .list [.int 2, .int 3]]
+    (.list [.int 3, .int 2, .int 1]) :=
   .EApply _ (.cons "x" (.int 1) (.cons "xs" (hasType_intList (is := [2, 3])) .nil))
     (.EListReverse (vs := [.int 1, .int 2, .int 3]) _
       (.ECons _ _ (.EVarRef "x" rfl) (.EVarRef "xs" rfl)))
 
 -- Reversing preserves the element type, so soundness gives the declared result type back with no
 -- reasoning about this particular list.
-example (v : Value) (h : Decl.Apply revCons {} [] [.int 1, .list [.int 2, .int 3]] v) :
+example (v : Value) (h : FuncDecl.Apply revCons {} [] [.int 1, .list [.int 2, .int 3]] v) :
     v.HasType {} (.list .int) :=
   h.hasType Globals.wellTyped_nil (by simp [revCons, List.lookup])
 
 -- Only a list can be reversed, so a body reversing one of the `int` parameters does not check.
-example : ¬ ({ revCons with body := [lgtm| reverse x] } : Decl).WellTyped {} [] := by
+example : ¬ ({ revCons with body := [lgtm| reverse x] } : FuncDecl).WellTyped {} [] := by
   simp [revCons, List.lookup]
 
 /-- Reverse `xs` twice, which gives `xs` back. -/
@@ -358,7 +359,7 @@ Inverting the two `EListReverse` steps down to the `EVarRef` that read `xs` leav
 `List.reverse_reverse`, so this is a property of the program proved from the evaluator rather than
 from any one input. -/
 private theorem reverseTwice.eq_self {vs : List Value} {res : Value}
-    (h : Decl.Apply reverseTwice {} [] [.list vs] res) : res = .list vs := by
+    (h : FuncDecl.Apply reverseTwice {} [] [.list vs] res) : res = .list vs := by
   obtain ⟨-, -, hbody⟩ := h
   cases hbody with
   | EListReverse _ h₁ =>
@@ -366,7 +367,7 @@ private theorem reverseTwice.eq_self {vs : List Value} {res : Value}
     | EListReverse _ h₂ =>
       cases h₂ with
       | EVarRef _ hlx =>
-        simp [reverseTwice, Decl.callEnv, Env.extend, Globals.env, Env.lookup] at hlx
+        simp [reverseTwice, FuncDecl.callEnv, Env.extend, Globals.env, Env.lookup] at hlx
         grind
 
 /-- The body of the inner lambda of `adderExpr`, `x + n`, which needs an `n` from outside itself. -/
@@ -460,20 +461,20 @@ lgtm private def letDouble as "let-double" (n : int) : int :=
 
 -- The binding goes in front of the call environment, so a `let` in a declaration's body sees the
 -- parameters and the body sees the binding.
-example : Decl.Apply letDouble {} [] [.int 3] (.int 8) :=
+example : FuncDecl.Apply letDouble {} [] [.int 3] (.int 8) :=
   .EApply _ (.cons "n" (.int 3) .nil)
     (.ELet _ _ _ (.EPlus (n₁ := 3) (n₂ := 1) _ _ (.EVarRef "n" rfl) (.EIntLit 1))
       (.EPlus (n₁ := 4) (n₂ := 4) _ _ (.EVarRef "m" rfl) (.EVarRef "m" rfl)))
 
 -- Soundness covers the new form: the declared result type comes back from `letDouble` checking,
 -- with nothing said about the value the binding took.
-example (v : Value) (h : Decl.Apply letDouble {} [] [.int 3] v) : v.HasType {} .int :=
+example (v : Value) (h : FuncDecl.Apply letDouble {} [] [.int 3] v) : v.HasType {} .int :=
   h.hasType Globals.wellTyped_nil (by simp [letDouble, List.lookup])
 
 /-- What a `let` binds is what its body computes with — here twice over, which is the property the
 binding exists to express: `m` is evaluated once and read twice. -/
 private theorem letDouble.eq_twice {n : Int} {res : Value}
-    (h : Decl.Apply letDouble {} [] [.int n] res) : res = .int (2 * (n + 1)) := by
+    (h : FuncDecl.Apply letDouble {} [] [.int n] res) : res = .int (2 * (n + 1)) := by
   obtain ⟨-, -, hbody⟩ := h
   cases hbody with
   | ELet _ _ _ hm hbody =>
@@ -489,7 +490,7 @@ private theorem letDouble.eq_twice {n : Int} {res : Value}
             | EVarRef _ hlm =>
               cases h₄ with
               | EVarRef _ hlm' =>
-                simp [letDouble, Decl.callEnv, Env.extend, Globals.env, Env.lookup,
+                simp [letDouble, FuncDecl.callEnv, Env.extend, Globals.env, Env.lookup,
                   List.lookup] at hln hlm hlm'
                 grind
 
@@ -519,9 +520,9 @@ example (v : Value) : ¬ Eval {} ∅ [lgtm| let x = x + 1 in x] v := by
 lgtm private def adder (n : int) : (int) -> int :=
   fun (m : int) => n + m
 
--- A declaration can return a function, and `Decl.Apply.hasType` covers that result type like any
--- other: what comes back is a closure, and the theorem says it is one of the declared type.
-example (v : Value) (h : Decl.Apply adder {} [] [.int 3] v) : v.HasType {} (.fn [.int] .int) :=
+-- A declaration can return a function, and `FuncDecl.Apply.hasType` covers that result type like
+-- any other: what comes back is a closure, and the theorem says it is one of the declared type.
+example (v : Value) (h : FuncDecl.Apply adder {} [] [.int 3] v) : v.HasType {} (.fn [.int] .int) :=
   h.hasType Globals.wellTyped_nil (by simp [adder, List.lookup])
 
 /-! ## Globals
@@ -552,7 +553,7 @@ lgtm private def answerPlus as "answer-plus" : int :=
 
 private def arith : Globals := Globals.ofDecls [double, quad, doublePlus, answer, answerPlus]
 
--- A body may mention a global, and `Decl.check` finds it at the type its declaration gives.
+-- A body may mention a global, and `FuncDecl.check` finds it at the type its declaration gives.
 #guard quad.check {} arith
 #guard answerPlus.check {} arith
 #guard Globals.check {} arith
@@ -564,28 +565,28 @@ private def arith : Globals := Globals.ofDecls [double, quad, doublePlus, answer
 
 -- The arity is the declaration's, so a global is as picky about how many arguments it gets as any
 -- other function, and a nullary global has to be called rather than just named.
-#guard !({ quad with body := [lgtm| double(1, 2)] } : Decl).check {} arith
-#guard !({ answerPlus with body := [lgtm| answer + 1] } : Decl).check {} arith
+#guard !({ quad with body := [lgtm| double(1, 2)] } : FuncDecl).check {} arith
+#guard !({ answerPlus with body := [lgtm| answer + 1] } : FuncDecl).check {} arith
 
 -- A parameter shadows a global of the same name, in the checker and in `Env.lookup` alike.
 #guard ({ quad with parameters := [("double", .int)], body := [lgtm| double] }
-  : Decl).check {} arith
+  : FuncDecl).check {} arith
 #guard !({ quad with parameters := [("double", .int)], body := [lgtm| double(1)] }
-  : Decl).check {} arith
+  : FuncDecl).check {} arith
 
 -- A `let` shadows a global the same way a parameter does, so the name becomes a value rather than
 -- something to call.
-#guard ({ quad with body := [lgtm| let double = n in double] } : Decl).check {} arith
-#guard !({ quad with body := [lgtm| let double = n in double(1)] } : Decl).check {} arith
+#guard ({ quad with body := [lgtm| let double = n in double] } : FuncDecl).check {} arith
+#guard !({ quad with body := [lgtm| let double = n in double(1)] } : FuncDecl).check {} arith
 
 -- And `Env.lookup` reads it the same way round: the binding is found before the globals are
 -- consulted, so the closure `double` would have resolved to is never built.
-example : Decl.Apply { quad with body := [lgtm| let double = n in double] } {} arith [.int 3]
+example : FuncDecl.Apply { quad with body := [lgtm| let double = n in double] } {} arith [.int 3]
     (.int 3) :=
   .EApply _ (.cons "n" (.int 3) .nil) (.ELet _ _ _ (.EVarRef "n" rfl) (.EVarRef "double" rfl))
 
 -- A name that is neither a parameter nor a global is still free.
-#guard !({ double with body := [lgtm| missing(n)] } : Decl).check {} arith
+#guard !({ double with body := [lgtm| missing(n)] } : FuncDecl).check {} arith
 
 /-- Every declaration in `arith` checks, which is what a call to any of them needs. -/
 private theorem arith.wellTyped : Globals.WellTyped {} arith := by
@@ -594,14 +595,14 @@ private theorem arith.wellTyped : Globals.WellTyped {} arith := by
     List.not_mem_nil, or_false] at hp
   rcases hp with rfl | rfl | rfl | rfl | rfl <;>
     simp [double, quad, doublePlus, answer, answerPlus, arith, Globals.ofDecls,
-      Decl.ty, List.lookup]
+      FuncDecl.ty, List.lookup]
 
 /-- A call across the table: `double` is not bound in `doublePlus`'s call environment, so
 `Env.lookup` falls through to the globals and builds its closure there.
 
 The body then runs in *that* closure's environment — `double`'s own parameter over the same globals
 — and not in the one the call was made from. -/
-private theorem eval_doublePlus : Decl.Apply doublePlus {} arith [.int 3] (.int 7) :=
+private theorem eval_doublePlus : FuncDecl.Apply doublePlus {} arith [.int 3] (.int 7) :=
   .EApply _ (.cons "n" (.int 3) .nil)
     (.EPlus (n₁ := 6) (n₂ := 1) _ _
       (.EApp (vs := [.int 3]) _ _ (.EVarRef "double" rfl) rfl
@@ -612,12 +613,12 @@ private theorem eval_doublePlus : Decl.Apply doublePlus {} arith [.int 3] (.int 
 
 -- Soundness covers a call that goes through the table, and the reason is that every declaration in
 -- `arith` checks — nothing about this particular call.
-example (v : Value) (h : Decl.Apply doublePlus {} arith [.int 3] v) : v.HasType {} .int :=
+example (v : Value) (h : FuncDecl.Apply doublePlus {} arith [.int 3] v) : v.HasType {} .int :=
   h.hasType arith.wellTyped (arith.wellTyped "double-plus" doublePlus rfl)
 
 -- `Globals.apply_hasType` is that statement read off the table, for whichever entry a name resolves
--- to, so the caller needs no `Decl.WellTyped` of its own.
-example (v : Value) (h : Decl.Apply answerPlus {} arith [] v) : v.HasType {} .int :=
+-- to, so the caller needs no `FuncDecl.WellTyped` of its own.
+example (v : Value) (h : FuncDecl.Apply answerPlus {} arith [] v) : v.HasType {} .int :=
   Globals.apply_hasType (x := "answer-plus") arith.wellTyped rfl h
 
 /-- Recursion is what a table of declarations buys over a table of values: `countdown` is checked in
@@ -648,7 +649,8 @@ lgtm private def pong (n : int) : int :=
 The same declarations again, read as a source file rather than as a table: `arith` is what
 `arithProgram` presents to its own bodies. -/
 
-private def arithProgram : Program := { decls := [double, quad, doublePlus, answer, answerPlus] }
+private def arithProgram : Program :=
+  { funcDecls := [double, quad, doublePlus, answer, answerPlus] }
 
 example : arithProgram.globals = arith := rfl
 
@@ -662,16 +664,16 @@ example : arithProgram.lookup "missing" = none := rfl
 
 -- No two of them share a name, so none is shadowed and every one can be called.
 example : arithProgram.NamesUnique := by decide
-example : ¬ ({ decls := [double, double] } : Program).NamesUnique := by decide
+example : ¬ ({ funcDecls := [double, double] } : Program).NamesUnique := by decide
 
 -- Which is what `lookup_self` is for: being one of the program's declarations is enough.
 example : arithProgram.lookup quad.name = some quad :=
   arithProgram.lookup_self (by decide) (by simp [arithProgram])
 
 -- A duplicate name is not unsound, just dead: the second declaration is checked and unreachable.
-#guard ({ decls := [double, { double with resultType := .int }] } : Program).check
-example : ({ decls := [answer, { answer with resultType := .string }] } : Program).lookup "answer"
-    = some answer := rfl
+#guard ({ funcDecls := [double, { double with resultType := .int }] } : Program).check
+example : ({ funcDecls := [answer, { answer with resultType := .string }] }
+    : Program).lookup "answer" = some answer := rfl
 
 /-- `arithProgram` checks, which is a property of the program alone. -/
 private theorem arithProgram.wellTyped : arithProgram.WellTyped := arith.wellTyped
@@ -736,7 +738,7 @@ building a struct out of another one's fields is two `EStructGet`s under an `ESt
 
 The globals are left open because nothing in this call reads one: `p` is a parameter, so `Env.lookup`
 finds it in the bindings and never reaches the table. -/
-private theorem eval_swap {gs : Globals} : Decl.Apply swap points gs
+private theorem eval_swap {gs : Globals} : FuncDecl.Apply swap points gs
     [.struct "Point" [("x", .int 1), ("y", .int 2)]]
     (.struct "Point" [("x", .int 2), ("y", .int 1)]) :=
   .EApply _ (.cons "p" hasType_point .nil)
@@ -748,7 +750,7 @@ private theorem eval_swap {gs : Globals} : Decl.Apply swap points gs
 -- Soundness covers the new forms: what comes back has the declared struct type, and the reason is
 -- that `swap` checks against `points` — nothing about this particular point.
 example (v : Value)
-    (h : Decl.Apply swap points [] [.struct "Point" [("x", .int 1), ("y", .int 2)]] v) :
+    (h : FuncDecl.Apply swap points [] [.struct "Point" [("x", .int 1), ("y", .int 2)]] v) :
     v.HasType points (.struct "Point") :=
   h.hasType Globals.wellTyped_nil (by simp [swap, Point, points, List.lookup])
 
@@ -760,19 +762,19 @@ lgtm private def getX as "get-x" (p : struct Point) : int :=
 
 -- `EStructGet` reads the field out of the value, so it is the `EVarRef` that found the struct that
 -- decides what comes back.
-example : Decl.Apply getX points [] [.struct "Point" [("x", .int 1), ("y", .int 2)]] (.int 2) :=
+example : FuncDecl.Apply getX points [] [.struct "Point" [("x", .int 1), ("y", .int 2)]] (.int 2) :=
   .EApply _ (.cons "p" hasType_point .nil)
     (.EPlus (n₁ := 1) (n₂ := 1) _ _ (.EStructGet _ _ (.EVarRef "p" rfl) rfl) (.EIntLit 1))
 
 -- A field the declaration does not list is not a field, so a body reading one does not check even
 -- though the value it would be handed at run time carries only declared fields.
-#guard !({ getX with body := [lgtm| p.z + 1] } : Decl).check points []
+#guard !({ getX with body := [lgtm| p.z + 1] } : FuncDecl).check points []
 
 /-- Reading a field gives what the value has bound to it, which is the property `structGet` exists to
 express: the point's other fields, and whatever else it carries, do not come into it. -/
 private theorem getX.eq_succ_x {fvs : FieldValues} {a : Int} {res : Value}
     (hx : fvs.lookup "x" = some (.int a))
-    (h : Decl.Apply getX points [] [.struct "Point" fvs] res) : res = .int (a + 1) := by
+    (h : FuncDecl.Apply getX points [] [.struct "Point" fvs] res) : res = .int (a + 1) := by
   obtain ⟨-, -, hbody⟩ := h
   cases hbody with
   | EPlus _ _ h₁ h₂ =>
@@ -782,7 +784,7 @@ private theorem getX.eq_succ_x {fvs : FieldValues} {a : Int} {res : Value}
       | EVarRef _ hlp =>
         cases h₂ with
         | EIntLit _ =>
-          simp [getX, Decl.callEnv, Env.extend, Globals.env, Env.lookup] at hlp
+          simp [getX, FuncDecl.callEnv, Env.extend, Globals.env, Env.lookup] at hlp
           obtain ⟨rfl, rfl⟩ := hlp
           grind
 
@@ -794,7 +796,7 @@ lgtm private def shiftX as "shift-x" (p : struct Point) (d : int) : struct Point
 
 -- An update rebinds the fields it names in place, so `y` comes through untouched and the fields stay
 -- in the order `Point` declares them.
-example : Decl.Apply shiftX points [] [.struct "Point" [("x", .int 1), ("y", .int 2)], .int 10]
+example : FuncDecl.Apply shiftX points [] [.struct "Point" [("x", .int 1), ("y", .int 2)], .int 10]
     (.struct "Point" [("x", .int 11), ("y", .int 2)]) := by
   refine .EApply _ (.cons "p" hasType_point (.cons "d" (.int 10) .nil)) ?_
   -- Both field lists have to be given: the result is `FieldValues.update fvs us`, and unification
@@ -810,10 +812,10 @@ example : Decl.Apply shiftX points [] [.struct "Point" [("x", .int 1), ("y", .in
 
 -- An empty update is rejected, as `Expression.structUpdate` says it must be: it would be the
 -- expression it updates, written so as to suggest otherwise.
-#guard !({ shiftX with body := [lgtm| { p with }] } : Decl).check points []
+#guard !({ shiftX with body := [lgtm| { p with }] } : FuncDecl).check points []
 
 -- And a field the declaration does not have cannot be introduced by one.
-#guard !({ shiftX with body := [lgtm| { p with z = d }] } : Decl).check points []
+#guard !({ shiftX with body := [lgtm| { p with z = d }] } : FuncDecl).check points []
 
 /-- What an update leaves alone is the property it exists to express: `shift-x` moves `x` by `d` and
 hands `y` back as it found it, for every point and every distance.
@@ -823,7 +825,7 @@ applied to the premise that the expressions and the values share their field nam
 update cannot reach a field it did not mention. -/
 private theorem shiftX.eq_shifted {fvs : FieldValues} {a b d : Int} {res : Value}
     (hx : fvs.lookup "x" = some (.int a)) (hy : fvs.lookup "y" = some (.int b))
-    (h : Decl.Apply shiftX points [] [.struct "Point" fvs, .int d] res) :
+    (h : FuncDecl.Apply shiftX points [] [.struct "Point" fvs, .int d] res) :
     ∃ fvs', res = .struct "Point" fvs'
       ∧ fvs'.lookup "x" = some (.int (a + d)) ∧ fvs'.lookup "y" = some (.int b) := by
   obtain ⟨-, -, hbody⟩ := h
@@ -831,7 +833,7 @@ private theorem shiftX.eq_shifted {fvs : FieldValues} {a b d : Int} {res : Value
   | @EStructUpdate _ _ _ us _ _ hp hnames hev =>
     cases hp with
     | EVarRef _ hlp =>
-      simp [shiftX, Decl.callEnv, Env.extend, Globals.env, Env.lookup] at hlp
+      simp [shiftX, FuncDecl.callEnv, Env.extend, Globals.env, Env.lookup] at hlp
       obtain ⟨rfl, rfl⟩ := hlp
       refine ⟨_, rfl, ?_, ?_⟩
       · -- The one field the update names is `x`, and what it was given there is `p.x + d`.
@@ -847,7 +849,7 @@ private theorem shiftX.eq_shifted {fvs : FieldValues} {a b d : Int} {res : Value
             | EVarRef _ hlq =>
               cases h₂ with
               | EVarRef _ hld =>
-                simp [shiftX, Decl.callEnv, Env.extend, Globals.env, Env.lookup,
+                simp [shiftX, FuncDecl.callEnv, Env.extend, Globals.env, Env.lookup,
                   List.lookup] at hlq hld
                 rw [FieldValues.lookup_update, hx, hw]
                 grind
@@ -864,7 +866,7 @@ The same declarations again, read as a source file: a `Program` carries its stru
 its declarations, and `Program.typeDecls` is the bundle its bodies are checked and run against. -/
 
 private def pointProgram : Program where
-  decls := [swap, getX, shiftX]
+  funcDecls := [swap, getX, shiftX]
   structDecls := [Point]
 
 example : pointProgram.typeDecls = points := rfl
@@ -895,7 +897,7 @@ private theorem pointProgram.wellTyped : pointProgram.WellTyped := by
     List.mem_cons, List.not_mem_nil, or_false] at hp
   rcases hp with rfl | rfl | rfl <;>
     simp [swap, getX, shiftX, Point, Program.globals, Program.typeDecls, Program.structs,
-      pointProgram, Globals.ofDecls, Structs.ofDecls, Decl.ty, List.lookup]
+      pointProgram, Globals.ofDecls, Structs.ofDecls, FuncDecl.ty, List.lookup]
 
 -- Running it is calling one of its names, and soundness at the top covers a struct result type like
 -- any other.

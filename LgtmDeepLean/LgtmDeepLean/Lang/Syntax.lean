@@ -9,20 +9,20 @@ meta import LgtmDeepLean.Lang.TypeCheck
 
 An `Expression` written out of its constructors stops being readable at about three nodes:
 `.lcons (.stringLit "!") (.lcons (.varRef "s") (.lnil .string))` is a two-element list.  This module
-adds notation for `Ty`, `Expression`, and `Decl` so the same programs can be written the way the
+adds notation for `Ty`, `Expression`, and `FuncDecl` so the same programs can be written the way the
 docstrings elsewhere already describe them — `fun (x : int) => x + 1`, `g(x)`, `x :: xs`.
 
 Four entry points:
 
 * `[lgtm_ty| (int) -> string]` elaborates to a `Ty`.
 * `[lgtm| fun (x : int) => x + 1]` elaborates to an `Expression`.
-* `lgtm def` is a command that declares a `Decl`.
+* `lgtm def` is a command that declares a `FuncDecl`.
 * `lgtm struct` is a command that declares a `StructDecl`.
 
 Everything is a macro, so these expand to ordinary constructor applications and cost nothing at
 run time.  A DSL term is *not* checked by `Expression.infer` when it elaborates — `[lgtm| 1 + "a"]`
 is a perfectly good `Expression` that happens to be ill typed.  Type checking stays where it was,
-in `Expression.check` and `Decl.check`.
+in `Expression.check` and `FuncDecl.check`.
 
 Scoping is the IR's, not Lean's: an identifier always becomes a `varRef` of its own name, so the
 `x` in `[lgtm| fun (x : int) => x]` refers to the DSL binder and never to a Lean variable called
@@ -177,14 +177,14 @@ macro_rules
 parser aliases otherwise, and this one is referred to by the command syntax below. -/
 public syntax lgtmVis := "private "
 
-/-- `lgtm def f (x : int) : int := body` declares `f : Decl`.
+/-- `lgtm def f (x : int) : int := body` declares `f : FuncDecl`.
 
 The IR name defaults to the Lean name; `as "f-name"` overrides it, which is what IR names that are
-not Lean identifiers need.  A doc comment becomes the `Decl.docstring` field as well as the Lean
+not Lean identifiers need.  A doc comment becomes the `FuncDecl.docstring` field as well as the Lean
 declaration's own documentation.
 
-The parameters are the `Decl`'s parameter list and so are also the context its body is checked in;
-they are not Lean binders.
+The parameters are the `FuncDecl`'s parameter list and so are also the context its body is checked
+in; they are not Lean binders.
 
 `lgtm private def` makes the generated Lean declaration `private`.  The visibility comes after
 `lgtm` rather than before it because a command's first token is what the parser dispatches on. -/
@@ -204,10 +204,10 @@ macro_rules
                     name := $irName
                     parameters := [$ps,*]
                     body := [lgtm| $body]
-                    resultType := [lgtm_ty| $rt] : Decl })
+                    resultType := [lgtm_ty| $rt] : FuncDecl })
       match vis with
-      | some _ => `($[$doc:docComment]? private def $n : Decl := $val)
-      | none => `($[$doc:docComment]? def $n : Decl := $val)
+      | some _ => `($[$doc:docComment]? private def $n : FuncDecl := $val)
+      | none => `($[$doc:docComment]? def $n : FuncDecl := $val)
 
 /-- `lgtm struct Point { x : int, y : int }` declares `Point : StructDecl`.
 
@@ -216,7 +216,7 @@ and `lgtm private struct` makes the generated Lean declaration `private`.  The f
 order they are written, which is the order a `new` has to give them in.
 
 A doc comment documents the Lean declaration only.  A `StructDecl` has no docstring field to put it
-in, unlike a `Decl`. -/
+in, unlike a `FuncDecl`. -/
 syntax (docComment)? "lgtm " (lgtmVis)? &"struct" ident (&"as" str)?
   "{" (ident " : " lgtmTy),* "}" : command
 
@@ -331,8 +331,8 @@ example : [lgtm_ty| list ~(Ty.int)] = Ty.list .int := rfl
 lgtm def addPred as "add-pred" (x : int) (y : int) : int :=
   x + (y - 1)
 
--- The command builds the `Decl` field by field: the doc comment, the `as` name, the parameters in
--- order, the body, and the result type.
+-- The command builds the `FuncDecl` field by field: the doc comment, the `as` name, the parameters
+-- in order, the body, and the result type.
 example : addPred =
     { docstring := "Add `x` to one less than `y`."
       name := "add-pred"
@@ -378,7 +378,7 @@ lgtm def letDouble as "let-double" (n : int) : int :=
 lgtm def three : int := 3
 #guard three.check {} []
 
--- `lgtm private def` makes the Lean declaration private; the `Decl` it builds is the same.
+-- `lgtm private def` makes the Lean declaration private; the `FuncDecl` it builds is the same.
 /-- One more than `x`. -/
 lgtm private def succ as "succ-one" (x : int) : int := x + 1
 example : succ.name = "succ-one" := rfl
@@ -387,8 +387,8 @@ example : succ.docstring = "One more than `x`." := rfl
 
 -- The DSL builds ill-typed programs as readily as well-typed ones; checking is still what rejects
 -- them.
-#guard !({ three with body := [lgtm| 1 + "a"] } : Decl).check {} []
-#guard !({ revCons with body := [lgtm| reverse x] } : Decl).check {} []
+#guard !({ three with body := [lgtm| 1 + "a"] } : FuncDecl).check {} []
+#guard !({ revCons with body := [lgtm| reverse x] } : FuncDecl).check {} []
 
 /-! ### Structs -/
 

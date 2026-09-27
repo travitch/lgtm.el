@@ -128,14 +128,14 @@ can reach its siblings and itself. -/
 
 Building this at each mention rather than once up front is what sidesteps the cyclic value a
 recursive global would otherwise need. -/
-@[expose] public def Globals.value (gs : Globals) (d : Decl) : Value :=
+@[expose] public def Globals.value (gs : Globals) (d : FuncDecl) : Value :=
   (Globals.env gs).closure d.parameters d.body
 
 /-- The value `x` is bound to, or `none` when it is unbound.
 
 The local bindings are searched first, so a parameter shadows a global of the same name — the same
-way round as `Decl.check`, which puts the parameters in front of `Globals.types`.  Keeping those two
-orders together is what makes `Eval.hasType`'s variable case go through. -/
+way round as `FuncDecl.check`, which puts the parameters in front of `Globals.types`.  Keeping those
+two orders together is what makes `Eval.hasType`'s variable case go through. -/
 @[expose] public def Env.lookup (env : Env) (x : String) : Option Value :=
   match env.bindings.lookup x with
   | some v => some v
@@ -375,15 +375,15 @@ argument, over the globals and nothing else.
 
 `Env.lookup` reads the first binding of a name, so a parameter repeated in `d.parameters` takes
 the argument of its leftmost occurrence, and a parameter named like a global shadows it. -/
-@[expose] public def Decl.callEnv (d : Decl) (gs : Globals) (args : List Value) : Env :=
+@[expose] public def FuncDecl.callEnv (d : FuncDecl) (gs : Globals) (args : List Value) : Env :=
   (Globals.env gs).extend d.parameters args
 
 /-- Binding well-typed arguments to a declaration's parameters over its globals gives an environment
 the parameter list describes.
 
-`Decl.parameters` is a `Context`, so this is what lets a call use it as one: the types the
+`FuncDecl.parameters` is a `Context`, so this is what lets a call use it as one: the types the
 body was written against and the types the arguments arrive with are the same list. -/
-public theorem Env.hasType_callEnv {td : TypeDecls} {d : Decl} {gs : Globals} {args : List Value}
-    (hgs : Globals.WellTyped td gs) (h : ArgsHaveType td d.parameters args) :
+public theorem Env.hasType_callEnv {td : TypeDecls} {d : FuncDecl} {gs : Globals}
+    {args : List Value} (hgs : Globals.WellTyped td gs) (h : ArgsHaveType td d.parameters args) :
     Env.HasType td (d.callEnv gs args) d.parameters := by
-  simpa [Decl.callEnv] using Env.hasType_extend h (Globals.hasType_env hgs)
+  simpa [FuncDecl.callEnv] using Env.hasType_extend h (Globals.hasType_env hgs)
