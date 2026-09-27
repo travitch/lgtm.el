@@ -14,31 +14,29 @@ The relational semantics of the IR, and its soundness: evaluating a well-typed e
 a value of the type inferred for it.  Values, environments, and what it means for either to have a
 type live in `Value.lean`. -/
 
-/-- `env` is an index rather than a parameter because `EApp` evaluates a body in the environment its
-closure captured, not in the one the call was made from. -/
+/-- This is a relational evaluator for expressions under a given `Env` (environment).
+
+This is the bridge from the deeply-embedded DSL to logical terms we can reason about
+using standard Lean techniques.  The `Expression` is the DSL term while the `Value` is
+how it would be evaluated in Lean.  Proofs are over the latter, which can use the full
+Lean standard library. -/
 public inductive Eval : Env → Expression → Value → Prop where
-/-- A `lam` evaluates to itself plus the environment it was reached in; nothing in its body runs
-until it is applied. -/
 | ELam (ps : List (String × Ty)) (body : Expression) : Eval env (.lam ps body) (env.closure ps body)
 /-- A call evaluates its function and its arguments, then the body in the closure's environment
-extended with the parameters.
-
-The arguments are related to their values pairwise rather than by a list-evaluation relation of
-their own, which keeps `Eval` a single inductive and so keeps `induction` available on it — the same
-trade `Value.HasType.list` makes.  `args.length = vs.length` is what makes that pairing total, since
-`List.zip` would otherwise let a value appear that no argument produced.
-
-As in `Decl.Apply`, `ArgsHaveType` is what makes a call with the wrong arguments stuck rather than
-junk, and it pins the arity that `Env.extend` needs.
-
-The closure is matched on as the two halves `Value.closure` stores, and they are put back into an
-`Env` to run the body in; `ELam` builds one the other way round, with `Env.closure`. -/
+extended with the parameters. -/
 | EApp (f : Expression) (args : List Expression) :
     Eval env f (.closure cbindings cglobals ps body) →
     args.length = vs.length → (∀ p ∈ args.zip vs, Eval env p.1 p.2) →
     ArgsHaveType ps vs →
     Eval (Env.extend ⟨cbindings, cglobals⟩ ps vs) body v →
     Eval env (.app f args) v
+/-- Let binds a variable that shadows any existing bindings.
+
+    The bound value is available in the body of the let.  This is a non-recursive let. -/
+| ELet (x : String) (e : Expression) (body : Expression) :
+    Eval env e v₁ →
+    Eval ⟨(x, v₁) :: env.bindings, env.globals⟩ body v →
+    Eval env (.let_ x e body) v
 | EVarRef (x : String) : env.lookup x = some v → Eval env (.varRef x) v
 | EIntLit (i : Int) : Eval env (.intLit i) (.int i)
 | EPlus (e₁ : Expression) (e₂ : Expression) : Eval env e₁ (.int n₁) → Eval env e₂ (.int n₂) → Eval env (.plus e₁ e₂) (.int (n₁ + n₂))
@@ -60,6 +58,10 @@ already requires the tail to be a list of the element type read off the head, so
 value the environment hands back.  It is also the rule that resolves a global, and the two halves of
 it line up because `Env.lookup` searches the bindings before the globals exactly as the context
 `ctx ++ Globals.types env.globals` is searched left to right.
+
+`ELet` is the other rule that extends the environment, and it is the easy one: the context grows on
+the left exactly as the bindings do, so `Env.hasType_cons` — applied to the type the bound expression
+was inferred at — is the whole case.
 
 `EApp` is where the context stops being fixed, which is why the induction generalizes it: the
 closure's body was checked against a context of its own, recovered from the closure's type, and has
@@ -109,6 +111,9 @@ public theorem Eval.hasType {env : Env} {ctx : Context} {e : Expression} {v : Va
       refine ihbody (Env.hasType_extend hat hcenv) ?_
       simp only [Env.globals_extend]
       exact hr ▸ hbodyty
+  | ELet x e body _ _ ih₁ ihbody =>
+      obtain ⟨t', ht', htbody⟩ := Expression.infer_let_eq_some.mp ht
+      exact ihbody (Env.hasType_cons (ih₁ henv ht') henv) htbody
   | _ => grind [Value.HasType]
 
 /-- `Apply d gs args v`: calling `d` with `args` among the globals `gs` returns `v`.
@@ -349,6 +354,87 @@ example (v : Value) : ¬ Eval ∅ [lgtm| ~(adderExpr)("a")] v := by
           cases hargs _ (List.mem_cons_self ..)
           cases hv
 
+/-! ## Let bindings
+
+A `let_` is the one form that extends the environment without a call, so these are about what the
+binding is and what it is not: it is in scope in the body, and it is not in scope in the expression
+it binds. -/
+
+-- A `let` binds the value its expression evaluated to, which `EVarRef` then reads out of the
+-- bindings like any other name.
+example : Eval ∅ [lgtm| let x = 1 + 2 in x + x] (.int 6) :=
+  .ELet _ _ _ (.EPlus (n₁ := 1) (n₂ := 2) _ _ (.EIntLit 1) (.EIntLit 2))
+    (.EPlus (n₁ := 3) (n₂ := 3) _ _ (.EVarRef "x" rfl) (.EVarRef "x" rfl))
+
+-- Twice, so a later binding sees an earlier one.
+example : Eval ∅ [lgtm| let x = 1 in let y = x + 1 in x + y] (.int 3) :=
+  .ELet _ _ _ (.EIntLit 1)
+    (.ELet _ _ _ (.EPlus (n₁ := 1) (n₂ := 1) _ _ (.EVarRef "x" rfl) (.EIntLit 1))
+      (.EPlus (n₁ := 1) (n₂ := 2) _ _ (.EVarRef "x" rfl) (.EVarRef "y" rfl)))
+
+/-- Twice one more than `n`. -/
+lgtm private def letDouble as "let-double" (n : int) : int :=
+  let m = n + 1 in m + m
+
+#guard letDouble.check []
+
+-- The binding goes in front of the call environment, so a `let` in a declaration's body sees the
+-- parameters and the body sees the binding.
+example : Decl.Apply letDouble [] [.int 3] (.int 8) :=
+  .EApply _ (.cons "n" (.int 3) .nil)
+    (.ELet _ _ _ (.EPlus (n₁ := 3) (n₂ := 1) _ _ (.EVarRef "n" rfl) (.EIntLit 1))
+      (.EPlus (n₁ := 4) (n₂ := 4) _ _ (.EVarRef "m" rfl) (.EVarRef "m" rfl)))
+
+-- Soundness covers the new form: the declared result type comes back from `letDouble` checking,
+-- with nothing said about the value the binding took.
+example (v : Value) (h : Decl.Apply letDouble [] [.int 3] v) : v.HasType .int :=
+  h.hasType Globals.wellTyped_nil (by simp [letDouble, List.lookup])
+
+/-- What a `let` binds is what its body computes with — here twice over, which is the property the
+binding exists to express: `m` is evaluated once and read twice. -/
+private theorem letDouble.eq_twice {n : Int} {res : Value}
+    (h : Decl.Apply letDouble [] [.int n] res) : res = .int (2 * (n + 1)) := by
+  obtain ⟨-, -, hbody⟩ := h
+  cases hbody with
+  | ELet _ _ _ hm hbody =>
+    cases hm with
+    | EPlus _ _ h₁ h₂ =>
+      cases h₁ with
+      | EVarRef _ hln =>
+        cases h₂ with
+        | EIntLit _ =>
+          cases hbody with
+          | EPlus _ _ h₃ h₄ =>
+            cases h₃ with
+            | EVarRef _ hlm =>
+              cases h₄ with
+              | EVarRef _ hlm' =>
+                simp [letDouble, Decl.callEnv, Env.extend, Globals.env, Env.lookup,
+                  List.lookup] at hln hlm hlm'
+                grind
+
+-- A `let` whose body is a lambda is how a closure captures something other than a parameter: the
+-- same closure `~(adderExpr)(10)` returns, reached without a call.
+example : Eval ∅ [lgtm| let n = 10 in fun (x : int) => ~(adderInner)]
+    (.closure [("n", .int 10)] [] [("x", .int)] adderInner) :=
+  .ELet _ _ _ (.EIntLit 10) (.ELam _ _)
+
+-- The bound expression runs in the environment the `let` was reached in, so a `let` is not
+-- recursive: `x` on the right of the `=` is the outer `x`, and with no outer `x` it is stuck.
+example : Eval ∅ [lgtm| let x = 1 in let x = x + 1 in x] (.int 2) :=
+  .ELet _ _ _ (.EIntLit 1)
+    (.ELet _ _ _ (.EPlus (n₁ := 1) (n₂ := 1) _ _ (.EVarRef "x" rfl) (.EIntLit 1))
+      (.EVarRef "x" rfl))
+
+example (v : Value) : ¬ Eval ∅ [lgtm| let x = x + 1 in x] v := by
+  intro h
+  cases h with
+  | ELet _ _ _ hx _ =>
+      cases hx with
+      | EPlus _ _ h₁ _ =>
+          cases h₁ with
+          | EVarRef _ hlx => simp [Env.lookup] at hlx
+
 /-- Build a function that adds `n` to its argument. -/
 lgtm private def adder (n : int) : (int) -> int :=
   fun (m : int) => n + m
@@ -405,6 +491,17 @@ private def arith : Globals := Globals.ofDecls [double, quad, doublePlus, answer
 #guard ({ quad with parameters := [("double", .int)], body := [lgtm| double] } : Decl).check arith
 #guard !({ quad with parameters := [("double", .int)], body := [lgtm| double(1)] } : Decl).check
   arith
+
+-- A `let` shadows a global the same way a parameter does, so the name becomes a value rather than
+-- something to call.
+#guard ({ quad with body := [lgtm| let double = n in double] } : Decl).check arith
+#guard !({ quad with body := [lgtm| let double = n in double(1)] } : Decl).check arith
+
+-- And `Env.lookup` reads it the same way round: the binding is found before the globals are
+-- consulted, so the closure `double` would have resolved to is never built.
+example : Decl.Apply { quad with body := [lgtm| let double = n in double] } arith [.int 3]
+    (.int 3) :=
+  .EApply _ (.cons "n" (.int 3) .nil) (.ELet _ _ _ (.EVarRef "n" rfl) (.EVarRef "double" rfl))
 
 -- A name that is neither a parameter nor a global is still free.
 #guard !({ double with body := [lgtm| missing(n)] } : Decl).check arith

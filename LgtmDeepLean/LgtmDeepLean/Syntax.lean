@@ -32,6 +32,9 @@ with `&`, Lean's non-reserved symbol form, so importing this module does not sto
 from being used as ordinary Lean identifiers.  `lgtm` is the one exception and *is* a reserved
 token: a command's leading keyword has to be reserved for the command parser to find it at all, so
 a file importing this module cannot also name something `lgtm`.
+
+`let` and `in` are written as plain symbols rather than with `&`, because Lean reserves both already:
+declaring them here takes nothing away that was available before.
 -/
 
 /-! `behavior := symbol` is what lets the keywords be non-reserved: it tells the category to consider
@@ -88,6 +91,10 @@ syntax:65 lgtmExpr:65 " + " lgtmExpr:66 : lgtmExpr
 syntax:65 lgtmExpr:65 " - " lgtmExpr:66 : lgtmExpr
 syntax:55 lgtmExpr:56 " :: " lgtmExpr:55 : lgtmExpr
 syntax:10 "fun" ("(" ident " : " lgtmTy ")")* " => " lgtmExpr:10 : lgtmExpr
+/-- `let x = e in body`.  The bound expression carries no annotation, because `let_` does not: the
+type checker infers it.  The body extends as far right as it can, so `let`s chain without
+parentheses. -/
+syntax:10 "let " ident " = " lgtmExpr " in " lgtmExpr:10 : lgtmExpr
 
 /-- `[lgtm| e]` is the `Expression` that `e` denotes. -/
 syntax:max "[lgtm| " lgtmExpr "]" : term
@@ -115,6 +122,8 @@ macro_rules
       let ps ← (xs.zip ts).mapM fun (x, t) =>
         `(($(Lean.quote x.getId.toString), [lgtm_ty| $t]))
       `(Expression.lam [$ps,*] [lgtm| $b])
+  | `([lgtm| let $x:ident = $e in $b]) =>
+      `(Expression.let_ $(Lean.quote x.getId.toString) [lgtm| $e] [lgtm| $b])
 
 /-! ## Declarations -/
 
@@ -214,6 +223,34 @@ example : [lgtm| fun => 1] = Expression.lam [] (.intLit 1) := rfl
 example : [lgtm| fun (x : int) => x + 1]
     = Expression.lam [("x", .int)] (.plus (.varRef "x") (.intLit 1)) := rfl
 
+-- A `let` names the expression it binds, which carries no annotation.
+example : [lgtm| let x = 1 in x] = Expression.let_ "x" (.intLit 1) (.varRef "x") := rfl
+example : [lgtm| let x = y + 1 in x + x]
+    = Expression.let_ "x" (.plus (.varRef "y") (.intLit 1))
+        (.plus (.varRef "x") (.varRef "x")) := rfl
+
+-- The body extends as far right as it can, so `let`s chain without parentheses and a `let` inside a
+-- lambda swallows the rest of the body.
+example : [lgtm| let x = 1 in let y = 2 in x + y]
+    = Expression.let_ "x" (.intLit 1) (.let_ "y" (.intLit 2)
+        (.plus (.varRef "x") (.varRef "y"))) := rfl
+example : [lgtm| fun (n : int) => let m = n + 1 in m + m]
+    = Expression.lam [("n", .int)] (.let_ "m" (.plus (.varRef "n") (.intLit 1))
+        (.plus (.varRef "m") (.varRef "m"))) := rfl
+
+-- The bound expression stops at `in`, so a `fun` or a call on the right of the `=` needs no
+-- parentheses either.
+example : [lgtm| let f = fun (x : int) => x in f(1)]
+    = Expression.let_ "f" (.lam [("x", .int)] (.varRef "x"))
+        (.app (.varRef "f") [.intLit 1]) := rfl
+example : [lgtm| let xs = reverse ys in x :: xs]
+    = Expression.let_ "xs" (.listReverse (.varRef "ys"))
+        (.lcons (.varRef "x") (.varRef "xs")) := rfl
+
+-- Parenthesizing the body is what puts something after the `let` rather than inside it.
+example : [lgtm| (let x = 1 in x) + 2]
+    = Expression.plus (.let_ "x" (.intLit 1) (.varRef "x")) (.intLit 2) := rfl
+
 -- Identifiers are IR names, never Lean ones: `n` below is a `varRef`, not this Lean `n`.
 private def n : Expression := .intLit 99
 example : [lgtm| n] = Expression.varRef "n" := rfl
@@ -262,6 +299,12 @@ lgtm def revCons as "rev-cons" (x : int) (xs : list int) : list int :=
   reverse (x :: xs)
 
 #guard revCons.check []
+
+/-- Twice one more than `n`. -/
+lgtm def letDouble as "let-double" (n : int) : int :=
+  let m = n + 1 in m + m
+
+#guard letDouble.check []
 
 -- A declaration with no parameters is fine, and so is one that returns a function.
 lgtm def three : int := 3

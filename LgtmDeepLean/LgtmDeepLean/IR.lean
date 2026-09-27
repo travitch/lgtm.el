@@ -55,6 +55,9 @@ public inductive Expression where
 | lam : List (String × Ty) → Expression → Expression
 /-- Apply a function to all of its arguments at once -/
 | app : Expression → List Expression → Expression
+/-- Introduce a let binding.  Binds the first expression to the given name, which
+    becomes available in the second expression. -/
+| let_ : String → Expression → Expression → Expression
 /-- A variable reference. -/
 | varRef : String → Expression
 | intLit : Int → Expression

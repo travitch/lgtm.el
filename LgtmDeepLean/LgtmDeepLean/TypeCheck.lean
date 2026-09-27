@@ -34,6 +34,9 @@ public def Expression.infer (ctx : Context) : Expression → Option Ty
     match f.infer ctx with
     | some (.fn ps r) => if Expression.inferList ctx args == some ps then some r else none
     | _ => none
+  | .let_ x e body => do
+    let t ← e.infer ctx
+    body.infer ((x, t) :: ctx)
   | .varRef x => ctx.lookup x
   | .intLit _ => some .int
   | .plus l r | .minus l r =>
@@ -144,6 +147,19 @@ passing too few arguments is ill typed rather than partially applied. -/
       ∃ ps, f.infer ctx = some (.fn ps t) ∧ Expression.inferList ctx args = some ps := by
   simp only [Expression.infer]
   split <;> grind
+
+/-- A `let_` is typeable exactly when the expression it binds is and its body is under that name at
+that type, and then it has the body's type.
+
+The bound expression's type is inferred rather than annotated, which is why `let_` carries no `Ty`:
+there is nothing for the writer to declare that inference does not already determine.  The name goes
+on the front of the context, so it shadows an outer binding of the same name, and the bound
+expression is typed *before* it is added, so `let x = x` still refers to the outer `x`. -/
+@[simp, grind =] public theorem Expression.infer_let_eq_some {ctx : Context} {x : String}
+    {e body : Expression} {t : Ty} :
+    (Expression.let_ x e body).infer ctx = some t ↔
+      ∃ t', e.infer ctx = some t' ∧ body.infer ((x, t') :: ctx) = some t := by
+  simp [Expression.infer, Option.bind_eq_some_iff]
 
 /-! Inversion principles for `inferList`.  Together these say what it computes: the argument types
 in order, and `none` as soon as one argument has no type. -/
@@ -461,6 +477,40 @@ private def ctx : Context :=
   ctx == some (.fn [.string] .int)
 #guard (Expression.app (.app (.lam [("x", .int)] (.lam [("y", .string)] (.varRef "x"))) [.intLit 1])
   [.stringLit "a"]).infer ctx == some .int
+
+-- A `let_` gives its body's type, with the bound name at the type inferred for what it binds.
+#guard (Expression.let_ "x" (.intLit 1) (.plus (.varRef "x") (.intLit 2))).infer ctx == some .int
+#guard (Expression.let_ "x" (.stringLit "a") (.varRef "x")).infer ctx == some .string
+#guard (Expression.let_ "x" (.varRef "xs") (.varRef "x")).infer ctx == some (.list .int)
+#guard (Expression.let_ "g" (.lam [("y", .int)] (.varRef "y"))
+  (.app (.varRef "g") [.intLit 1])).infer ctx == some .int
+
+-- An ill-typed expression on either side makes the whole `let_` ill typed.
+#guard (Expression.let_ "x" (.varRef "nope") (.intLit 1)).infer ctx == none
+#guard (Expression.let_ "x" (.intLit 1) (.plus (.varRef "x") (.stringLit "a"))).infer ctx == none
+#guard (Expression.let_ "x" (.intLit 1) (.varRef "nope")).infer ctx == none
+
+-- The name is added after the expression it binds is typed, so a `let_` is not recursive: the bound
+-- expression sees the enclosing context only.
+#guard (Expression.let_ "x" (.varRef "x") (.varRef "x")).infer ctx == none
+#guard (Expression.let_ "n" (.plus (.varRef "n") (.intLit 1)) (.varRef "n")).infer ctx == some .int
+
+-- The binding shadows an enclosing one of the same name, inner `let_`s included.
+#guard (Expression.let_ "n" (.stringLit "a") (.varRef "n")).infer ctx == some .string
+#guard (Expression.let_ "n" (.stringLit "a") (.plus (.varRef "n") (.intLit 1))).infer ctx == none
+#guard (Expression.let_ "x" (.intLit 1) (.let_ "x" (.stringLit "a") (.varRef "x"))).infer ctx
+  == some .string
+
+-- `let_`s nest, and a later one sees what an earlier one bound.
+#guard (Expression.let_ "x" (.intLit 1)
+  (.let_ "y" (.plus (.varRef "x") (.intLit 1)) (.plus (.varRef "x") (.varRef "y")))).infer ctx
+  == some .int
+
+-- A `lam` body sees a `let_` from outside it, and a `let_` body sees the parameters.
+#guard (Expression.let_ "x" (.intLit 1)
+  (.lam [("y", .int)] (.plus (.varRef "x") (.varRef "y")))).infer ctx == some (.fn [.int] .int)
+#guard (Expression.lam [("y", .int)]
+  (.let_ "x" (.varRef "y") (.plus (.varRef "x") (.varRef "y")))).infer ctx == some (.fn [.int] .int)
 
 -- Checking agrees with inference.
 #guard (Expression.lnil .int).check ctx (.list .int)
