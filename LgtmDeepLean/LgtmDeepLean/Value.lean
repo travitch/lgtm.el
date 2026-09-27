@@ -28,6 +28,17 @@ a structure declared there has neither definitional eta nor reducing projections
 is the way to build one of these from an environment, and `Env.HasType` is what says the two halves
 belong together. -/
 | closure : List (String × Value) → Globals → List (String × Ty) → Expression → Value
+/-- An instance of the struct of the given name, with each of its fields bound to a value.
+
+The name is all that says what this is: which fields it ought to have, and at what types, is the
+business of the `StructDecl` that name resolves to, and `Value.HasType` is where the two are held
+against each other.  A struct value on its own is just a name and an association list, the same way
+`Ty.struct` is just a name.
+
+The field names are spelled `String` rather than `FieldName` — the same type — because the automatic
+`sizeOf` for a nested inductive treats the abbreviation as a second shape of list and then fails to
+prove the two agree.  `FieldValues` is the name to use everywhere else. -/
+| struct : String → List (String × Value) → Value
 
 /-- The values of the variables in scope, innermost binding first.
 
@@ -36,6 +47,47 @@ This could be thought of as the `Value`-level counterpart of `Context`.
 It cannot be used in `Value.closure`, which is where the first such list appears: an abbreviation
 mentioning `Value` has to come after it to avoid a `mutual` group that makes proofs more difficult. -/
 public abbrev Bindings := List (String × Value)
+
+/-- What a struct's fields are bound to, in the order its declaration lists them.
+
+The `Value`-level counterpart of a `StructDecl`'s `fields`, and, like `Bindings`, an abbreviation
+that cannot be used in the constructor it describes: it mentions `Value`, so it has to come after
+it. -/
+public abbrev FieldValues := List (FieldName × Value)
+
+/-- `fvs` with every field `us` names rebound to the value `us` gives it: the fields `structUpdate`
+produces.
+
+Rebinding in place rather than pushing the new values in front is what keeps a struct value's fields
+exactly its declaration's, in its declaration's order, however many times it is updated — so an
+update changes what a field is bound to and nothing else.  That is also what makes it obviously
+type-preserving: the two halves of `Value.HasType`'s struct case that talk about *which* fields there
+are survive it untouched.
+
+A field `us` names that `fvs` does not have is dropped, which is a case the type checker has already
+ruled out. -/
+@[expose] public def FieldValues.update (fvs us : FieldValues) : FieldValues :=
+  fvs.map fun p =>
+    match us.lookup p.1 with
+    | some v => (p.1, v)
+    | none => p
+
+/-- What an update does to a single field: rebinds it if the update names it, leaves it alone
+otherwise, and introduces nothing. -/
+@[simp] public theorem FieldValues.lookup_update {fvs us : FieldValues} {f : FieldName} :
+    (FieldValues.update fvs us).lookup f = (fvs.lookup f).map fun v => (us.lookup f).getD v := by
+  induction fvs with
+  | nil => simp [FieldValues.update]
+  | cons p fvs ih =>
+      obtain ⟨g, v⟩ := p
+      have hhead : FieldValues.update ((g, v) :: fvs) us
+          = (g, (us.lookup g).getD v) :: FieldValues.update fvs us := by
+        cases hu : us.lookup g <;> simp [FieldValues.update, hu]
+      rw [hhead, List.lookup_cons, List.lookup_cons]
+      by_cases h : f == g
+      · obtain rfl : f = g := by grind
+        simp
+      · simpa [h] using ih
 
 /-- What a name is bound to while an expression runs: the local bindings, innermost first, over the
 globals every expression can see.
@@ -124,19 +176,43 @@ back together and is the form to use.
 Only the *local* bindings descend into `HasType` like that.  The globals the closure carries are
 held to `Globals.WellTyped`, a condition on their syntax, precisely so that they do not: a global's
 value is a closure over the globals, so typing one value-wise would ask for the same judgement
-again, and this relation would have no least fixed point. -/
-public inductive Value.HasType : Value → Ty → Prop where
-| int (i : Int) : HasType (.int i) .int
-| string (s : String) : HasType (.string s) .string
-| list {vs : List Value} {t : Ty} : (∀ v ∈ vs, HasType v t) → HasType (.list vs) (.list t)
+again, and this relation would have no least fixed point.
+
+A struct value has a struct type when the name it carries is declared and its fields are that
+declaration's fields at the declaration's types.  Being nominal, `Ty.struct` says only the name, so
+`ss` is what makes this a judgement about anything at all — and unlike the context a closure's type
+leaves existential, it is fixed: struct declarations are a property of the whole program, so one
+table runs through the entire relation as a parameter.
+
+`ss` is where the value and the declaration are compared field by field, always by `lookup` and never
+by position, so that an update — which rebinds fields without reordering them — and a `structNew` —
+which writes them in the declared order — are typed by the same clauses. -/
+public inductive Value.HasType (ss : Structs) : Value → Ty → Prop where
+| int (i : Int) : HasType ss (.int i) .int
+| string (s : String) : HasType ss (.string s) .string
+| list {vs : List Value} {t : Ty} :
+    (∀ v ∈ vs, HasType ss v t) → HasType ss (.list vs) (.list t)
 | closure {cbindings : Bindings} {cglobals : Globals} {ps : Context}
     {body : Expression} {cctx : Context} {r : Ty} :
-    Globals.WellTyped cglobals →
+    Globals.WellTyped ss cglobals →
     (∀ x, (cctx.lookup x).isSome → (cbindings.lookup x).isSome) →
     (∀ x, (cbindings.lookup x).isSome → (cctx.lookup x).isSome) →
-    (∀ x t v, cctx.lookup x = some t → cbindings.lookup x = some v → HasType v t) →
-    body.infer (ps ++ cctx ++ Globals.types cglobals) = some r →
-    HasType (.closure cbindings cglobals ps body) (.fn (ps.map Prod.snd) r)
+    (∀ x t v, cctx.lookup x = some t → cbindings.lookup x = some v → HasType ss v t) →
+    body.infer ss (ps ++ cctx ++ Globals.types cglobals) = some r →
+    HasType ss (.closure cbindings cglobals ps body) (.fn (ps.map Prod.snd) r)
+/-- The name is declared, the value is bound at exactly the fields the declaration lists, and each
+one holds a value of the type declared for it.
+
+The two domains have to match for the same reason a closure's do: a field the declaration has not
+heard of would make `structGet` on it ill typed while the value carried something anyway, and a
+declared field the value lacks would make `structGet` well typed with nothing to hand back.  One
+`Bool` equality says both, since neither side mentions `HasType` and so neither needs splitting the
+way the closure case does. -/
+| struct {name : String} {sd : StructDecl} {fvs : FieldValues} :
+    ss.lookup name = some sd →
+    (∀ f, (sd.fields.lookup f).isSome = (fvs.lookup f).isSome) →
+    (∀ f t v, sd.fields.lookup f = some t → fvs.lookup f = some v → HasType ss v t) →
+    HasType ss (.struct name fvs) (.struct name)
 
 /-- `env`'s globals all check, and its bindings are exactly the names `ctx` promises, at the types
 `ctx` gives them.
@@ -151,10 +227,10 @@ stray binding could hand a `varRef` a value of the wrong type.
 
 It is exposed, like `Globals.WellTyped`, because proofs elsewhere build one of these and take one
 apart as the conjunction it is. -/
-@[expose] public def Env.HasType (env : Env) (ctx : Context) : Prop :=
-  Globals.WellTyped env.globals
+@[expose] public def Env.HasType (ss : Structs) (env : Env) (ctx : Context) : Prop :=
+  Globals.WellTyped ss env.globals
     ∧ (∀ x, (env.bindings.lookup x).isSome → (ctx.lookup x).isSome)
-    ∧ (∀ x t, ctx.lookup x = some t → ∃ v, env.bindings.lookup x = some v ∧ v.HasType t)
+    ∧ (∀ x t, ctx.lookup x = some t → ∃ v, env.bindings.lookup x = some v ∧ v.HasType ss t)
 
 /-- What it takes for a closure to have a type, in terms of `Env.HasType`.
 
@@ -163,11 +239,11 @@ whatever it captured was enough to type its body.
 
 The two halves the closure stores are put back together here as the `Env` they came from, which is
 what lets `Eval.hasType` hand `Env.HasType` straight to the induction hypothesis for the body. -/
-@[simp] public theorem Value.hasType_closure_iff {cbindings : Bindings}
+@[simp] public theorem Value.hasType_closure_iff {ss : Structs} {cbindings : Bindings}
     {cglobals : Globals} {ps : Context} {body : Expression} {t : Ty} :
-    Value.HasType (.closure cbindings cglobals ps body) t ↔
-      ∃ cctx r, Env.HasType ⟨cbindings, cglobals⟩ cctx
-        ∧ body.infer (ps ++ cctx ++ Globals.types cglobals) = some r
+    Value.HasType ss (.closure cbindings cglobals ps body) t ↔
+      ∃ cctx r, Env.HasType ss ⟨cbindings, cglobals⟩ cctx
+        ∧ body.infer ss (ps ++ cctx ++ Globals.types cglobals) = some r
         ∧ t = .fn (ps.map Prod.snd) r := by
   constructor
   · intro h
@@ -184,10 +260,62 @@ what lets `Eval.hasType` hand `Env.HasType` straight to the induction hypothesis
     · obtain ⟨v', hv', hty⟩ := hval x t hx
       grind
 
+/-- What it takes for a struct value to have a type, as one existential over the declaration its name
+resolves to.
+
+The name is not existential the way a closure's context is: it appears in the value and in the type
+alike, so a struct value has at most one type, and it is the declaration — the only thing a
+`Ty.struct` does not carry — that has to be found. -/
+@[simp] public theorem Value.hasType_struct_iff {ss : Structs} {name : String} {fvs : FieldValues}
+    {t : Ty} :
+    Value.HasType ss (.struct name fvs) t ↔
+      ∃ sd, ss.lookup name = some sd
+        ∧ (∀ f, (sd.fields.lookup f).isSome = (fvs.lookup f).isSome)
+        ∧ (∀ f t' v, sd.fields.lookup f = some t' → fvs.lookup f = some v → Value.HasType ss v t')
+        ∧ t = .struct name := by
+  constructor
+  · intro h
+    cases h with
+    | struct hsd hdom htys => exact ⟨_, hsd, hdom, htys, rfl⟩
+  · rintro ⟨sd, hsd, hdom, htys, rfl⟩
+    exact .struct hsd hdom htys
+
+/-- A struct value whose fields are the declaration's fields, name for name and in order, each with a
+value of its declared type, has that declaration's struct type.
+
+This is the positional view of the struct case, and the form to build one with.  The rule itself is
+stated over `lookup` so that an update — which rebinds fields without reordering them — is typed by
+the same clauses as a `structNew`; but a `structNew` produces its fields in the declaration's order,
+so this is the shape a concrete struct value comes in. -/
+public theorem Value.hasType_struct_of_fields {ss : Structs} {name : String} {sd : StructDecl}
+    {fvs : FieldValues} (hsd : ss.lookup name = some sd)
+    (hnames : fvs.map Prod.fst = sd.fields.map Prod.fst)
+    (hall : ∀ p ∈ fvs.zip sd.fields, Value.HasType ss p.1.2 p.2.2) :
+    Value.HasType ss (.struct name fvs) (.struct name) :=
+  .struct hsd (List.lookup_isSome_congr hnames.symm)
+    fun _ _ _ hft hfv => hall _ (List.mem_zip_of_lookup hnames hfv hft)
+
+/-- Updating preserves the types the fields are held to.
+
+Every field of the result is either the one the struct had or the one the update gave it, so it is
+enough that both agree with `fts` field by field — which is exactly what the struct's own
+`Value.HasType` gives for the first and what the type checker gives for the second. -/
+public theorem FieldValues.hasType_update {ss : Structs} {fts : List (FieldName × Ty)}
+    {fvs us : FieldValues}
+    (hfvs : ∀ f t v, fts.lookup f = some t → fvs.lookup f = some v → Value.HasType ss v t)
+    (hus : ∀ f t v, fts.lookup f = some t → us.lookup f = some v → Value.HasType ss v t)
+    {f : FieldName} {t : Ty} {v : Value} (hft : fts.lookup f = some t)
+    (hfv : (FieldValues.update fvs us).lookup f = some v) : Value.HasType ss v t := by
+  rw [FieldValues.lookup_update] at hfv
+  obtain ⟨w, hw, rfl⟩ := Option.map_eq_some_iff.mp hfv
+  cases h : us.lookup f with
+  | none => simpa [h] using hfvs f t w hft hw
+  | some v' => simpa [h] using hus f t v' hft h
+
 /-- A globals table that checks is an environment describing the empty context: it has no local
 bindings for the context to disagree with. -/
-public theorem Globals.hasType_env {gs : Globals} (h : Globals.WellTyped gs) :
-    Env.HasType (Globals.env gs) [] :=
+public theorem Globals.hasType_env {ss : Structs} {gs : Globals} (h : Globals.WellTyped ss gs) :
+    Env.HasType ss (Globals.env gs) [] :=
   ⟨by simpa [Globals.env] using h, by simp [Globals.env], by simp⟩
 
 /-- `env` with each name in `ps` bound to the value in `vs` at the same position, in front of what
@@ -206,18 +334,19 @@ one argument per parameter and each of the type its parameter declares.
 
 Walking the two lists together also pins the arity down: a call passing too few or too many
 arguments has no such proof. -/
-public inductive ArgsHaveType : Context → List Value → Prop where
-| nil : ArgsHaveType [] []
-| cons (x : String) : v.HasType t → ArgsHaveType ps args → ArgsHaveType ((x, t) :: ps) (v :: args)
+public inductive ArgsHaveType (ss : Structs) : Context → List Value → Prop where
+| nil : ArgsHaveType ss [] []
+| cons (x : String) :
+    v.HasType ss t → ArgsHaveType ss ps args → ArgsHaveType ss ((x, t) :: ps) (v :: args)
 
 /-- One well-typed binding on the front of the environment and its type on the front of the context
 keeps the two in step.
 
 Both domain clauses of `Env.HasType` are settled by the same case split: the new name is in both
 lists or in neither. -/
-public theorem Env.hasType_cons {env : Env} {ctx : Context} {x : String} {v : Value} {t : Ty}
-    (hv : v.HasType t) (henv : Env.HasType env ctx) :
-    Env.HasType ⟨(x, v) :: env.bindings, env.globals⟩ ((x, t) :: ctx) := by
+public theorem Env.hasType_cons {ss : Structs} {env : Env} {ctx : Context} {x : String} {v : Value}
+    {t : Ty} (hv : v.HasType ss t) (henv : Env.HasType ss env ctx) :
+    Env.HasType ss ⟨(x, v) :: env.bindings, env.globals⟩ ((x, t) :: ctx) := by
   obtain ⟨hgs, hdom, hval⟩ := henv
   refine ⟨by simpa using hgs, fun y hy => ?_, fun y t' hy => ?_⟩ <;>
     simp only [List.lookup_cons] at hy ⊢ <;>
@@ -234,9 +363,9 @@ the extended context describes.
 The parameters shadow the captured environment on both sides at once — in the environment because
 `Env.extend` puts them first, and in the context because they are appended on the left — which is
 what keeps the two in step. -/
-public theorem Env.hasType_extend {ps : Context} {vs : List Value} {env : Env} {ctx : Context}
-    (h : ArgsHaveType ps vs) (henv : Env.HasType env ctx) :
-    Env.HasType (env.extend ps vs) (ps ++ ctx) := by
+public theorem Env.hasType_extend {ss : Structs} {ps : Context} {vs : List Value} {env : Env}
+    {ctx : Context} (h : ArgsHaveType ss ps vs) (henv : Env.HasType ss env ctx) :
+    Env.HasType ss (env.extend ps vs) (ps ++ ctx) := by
   induction h with
   | nil => simpa [Env.extend] using henv
   | cons _ hv _ ih => simpa [Env.extend] using Env.hasType_cons hv ih
@@ -254,7 +383,7 @@ the parameter list describes.
 
 `Decl.parameters` is a `Context`, so this is what lets a call use it as one: the types the
 body was written against and the types the arguments arrive with are the same list. -/
-public theorem Env.hasType_callEnv {d : Decl} {gs : Globals} {args : List Value}
-    (hgs : Globals.WellTyped gs) (h : ArgsHaveType d.parameters args) :
-    Env.HasType (d.callEnv gs args) d.parameters := by
+public theorem Env.hasType_callEnv {ss : Structs} {d : Decl} {gs : Globals} {args : List Value}
+    (hgs : Globals.WellTyped ss gs) (h : ArgsHaveType ss d.parameters args) :
+    Env.HasType ss (d.callEnv gs args) d.parameters := by
   simpa [Decl.callEnv] using Env.hasType_extend h (Globals.hasType_env hgs)

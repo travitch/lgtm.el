@@ -12,11 +12,12 @@ An `Expression` written out of its constructors stops being readable at about th
 adds notation for `Ty`, `Expression`, and `Decl` so the same programs can be written the way the
 docstrings elsewhere already describe them — `fun (x : int) => x + 1`, `g(x)`, `x :: xs`.
 
-Three entry points:
+Four entry points:
 
 * `[lgtm_ty| (int) -> string]` elaborates to a `Ty`.
 * `[lgtm| fun (x : int) => x + 1]` elaborates to an `Expression`.
 * `lgtm def` is a command that declares a `Decl`.
+* `lgtm struct` is a command that declares a `StructDecl`.
 
 Everything is a macro, so these expand to ordinary constructor applications and cost nothing at
 run time.  A DSL term is *not* checked by `Expression.infer` when it elaborates — `[lgtm| 1 + "a"]`
@@ -27,14 +28,14 @@ Scoping is the IR's, not Lean's: an identifier always becomes a `varRef` of its 
 `x` in `[lgtm| fun (x : int) => x]` refers to the DSL binder and never to a Lean variable called
 `x`.  To reach a Lean term of type `Expression` or `Ty`, splice it with `~(...)`.
 
-The keywords inside a DSL term — `int`, `string`, `list`, `reverse`, `var`, and `as` — are declared
-with `&`, Lean's non-reserved symbol form, so importing this module does not stop `int` or `list`
-from being used as ordinary Lean identifiers.  `lgtm` is the one exception and *is* a reserved
-token: a command's leading keyword has to be reserved for the command parser to find it at all, so
-a file importing this module cannot also name something `lgtm`.
+The keywords inside a DSL term — `int`, `string`, `list`, `reverse`, `var`, `struct`, `new`, and `as`
+— are declared with `&`, Lean's non-reserved symbol form, so importing this module does not stop
+`int` or `list` from being used as ordinary Lean identifiers.  `lgtm` is the one exception and *is* a
+reserved token: a command's leading keyword has to be reserved for the command parser to find it at
+all, so a file importing this module cannot also name something `lgtm`.
 
-`let` and `in` are written as plain symbols rather than with `&`, because Lean reserves both already:
-declaring them here takes nothing away that was available before.
+`let`, `in`, and `with` are written as plain symbols rather than with `&`, because Lean reserves all
+three already: declaring them here takes nothing away that was available before.
 -/
 
 /-! `behavior := symbol` is what lets the keywords be non-reserved: it tells the category to consider
@@ -52,6 +53,11 @@ comma-separated group: `(int, string) -> int`, and `() -> int` for a function of
 syntax:max &"int" : lgtmTy
 syntax:max &"string" : lgtmTy
 syntax:max &"list" lgtmTy:max : lgtmTy
+/-- `struct Point` is the type the `lgtm struct` named `Point` declares.  The string form,
+`struct "my-struct"`, is for struct names that are not Lean identifiers — the same escape hatch
+`var` is for variables. -/
+syntax:max &"struct" ident : lgtmTy
+syntax:max &"struct" str : lgtmTy
 syntax:max "(" lgtmTy ")" : lgtmTy
 syntax:20 "(" lgtmTy,* ")" " -> " lgtmTy:20 : lgtmTy
 syntax:max "~" "(" term ")" : lgtmTy
@@ -63,6 +69,8 @@ macro_rules
   | `([lgtm_ty| int]) => `(Ty.int)
   | `([lgtm_ty| string]) => `(Ty.string)
   | `([lgtm_ty| list $t]) => `(Ty.list [lgtm_ty| $t])
+  | `([lgtm_ty| struct $n:ident]) => `(Ty.struct $(Lean.quote n.getId.toString))
+  | `([lgtm_ty| struct $n:str]) => `(Ty.struct $n)
   | `([lgtm_ty| ($t)]) => `([lgtm_ty| $t])
   | `([lgtm_ty| ($ts,*) -> $r]) => do
       let ps ← ts.getElems.mapM fun t => `([lgtm_ty| $t])
@@ -75,7 +83,13 @@ Precedence runs `::` looser than `+`/`-`, which are looser than application and 
 `1 + 2 :: xs` is `(1 + 2) :: xs` and `f(x) + 1` is `(f(x)) + 1`.
 
 A list literal carries its element type, because `lnil` does: `[1, 2 : int]` is
-`.lcons (.intLit 1) (.lcons (.intLit 2) (.lnil .int))`, and the empty list is `[: int]`. -/
+`.lcons (.intLit 1) (.lcons (.intLit 2) (.lnil .int))`, and the empty list is `[: int]`.
+
+The three struct forms are `new Point { x = 1, y = 2 }`, `p.x`, and `{ p with x = 1 }`.  A field read
+is written two ways for one reason: `p.x` is a single identifier token as far as Lean's tokenizer is
+concerned, so a dotted identifier is split into a `varRef` and one `structGet` per component, while
+the postfix `.` is what reads a field of something that is not a bare name — `f(1).x`, or
+`(var "my-struct").x`.  The two agree on everything they both accept. -/
 
 syntax:max ident : lgtmExpr
 syntax:max num : lgtmExpr
@@ -87,6 +101,15 @@ syntax:max &"var" str : lgtmExpr
 syntax:max "[" lgtmExpr,* " : " lgtmTy "]" : lgtmExpr
 syntax:max &"reverse" lgtmExpr:max : lgtmExpr
 syntax:max lgtmExpr:max noWs "(" lgtmExpr,* ")" : lgtmExpr
+/-- `new Point { x = 1, y = 2 }` builds a `Point`.  Every field the declaration has must be given,
+in the order it declares them, which is the type checker's business rather than the parser's. -/
+syntax:max &"new" ident "{" (ident " = " lgtmExpr),* "}" : lgtmExpr
+syntax:max &"new" str "{" (ident " = " lgtmExpr),* "}" : lgtmExpr
+/-- `e.field`, for an `e` that is not a bare name.  A bare name takes the dotted-identifier route
+instead. -/
+syntax:max lgtmExpr:max noWs "." noWs ident : lgtmExpr
+/-- `{ p with x = 1, y = 2 }` is `p` with those fields rebound and the rest left alone. -/
+syntax:max "{" lgtmExpr " with " (ident " = " lgtmExpr),* "}" : lgtmExpr
 syntax:65 lgtmExpr:65 " + " lgtmExpr:66 : lgtmExpr
 syntax:65 lgtmExpr:65 " - " lgtmExpr:66 : lgtmExpr
 syntax:55 lgtmExpr:56 " :: " lgtmExpr:55 : lgtmExpr
@@ -100,7 +123,16 @@ syntax:10 "let " ident " = " lgtmExpr " in " lgtmExpr:10 : lgtmExpr
 syntax:max "[lgtm| " lgtmExpr "]" : term
 
 macro_rules
-  | `([lgtm| $x:ident]) => `(Expression.varRef $(Lean.quote x.getId.toString))
+  | `([lgtm| $x:ident]) => do
+      -- `p.x.y` arrives here as one identifier, because that is how it tokenizes: the first
+      -- component is the variable and each one after it is a field read of what came before.
+      match x.getId.toString.splitOn "." with
+      | [] => Lean.Macro.throwUnsupported
+      | root :: fields =>
+          let mut acc ← `(Expression.varRef $(Lean.quote root))
+          for f in fields do
+            acc ← `(Expression.structGet $acc $(Lean.quote f))
+          return acc
   | `([lgtm| var $s:str]) => `(Expression.varRef $s)
   | `([lgtm| $n:num]) => `(Expression.intLit $n)
   | `([lgtm| $s:str]) => `(Expression.stringLit $s)
@@ -124,6 +156,20 @@ macro_rules
       `(Expression.lam [$ps,*] [lgtm| $b])
   | `([lgtm| let $x:ident = $e in $b]) =>
       `(Expression.let_ $(Lean.quote x.getId.toString) [lgtm| $e] [lgtm| $b])
+  | `([lgtm| new $n:ident { $[$fs:ident = $es:lgtmExpr],* }]) => do
+      let bs ← (fs.zip es).mapM fun (f, e) => `(($(Lean.quote f.getId.toString), [lgtm| $e]))
+      `(Expression.structNew $(Lean.quote n.getId.toString) [$bs,*])
+  | `([lgtm| new $n:str { $[$fs:ident = $es:lgtmExpr],* }]) => do
+      let bs ← (fs.zip es).mapM fun (f, e) => `(($(Lean.quote f.getId.toString), [lgtm| $e]))
+      `(Expression.structNew $n [$bs,*])
+  | `([lgtm| $e.$f:ident]) => do
+      let mut acc ← `([lgtm| $e])
+      for g in f.getId.toString.splitOn "." do
+        acc ← `(Expression.structGet $acc $(Lean.quote g))
+      return acc
+  | `([lgtm| { $e with $[$fs:ident = $es:lgtmExpr],* }]) => do
+      let bs ← (fs.zip es).mapM fun (f, e) => `(($(Lean.quote f.getId.toString), [lgtm| $e]))
+      `(Expression.structUpdate [lgtm| $e] [$bs,*])
 
 /-! ## Declarations -/
 
@@ -162,6 +208,28 @@ macro_rules
       match vis with
       | some _ => `($[$doc:docComment]? private def $n : Decl := $val)
       | none => `($[$doc:docComment]? def $n : Decl := $val)
+
+/-- `lgtm struct Point { x : int, y : int }` declares `Point : StructDecl`.
+
+The same shape as `lgtm def`: the IR name defaults to the Lean name and `as "point"` overrides it,
+and `lgtm private struct` makes the generated Lean declaration `private`.  The fields are in the
+order they are written, which is the order a `new` has to give them in.
+
+A doc comment documents the Lean declaration only.  A `StructDecl` has no docstring field to put it
+in, unlike a `Decl`. -/
+syntax (docComment)? "lgtm " (lgtmVis)? &"struct" ident (&"as" str)?
+  "{" (ident " : " lgtmTy),* "}" : command
+
+macro_rules
+  | `($[$doc:docComment]? lgtm $[$vis:lgtmVis]? struct $n:ident $[as $ir:str]?
+        { $[$fs:ident : $ts:lgtmTy],* }) => do
+      let fields ← (fs.zip ts).mapM fun (f, t) =>
+        `(($(Lean.quote f.getId.toString), [lgtm_ty| $t]))
+      let irName := ir.getD (Lean.quote n.getId.toString)
+      let val ← `({ name := $irName, fields := [$fields,*] : StructDecl })
+      match vis with
+      | some _ => `($[$doc:docComment]? private def $n : StructDecl := $val)
+      | none => `($[$doc:docComment]? def $n : StructDecl := $val)
 
 section Tests
 
@@ -273,7 +341,7 @@ example : addPred =
       resultType := .int } := rfl
 
 -- And what it builds type checks, which is the point of writing it this way.
-#guard addPred.check []
+#guard addPred.check [] []
 
 /-- Put `s` after an exclamation mark. -/
 lgtm def bang (s : string) : list string :=
@@ -281,45 +349,129 @@ lgtm def bang (s : string) : list string :=
 
 -- With no `as`, the IR name is the Lean name.
 example : bang.name = "bang" := rfl
-#guard bang.check []
+#guard bang.check [] []
 
 lgtm def applyTo as "apply-to" (g : (int) -> int) (x : int) : int :=
   g(x)
 
-#guard applyTo.check []
+#guard applyTo.check [] []
 
 /-- Build a function that adds `n` to its argument. -/
 lgtm def adder (n : int) : (int) -> int :=
   fun (m : int) => n + m
 
-#guard adder.check []
+#guard adder.check [] []
 
 /-- Reverse `xs` with `x` on the front. -/
 lgtm def revCons as "rev-cons" (x : int) (xs : list int) : list int :=
   reverse (x :: xs)
 
-#guard revCons.check []
+#guard revCons.check [] []
 
 /-- Twice one more than `n`. -/
 lgtm def letDouble as "let-double" (n : int) : int :=
   let m = n + 1 in m + m
 
-#guard letDouble.check []
+#guard letDouble.check [] []
 
 -- A declaration with no parameters is fine, and so is one that returns a function.
 lgtm def three : int := 3
-#guard three.check []
+#guard three.check [] []
 
 -- `lgtm private def` makes the Lean declaration private; the `Decl` it builds is the same.
 /-- One more than `x`. -/
 lgtm private def succ as "succ-one" (x : int) : int := x + 1
 example : succ.name = "succ-one" := rfl
 example : succ.docstring = "One more than `x`." := rfl
-#guard succ.check []
+#guard succ.check [] []
 
 -- The DSL builds ill-typed programs as readily as well-typed ones; checking is still what rejects
 -- them.
-#guard !({ three with body := [lgtm| 1 + "a"] } : Decl).check []
-#guard !({ revCons with body := [lgtm| reverse x] } : Decl).check []
+#guard !({ three with body := [lgtm| 1 + "a"] } : Decl).check [] []
+#guard !({ revCons with body := [lgtm| reverse x] } : Decl).check [] []
+
+/-! ### Structs -/
+
+-- A struct type is written with its name, which is a type like any other: it nests under `list`,
+-- appears in a function type, and can be spelled with a string when it is not a Lean identifier.
+example : [lgtm_ty| struct Point] = Ty.struct "Point" := rfl
+example : [lgtm_ty| struct "my-struct"] = Ty.struct "my-struct" := rfl
+example : [lgtm_ty| list struct Point] = Ty.list (.struct "Point") := rfl
+example : [lgtm_ty| (struct Point) -> struct Point]
+    = Ty.fn [.struct "Point"] (.struct "Point") := rfl
+
+-- `new` gives each field an expression, in the order written.
+example : [lgtm| new Point { x = 1, y = 2 }]
+    = Expression.structNew "Point" [("x", .intLit 1), ("y", .intLit 2)] := rfl
+example : [lgtm| new "my-struct" { f = n }]
+    = Expression.structNew "my-struct" [("f", .varRef "n")] := rfl
+example : [lgtm| new Point {}] = Expression.structNew "Point" [] := rfl
+example : [lgtm| new Point { x = f(1) + 1, y = [2 : int] }]
+    = Expression.structNew "Point"
+        [("x", .plus (.app (.varRef "f") [.intLit 1]) (.intLit 1)),
+          ("y", .lcons (.intLit 2) (.lnil .int))] := rfl
+
+-- A field read of a bare name is a dotted identifier, which is one `structGet` per component.
+example : [lgtm| p.x] = Expression.structGet (.varRef "p") "x" := rfl
+example : [lgtm| p.origin.x]
+    = Expression.structGet (.structGet (.varRef "p") "origin") "x" := rfl
+
+-- A field read of anything else is the postfix `.`, and the two nest into each other.
+example : [lgtm| f(1).x] = Expression.structGet (.app (.varRef "f") [.intLit 1]) "x" := rfl
+example : [lgtm| f(1).origin.x]
+    = Expression.structGet (.structGet (.app (.varRef "f") [.intLit 1]) "origin") "x" := rfl
+example : [lgtm| (new Point { x = 1, y = 2 }).x]
+    = Expression.structGet (.structNew "Point" [("x", .intLit 1), ("y", .intLit 2)]) "x" := rfl
+example : [lgtm| (var "my-struct").x] = Expression.structGet (.varRef "my-struct") "x" := rfl
+
+-- A field read is tighter than arithmetic, and a struct is an ordinary operand everywhere else.
+example : [lgtm| p.x + 1] = Expression.plus (.structGet (.varRef "p") "x") (.intLit 1) := rfl
+example : [lgtm| p :: ps] = Expression.lcons (.varRef "p") (.varRef "ps") := rfl
+example : [lgtm| g(p.x, p.y)]
+    = Expression.app (.varRef "g")
+        [.structGet (.varRef "p") "x", .structGet (.varRef "p") "y"] := rfl
+
+-- An update names only the fields it changes, in any order, and chains.
+example : [lgtm| { p with x = 1 }] = Expression.structUpdate (.varRef "p") [("x", .intLit 1)] := rfl
+example : [lgtm| { p with y = 2, x = 1 }]
+    = Expression.structUpdate (.varRef "p") [("y", .intLit 2), ("x", .intLit 1)] := rfl
+example : [lgtm| { { p with x = 1 } with y = 2 }]
+    = Expression.structUpdate (.structUpdate (.varRef "p") [("x", .intLit 1)])
+        [("y", .intLit 2)] := rfl
+example : [lgtm| { p with x = p.x + 1 }]
+    = Expression.structUpdate (.varRef "p")
+        [("x", .plus (.structGet (.varRef "p") "x") (.intLit 1))] := rfl
+
+/-- A point in the plane. -/
+lgtm struct Point { x : int, y : int }
+
+-- The command builds the `StructDecl` field by field, in the order the fields are written.
+example : Point = { name := "Point", fields := [("x", .int), ("y", .int)] } := rfl
+
+-- With no `as`, the IR name is the Lean name; `as` overrides it, as it does for `lgtm def`.
+lgtm struct Renamed as "my-struct" { f : list int }
+example : Renamed.name = "my-struct" := rfl
+example : Renamed.fields = [("f", .list .int)] := rfl
+
+-- A struct may have no fields, and its fields may be of any type — another struct included.
+lgtm struct Nothing {}
+example : Nothing.fields = [] := rfl
+
+lgtm private struct Box { label : string, origin : struct Point, step : (int) -> int }
+example : Box.fields
+    = [("label", .string), ("origin", .struct "Point"), ("step", .fn [.int] .int)] := rfl
+
+/-- `fun (p : Point) => new Point { x = p.y, y = p.x }` -/
+lgtm def swap (p : struct Point) : struct Point :=
+  new Point { x = p.y, y = p.x }
+
+-- And what the two commands build together type checks, which is the point of writing it this way.
+#guard swap.check (Structs.ofDecls [Point]) []
+#guard !swap.check [] []
+
+lgtm def shift (p : struct Point) (d : int) : struct Point :=
+  { p with x = p.x + d }
+
+#guard shift.check (Structs.ofDecls [Point]) []
 
 end Tests

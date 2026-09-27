@@ -19,32 +19,67 @@ type live in `Value.lean`. -/
 This is the bridge from the deeply-embedded DSL to logical terms we can reason about
 using standard Lean techniques.  The `Expression` is the DSL term while the `Value` is
 how it would be evaluated in Lean.  Proofs are over the latter, which can use the full
-Lean standard library. -/
-public inductive Eval : Env → Expression → Value → Prop where
-| ELam (ps : List (String × Ty)) (body : Expression) : Eval env (.lam ps body) (env.closure ps body)
+Lean standard library.
+
+`ss` is carried only so that `EApp` can state `ArgsHaveType`: nothing here consults a struct
+declaration to compute anything.  A `structNew` is a name and the values its fields were given, a
+`structGet` reads a field out of the value it finds, and a `structUpdate` rebinds the fields it names,
+so evaluation needs no more of a struct than the value carries.  Whether that agrees with the
+declaration is the type checker's business, and `Eval.hasType` is where the two meet. -/
+public inductive Eval (ss : Structs) : Env → Expression → Value → Prop where
+| ELam (ps : List (String × Ty)) (body : Expression) :
+    Eval ss env (.lam ps body) (env.closure ps body)
 /-- A call evaluates its function and its arguments, then the body in the closure's environment
 extended with the parameters. -/
 | EApp (f : Expression) (args : List Expression) :
-    Eval env f (.closure cbindings cglobals ps body) →
-    args.length = vs.length → (∀ p ∈ args.zip vs, Eval env p.1 p.2) →
-    ArgsHaveType ps vs →
-    Eval (Env.extend ⟨cbindings, cglobals⟩ ps vs) body v →
-    Eval env (.app f args) v
+    Eval ss env f (.closure cbindings cglobals ps body) →
+    args.length = vs.length → (∀ p ∈ args.zip vs, Eval ss env p.1 p.2) →
+    ArgsHaveType ss ps vs →
+    Eval ss (Env.extend ⟨cbindings, cglobals⟩ ps vs) body v →
+    Eval ss env (.app f args) v
 /-- Let binds a variable that shadows any existing bindings.
 
     The bound value is available in the body of the let.  This is a non-recursive let. -/
 | ELet (x : String) (e : Expression) (body : Expression) :
-    Eval env e v₁ →
-    Eval ⟨(x, v₁) :: env.bindings, env.globals⟩ body v →
-    Eval env (.let_ x e body) v
-| EVarRef (x : String) : env.lookup x = some v → Eval env (.varRef x) v
-| EIntLit (i : Int) : Eval env (.intLit i) (.int i)
-| EPlus (e₁ : Expression) (e₂ : Expression) : Eval env e₁ (.int n₁) → Eval env e₂ (.int n₂) → Eval env (.plus e₁ e₂) (.int (n₁ + n₂))
-| EMinus (e₁ : Expression) (e₂ : Expression) : Eval env e₁ (.int n₁) → Eval env e₂ (.int n₂) → Eval env (.minus e₁ e₂) (.int (n₁ - n₂))
-| EStringLit (s : String) : Eval env (.stringLit s) (.string s)
-| ENil (ty : Ty) : Eval env (.lnil ty) (.list [])
-| ECons (e₁ : Expression) (e₂ : Expression) : Eval env e₁ v → Eval env e₂ (.list vs) → Eval env (.lcons e₁ e₂) (.list (v :: vs))
-| EListReverse (e : Expression) : Eval env e (.list vs) → Eval env (.listReverse e) (.list vs.reverse)
+    Eval ss env e v₁ →
+    Eval ss ⟨(x, v₁) :: env.bindings, env.globals⟩ body v →
+    Eval ss env (.let_ x e body) v
+| EVarRef (x : String) : env.lookup x = some v → Eval ss env (.varRef x) v
+/-- Building a struct evaluates each field's expression and keeps the result under that field's name.
+
+The fields come out under the names they went in under and in the order they went in, which is what
+`fes.map Prod.fst = fvs.map Prod.fst` says; the premise over the zip is then one evaluation per
+field, the way `EApp`'s is one per argument.  Which names those are is not checked here — the
+declaration is not consulted — so a `structNew` naming fields the struct does not have still
+evaluates.  Being ill typed is what rules it out. -/
+| EStructNew (name : String) (fes : List (FieldName × Expression)) :
+    fes.map Prod.fst = fvs.map Prod.fst →
+    (∀ p ∈ fes.zip fvs, Eval ss env p.1.2 p.2.2) →
+    Eval ss env (.structNew name fes) (.struct name fvs)
+/-- Reading a field evaluates the struct and hands back what that field is bound to.
+
+Bound in the *value*, not declared in the struct: a field the value does not carry leaves this stuck,
+which is the only thing that can go wrong here and is exactly what typing rules out. -/
+| EStructGet (e : Expression) (f : FieldName) :
+    Eval ss env e (.struct name fvs) → fvs.lookup f = some v →
+    Eval ss env (.structGet e f) v
+/-- Updating a struct evaluates it, evaluates each new field value, and rebinds those fields.
+
+`FieldValues.update` rebinds in place, so the result carries the same fields in the same order as the
+struct it came from and differs only in what the named ones hold.  Fields the update names that the
+struct does not have are therefore dropped rather than added — again a case typing rules out. -/
+| EStructUpdate (e : Expression) (fes : List (FieldName × Expression)) :
+    Eval ss env e (.struct name fvs) →
+    fes.map Prod.fst = us.map Prod.fst →
+    (∀ p ∈ fes.zip us, Eval ss env p.1.2 p.2.2) →
+    Eval ss env (.structUpdate e fes) (.struct name (FieldValues.update fvs us))
+| EIntLit (i : Int) : Eval ss env (.intLit i) (.int i)
+| EPlus (e₁ : Expression) (e₂ : Expression) : Eval ss env e₁ (.int n₁) → Eval ss env e₂ (.int n₂) → Eval ss env (.plus e₁ e₂) (.int (n₁ + n₂))
+| EMinus (e₁ : Expression) (e₂ : Expression) : Eval ss env e₁ (.int n₁) → Eval ss env e₂ (.int n₂) → Eval ss env (.minus e₁ e₂) (.int (n₁ - n₂))
+| EStringLit (s : String) : Eval ss env (.stringLit s) (.string s)
+| ENil (ty : Ty) : Eval ss env (.lnil ty) (.list [])
+| ECons (e₁ : Expression) (e₂ : Expression) : Eval ss env e₁ v → Eval ss env e₂ (.list vs) → Eval ss env (.lcons e₁ e₂) (.list (v :: vs))
+| EListReverse (e : Expression) : Eval ss env e (.list vs) → Eval ss env (.listReverse e) (.list vs.reverse)
 
 
 /-- Evaluating a well-typed expression produces a value of its inferred type.
@@ -67,10 +102,17 @@ was inferred at — is the whole case.
 closure's body was checked against a context of its own, recovered from the closure's type, and has
 nothing to do with the one the call was made in.  The argument-evaluation premise contributes
 nothing here — `ArgsHaveType` already says what the argument values are, so the types the arguments
-were *inferred* to have are only needed to line that up with the closure's parameters. -/
-public theorem Eval.hasType {env : Env} {ctx : Context} {e : Expression} {v : Value} {t : Ty}
-    (h : Eval env e v) (henv : Env.HasType env ctx)
-    (ht : e.infer (ctx ++ Globals.types env.globals) = some t) : v.HasType t := by
+were *inferred* to have are only needed to line that up with the closure's parameters.
+
+The three struct rules are where the argument-evaluation premise finally does the work `EApp`'s does
+not.  A struct value carries no types, so nothing but the induction hypothesis says what its fields
+hold: for each field, the expression that produced it is found by name and the type inference gave
+that expression is the type its value has.  That the field names line up across the declaration, the
+expressions and the values is what `Expression.map_fst_of_inferFields` and
+`List.mem_zip_of_lookup` between them supply. -/
+public theorem Eval.hasType {ss : Structs} {env : Env} {ctx : Context} {e : Expression} {v : Value}
+    {t : Ty} (h : Eval ss env e v) (henv : Env.HasType ss env ctx)
+    (ht : e.infer ss (ctx ++ Globals.types env.globals) = some t) : v.HasType ss t := by
   induction h generalizing ctx t with
   | @EVarRef v env x hx =>
       obtain ⟨hgs, hdom, hval⟩ := henv
@@ -114,6 +156,42 @@ public theorem Eval.hasType {env : Env} {ctx : Context} {e : Expression} {v : Va
   | ELet x e body _ _ ih₁ ihbody =>
       obtain ⟨t', ht', htbody⟩ := Expression.infer_let_eq_some.mp ht
       exact ihbody (Env.hasType_cons (ih₁ henv ht') henv) htbody
+  | EStructNew name fes hnames hev ihev =>
+      obtain ⟨sd, hsd, hfts, rfl⟩ := Expression.infer_structNew_eq_some.mp ht
+      have hkeys : sd.fields.map Prod.fst = fes.map Prod.fst :=
+        Expression.map_fst_of_inferFields hfts
+      refine .struct hsd (List.lookup_isSome_congr (hkeys.trans hnames)) fun f t' v' hft hfv => ?_
+      obtain ⟨e, he⟩ : ∃ e, fes.lookup f = some e :=
+        Option.isSome_iff_exists.mp (by rw [← List.lookup_isSome_congr hkeys f]; simp [hft])
+      obtain ⟨t'', hft'', hinfer⟩ := Expression.lookup_of_inferFields hfts he
+      obtain rfl : t'' = t' := by grind
+      exact ihev _ (List.mem_zip_of_lookup hnames he hfv) henv hinfer
+  | EStructGet e f _ hfv ihe =>
+      obtain ⟨name', sd, he, hsd, hft⟩ := Expression.infer_structGet_eq_some.mp ht
+      obtain ⟨sd', hsd', -, htys, hname⟩ := Value.hasType_struct_iff.mp (ihe henv he)
+      simp only [Ty.struct.injEq] at hname
+      subst hname
+      obtain rfl : sd' = sd := by grind
+      exact htys _ _ _ hft hfv
+  | EStructUpdate e fes _ hnames hev ihe ihev =>
+      obtain ⟨name', sd, fts, he, hsd, hfts, -, hfields, rfl⟩ :=
+        Expression.infer_structUpdate_eq_some.mp ht
+      obtain ⟨sd', hsd', hdom, htys, hname⟩ := Value.hasType_struct_iff.mp (ihe henv he)
+      simp only [Ty.struct.injEq] at hname
+      subst hname
+      obtain rfl : sd' = sd := by grind
+      refine .struct hsd (fun f => by simpa using hdom f)
+        fun f t' v' hft hfv => FieldValues.hasType_update htys ?_ hft hfv
+      -- What is left is the *new* values: each one is a field's expression evaluated, and the type
+      -- checker has already said that expression has the type the declaration gives that field.
+      intro f t' v' hft hus
+      obtain ⟨e', he'⟩ : ∃ e', fes.lookup f = some e' :=
+        Option.isSome_iff_exists.mp (by rw [List.lookup_isSome_congr hnames f]; simp [hus])
+      obtain ⟨t'', hft'', hinfer⟩ := Expression.lookup_of_inferFields hfts he'
+      obtain rfl : t'' = t' := by
+        have := hfields (f, t'') (List.mem_of_lookup hft'')
+        grind
+      exact ihev _ (List.mem_zip_of_lookup hnames he' hus) henv hinfer
   | _ => grind [Value.HasType]
 
 /-- `Apply d gs args v`: calling `d` with `args` among the globals `gs` returns `v`.
@@ -125,9 +203,10 @@ value.
 The `ArgsHaveType` premise is what makes a call with the wrong arguments stuck rather than junk:
 arguments of the wrong type, or the wrong number of them, produce no value at all.  It is also
 all `Apply.hasType` needs to read `d.parameters` as the context the body was checked in. -/
-public inductive Decl.Apply (d : Decl) (gs : Globals) : List Value → Value → Prop where
+public inductive Decl.Apply (d : Decl) (ss : Structs) (gs : Globals) : List Value → Value → Prop
+where
 | EApply (args : List Value) :
-    ArgsHaveType d.parameters args → Eval (d.callEnv gs args) d.body v → Apply d gs args v
+    ArgsHaveType ss d.parameters args → Eval ss (d.callEnv gs args) d.body v → Apply d ss gs args v
 
 /-- Calling a well-typed declaration among well-typed globals returns a value of its declared result
 type.
@@ -136,27 +215,27 @@ Unlike `Eval.hasType` this needs no hypothesis about the local environment: `App
 the arguments to match the parameters, and `Env.hasType_callEnv` turns that into the agreement
 between environment and context that `Eval.hasType` asks for.  What is left is a property of the
 declaration and the globals alone — nothing about this particular call. -/
-public theorem Decl.Apply.hasType {d : Decl} {gs : Globals} {args : List Value} {v : Value}
-    (h : d.Apply gs args v) (hgs : Globals.WellTyped gs) (hd : d.WellTyped gs) :
-    v.HasType d.resultType := by
+public theorem Decl.Apply.hasType {d : Decl} {ss : Structs} {gs : Globals} {args : List Value}
+    {v : Value} (h : d.Apply ss gs args v) (hgs : Globals.WellTyped ss gs)
+    (hd : d.WellTyped ss gs) : v.HasType ss d.resultType := by
   cases h with
   | EApply _ hargs hbody =>
       exact hbody.hasType (Env.hasType_callEnv hgs hargs) (by simpa [Decl.callEnv] using hd)
 
 /-- Every declaration in a well-typed globals table is well typed, so a call to any of them returns
 a value of the type it declares. -/
-public theorem Globals.apply_hasType {gs : Globals} {x : String} {d : Decl} {args : List Value}
-    {v : Value} (hgs : Globals.WellTyped gs) (hx : gs.lookup x = some d)
-    (h : d.Apply gs args v) : v.HasType d.resultType :=
+public theorem Globals.apply_hasType {ss : Structs} {gs : Globals} {x : String} {d : Decl}
+    {args : List Value} {v : Value} (hgs : Globals.WellTyped ss gs) (hx : gs.lookup x = some d)
+    (h : d.Apply ss gs args v) : v.HasType ss d.resultType :=
   h.hasType hgs (hgs x d hx)
 
 /-- `p.Apply x args v`: calling the declaration `p` gives the name `x` with `args` returns `v`.
 
-The body runs among `p`'s own globals, so it may call anything else `p` declares — itself
-included.  A name `p` does not declare has no call at all, which is the only way this differs from
-`Decl.Apply` on `p.globals`. -/
+The body runs among `p`'s own globals and its own structure types, so it may call anything else `p`
+declares — itself included — and mention any struct it declares.  A name `p` does not declare has no
+call at all, which is the only way this differs from `Decl.Apply` on `p.globals`. -/
 public inductive Program.Apply (p : Program) (x : String) : List Value → Value → Prop where
-| call (d : Decl) : p.lookup x = some d → d.Apply p.globals args v → Apply p x args v
+| call (d : Decl) : p.lookup x = some d → d.Apply p.structs p.globals args v → Apply p x args v
 
 /-- Calling a name in a well-typed program returns a value of the type the declaration under that
 name declares.
@@ -165,7 +244,7 @@ This is the top of the stack: `Program.WellTyped` is a property of the program a
 by `Program.check`, and it covers every call to every name in it. -/
 public theorem Program.Apply.hasType {p : Program} {x : String} {d : Decl} {args : List Value}
     {v : Value} (h : p.Apply x args v) (hp : p.WellTyped) (hx : p.lookup x = some d) :
-    v.HasType d.resultType := by
+    v.HasType p.structs d.resultType := by
   cases h with
   | call d' hx' hbody =>
       obtain rfl : d' = d := by grind
@@ -183,7 +262,7 @@ private theorem addPred.trivial_positive
   (x y res : Value)
   (hXPos : ∀ xv, .int xv = x → xv >= 1)
   (hYPos : ∀ yv, .int yv = y → yv >= 1)
-  (hRes : Decl.Apply addPred [] [ x, y ] res) :
+  (hRes : Decl.Apply addPred [] [] [ x, y ] res) :
   ∃ resv, res = .int resv ∧ resv > 0 := by
   obtain ⟨-, -, hbody⟩ := hRes
   cases hbody with
@@ -201,24 +280,24 @@ private theorem addPred.trivial_positive
             grind
 
 -- A call evaluates its body under the arguments, read back out by `EVarRef`.
-example : Decl.Apply addPred [] [.int 2, .int 5] (.int 6) :=
+example : Decl.Apply addPred [] [] [.int 2, .int 5] (.int 6) :=
   .EApply _ (.cons "x" (.int 2) (.cons "y" (.int 5) .nil))
     (.EPlus (n₁ := 2) (n₂ := 5 - 1) _ _ (.EVarRef "x" rfl)
       (.EMinus _ _ (.EVarRef "y" rfl) (.EIntLit 1)))
 
 -- Whatever a call returns has the declared result type, and it is `addPred` being well typed that
 -- says so, not anything about these particular arguments.
-example (v : Value) (h : Decl.Apply addPred [] [.int 2, .int 5] v) : v.HasType .int :=
+example (v : Value) (h : Decl.Apply addPred [] [] [.int 2, .int 5] v) : v.HasType [] .int :=
   h.hasType Globals.wellTyped_nil (by simp [addPred, List.lookup])
 
 -- A call with the wrong number of arguments is stuck, whether or not the body would have needed
 -- the missing one.
-example (v : Value) : ¬ Decl.Apply addPred [] [.int 2] v := by
+example (v : Value) : ¬ Decl.Apply addPred [] [] [.int 2] v := by
   rintro ⟨-, hargs, -⟩
   cases hargs with
   | cons _ _ hrest => cases hrest
 
-example (v : Value) : ¬ Decl.Apply addPred [] [.int 2, .int 5, .int 8] v := by
+example (v : Value) : ¬ Decl.Apply addPred [] [] [.int 2, .int 5, .int 8] v := by
   rintro ⟨-, hargs, -⟩
   cases hargs with
   | cons _ _ hrest => cases hrest with | cons _ _ hrest => cases hrest
@@ -228,16 +307,16 @@ lgtm private def cons (x : int) (xs : list int) : list int :=
   x :: xs
 
 /-- A one-element list is homogeneous for the reason its only element is. -/
-private theorem hasType_singleton {v : Value} {t : Ty} (h : v.HasType t) :
-    Value.HasType (.list [v]) (.list t) := .list (by simpa using h)
+private theorem hasType_singleton {v : Value} {t : Ty} (h : v.HasType ss t) :
+    Value.HasType ss (.list [v]) (.list t) := .list (by simpa using h)
 
-example : Decl.Apply cons [] [.int 1, .list [.int 2]] (.list [.int 1, .int 2]) :=
+example : Decl.Apply cons [] [] [.int 1, .list [.int 2]] (.list [.int 1, .int 2]) :=
   .EApply _ (.cons "x" (.int 1) (.cons "xs" (hasType_singleton (.int 2)) .nil))
     (.ECons _ _ (.EVarRef "x" rfl) (.EVarRef "xs" rfl))
 
 -- An argument of the wrong type is now rejected at the call itself, rather than getting the body
 -- stuck once it is looked up.
-example (v : Value) : ¬ Decl.Apply cons [] [.int 1, .int 2] v := by
+example (v : Value) : ¬ Decl.Apply cons [] [] [.int 1, .int 2] v := by
   rintro ⟨-, hargs, -⟩
   cases hargs with
   | cons _ _ hrest => cases hrest with | cons _ hv _ => cases hv
@@ -248,24 +327,25 @@ lgtm private def revCons as "rev-cons" (x : int) (xs : list int) : list int :=
 
 /-- A list of `int`s is homogeneous at `.list .int`, whatever its length. -/
 private theorem hasType_intList {is : List Int} :
-    Value.HasType (.list (is.map .int)) (.list .int) :=
+    Value.HasType ss (.list (is.map .int)) (.list .int) :=
   .list (by simpa using fun i (_ : i ∈ is) => Value.HasType.int i)
 
 -- `EListReverse` runs on the list `ECons` has just built, so the element pushed on the front comes
 -- back last.
-example : Decl.Apply revCons [] [.int 1, .list [.int 2, .int 3]] (.list [.int 3, .int 2, .int 1]) :=
+example :
+    Decl.Apply revCons [] [] [.int 1, .list [.int 2, .int 3]] (.list [.int 3, .int 2, .int 1]) :=
   .EApply _ (.cons "x" (.int 1) (.cons "xs" (hasType_intList (is := [2, 3])) .nil))
     (.EListReverse (vs := [.int 1, .int 2, .int 3]) _
       (.ECons _ _ (.EVarRef "x" rfl) (.EVarRef "xs" rfl)))
 
 -- Reversing preserves the element type, so soundness gives the declared result type back with no
 -- reasoning about this particular list.
-example (v : Value) (h : Decl.Apply revCons [] [.int 1, .list [.int 2, .int 3]] v) :
-    v.HasType (.list .int) :=
+example (v : Value) (h : Decl.Apply revCons [] [] [.int 1, .list [.int 2, .int 3]] v) :
+    v.HasType [] (.list .int) :=
   h.hasType Globals.wellTyped_nil (by simp [revCons, List.lookup])
 
 -- Only a list can be reversed, so a body reversing one of the `int` parameters does not check.
-example : ¬ ({ revCons with body := [lgtm| reverse x] } : Decl).WellTyped [] := by
+example : ¬ ({ revCons with body := [lgtm| reverse x] } : Decl).WellTyped [] [] := by
   simp [revCons, List.lookup]
 
 /-- Reverse `xs` twice, which gives `xs` back. -/
@@ -278,7 +358,7 @@ Inverting the two `EListReverse` steps down to the `EVarRef` that read `xs` leav
 `List.reverse_reverse`, so this is a property of the program proved from the evaluator rather than
 from any one input. -/
 private theorem reverseTwice.eq_self {vs : List Value} {res : Value}
-    (h : Decl.Apply reverseTwice [] [.list vs] res) : res = .list vs := by
+    (h : Decl.Apply reverseTwice [] [] [.list vs] res) : res = .list vs := by
   obtain ⟨-, -, hbody⟩ := h
   cases hbody with
   | EListReverse _ h₁ =>
@@ -298,19 +378,19 @@ private def adderExpr : Expression := [lgtm| fun (n : int) => fun (x : int) => ~
 
 /-- The empty environment describes the empty context, which is all these examples need to say
 about their environment. -/
-private theorem hasType_nil : Env.HasType ∅ [] :=
+private theorem hasType_nil : Env.HasType [] ∅ [] :=
   ⟨by simpa using Globals.wellTyped_nil, by simp, by simp⟩
 
 -- Nothing in a lambda's body runs until it is applied; evaluating one only captures the
 -- environment it was reached in.
 example :
-    Eval ∅ adderExpr ((∅ : Env).closure [("n", .int)] [lgtm| fun (x : int) => ~(adderInner)]) :=
+    Eval [] ∅ adderExpr ((∅ : Env).closure [("n", .int)] [lgtm| fun (x : int) => ~(adderInner)]) :=
   .ELam _ _
 
 /-- Applying the outer lambda runs its body, which is itself a lambda, so what comes back is a
 closure that has captured `n`. -/
 private theorem eval_adder10 :
-    Eval ∅ [lgtm| ~(adderExpr)(10)] (.closure [("n", .int 10)] [] [("x", .int)] adderInner) :=
+    Eval [] ∅ [lgtm| ~(adderExpr)(10)] (.closure [("n", .int 10)] [] [("x", .int)] adderInner) :=
   .EApp (vs := [.int 10]) _ _ (.ELam _ _) rfl
     (by rintro ⟨e, v⟩ hp; simp at hp; obtain ⟨rfl, rfl⟩ := hp; exact .EIntLit 10)
     (.cons "n" (.int 10) .nil) (.ELam _ _)
@@ -318,7 +398,7 @@ private theorem eval_adder10 :
 -- Applying that closure is what finally runs `x + n`, and it runs in the environment the closure
 -- captured rather than the one the call was made from: `n` is in scope even though the caller's
 -- environment is empty.
-example : Eval ∅ [lgtm| ~(adderExpr)(10)(1)] (.int 11) :=
+example : Eval [] ∅ [lgtm| ~(adderExpr)(10)(1)] (.int 11) :=
   .EApp (vs := [.int 1]) _ _ eval_adder10 rfl
     (by rintro ⟨e, v⟩ hp; simp at hp; obtain ⟨rfl, rfl⟩ := hp; exact .EIntLit 1)
     (.cons "x" (.int 1) .nil)
@@ -326,12 +406,12 @@ example : Eval ∅ [lgtm| ~(adderExpr)(10)(1)] (.int 11) :=
 
 -- Soundness covers the new forms: a value of function type comes back, and which context the
 -- closure captured is the theorem's business rather than the caller's.
-example (v : Value) (h : Eval ∅ [lgtm| ~(adderExpr)(10)] v) : v.HasType (.fn [.int] .int) :=
+example (v : Value) (h : Eval [] ∅ [lgtm| ~(adderExpr)(10)] v) : v.HasType [] (.fn [.int] .int) :=
   h.hasType hasType_nil (by simp [adderExpr, adderInner, List.lookup])
 
 -- A call with the wrong number of arguments is stuck, just as it is for a declaration: the
 -- parameters `ArgsHaveType` walks are the closure's own, so the lengths cannot disagree.
-example (v : Value) : ¬ Eval ∅ [lgtm| ~(adderExpr)(1, 2)] v := by
+example (v : Value) : ¬ Eval [] ∅ [lgtm| ~(adderExpr)(1, 2)] v := by
   intro h
   cases h with
   | EApp f args hf hlen hargs hat hbody =>
@@ -342,7 +422,7 @@ example (v : Value) : ¬ Eval ∅ [lgtm| ~(adderExpr)(1, 2)] v := by
 
 -- An argument of the wrong type is stuck too, so a closure cannot be entered with arguments its
 -- parameters do not describe.
-example (v : Value) : ¬ Eval ∅ [lgtm| ~(adderExpr)("a")] v := by
+example (v : Value) : ¬ Eval [] ∅ [lgtm| ~(adderExpr)("a")] v := by
   intro h
   cases h with
   | EApp f args hf hlen hargs hat hbody =>
@@ -362,12 +442,12 @@ it binds. -/
 
 -- A `let` binds the value its expression evaluated to, which `EVarRef` then reads out of the
 -- bindings like any other name.
-example : Eval ∅ [lgtm| let x = 1 + 2 in x + x] (.int 6) :=
+example : Eval [] ∅ [lgtm| let x = 1 + 2 in x + x] (.int 6) :=
   .ELet _ _ _ (.EPlus (n₁ := 1) (n₂ := 2) _ _ (.EIntLit 1) (.EIntLit 2))
     (.EPlus (n₁ := 3) (n₂ := 3) _ _ (.EVarRef "x" rfl) (.EVarRef "x" rfl))
 
 -- Twice, so a later binding sees an earlier one.
-example : Eval ∅ [lgtm| let x = 1 in let y = x + 1 in x + y] (.int 3) :=
+example : Eval [] ∅ [lgtm| let x = 1 in let y = x + 1 in x + y] (.int 3) :=
   .ELet _ _ _ (.EIntLit 1)
     (.ELet _ _ _ (.EPlus (n₁ := 1) (n₂ := 1) _ _ (.EVarRef "x" rfl) (.EIntLit 1))
       (.EPlus (n₁ := 1) (n₂ := 2) _ _ (.EVarRef "x" rfl) (.EVarRef "y" rfl)))
@@ -376,24 +456,24 @@ example : Eval ∅ [lgtm| let x = 1 in let y = x + 1 in x + y] (.int 3) :=
 lgtm private def letDouble as "let-double" (n : int) : int :=
   let m = n + 1 in m + m
 
-#guard letDouble.check []
+#guard letDouble.check [] []
 
 -- The binding goes in front of the call environment, so a `let` in a declaration's body sees the
 -- parameters and the body sees the binding.
-example : Decl.Apply letDouble [] [.int 3] (.int 8) :=
+example : Decl.Apply letDouble [] [] [.int 3] (.int 8) :=
   .EApply _ (.cons "n" (.int 3) .nil)
     (.ELet _ _ _ (.EPlus (n₁ := 3) (n₂ := 1) _ _ (.EVarRef "n" rfl) (.EIntLit 1))
       (.EPlus (n₁ := 4) (n₂ := 4) _ _ (.EVarRef "m" rfl) (.EVarRef "m" rfl)))
 
 -- Soundness covers the new form: the declared result type comes back from `letDouble` checking,
 -- with nothing said about the value the binding took.
-example (v : Value) (h : Decl.Apply letDouble [] [.int 3] v) : v.HasType .int :=
+example (v : Value) (h : Decl.Apply letDouble [] [] [.int 3] v) : v.HasType [] .int :=
   h.hasType Globals.wellTyped_nil (by simp [letDouble, List.lookup])
 
 /-- What a `let` binds is what its body computes with — here twice over, which is the property the
 binding exists to express: `m` is evaluated once and read twice. -/
 private theorem letDouble.eq_twice {n : Int} {res : Value}
-    (h : Decl.Apply letDouble [] [.int n] res) : res = .int (2 * (n + 1)) := by
+    (h : Decl.Apply letDouble [] [] [.int n] res) : res = .int (2 * (n + 1)) := by
   obtain ⟨-, -, hbody⟩ := h
   cases hbody with
   | ELet _ _ _ hm hbody =>
@@ -415,18 +495,18 @@ private theorem letDouble.eq_twice {n : Int} {res : Value}
 
 -- A `let` whose body is a lambda is how a closure captures something other than a parameter: the
 -- same closure `~(adderExpr)(10)` returns, reached without a call.
-example : Eval ∅ [lgtm| let n = 10 in fun (x : int) => ~(adderInner)]
+example : Eval [] ∅ [lgtm| let n = 10 in fun (x : int) => ~(adderInner)]
     (.closure [("n", .int 10)] [] [("x", .int)] adderInner) :=
   .ELet _ _ _ (.EIntLit 10) (.ELam _ _)
 
 -- The bound expression runs in the environment the `let` was reached in, so a `let` is not
 -- recursive: `x` on the right of the `=` is the outer `x`, and with no outer `x` it is stuck.
-example : Eval ∅ [lgtm| let x = 1 in let x = x + 1 in x] (.int 2) :=
+example : Eval [] ∅ [lgtm| let x = 1 in let x = x + 1 in x] (.int 2) :=
   .ELet _ _ _ (.EIntLit 1)
     (.ELet _ _ _ (.EPlus (n₁ := 1) (n₂ := 1) _ _ (.EVarRef "x" rfl) (.EIntLit 1))
       (.EVarRef "x" rfl))
 
-example (v : Value) : ¬ Eval ∅ [lgtm| let x = x + 1 in x] v := by
+example (v : Value) : ¬ Eval [] ∅ [lgtm| let x = x + 1 in x] v := by
   intro h
   cases h with
   | ELet _ _ _ hx _ =>
@@ -441,7 +521,7 @@ lgtm private def adder (n : int) : (int) -> int :=
 
 -- A declaration can return a function, and `Decl.Apply.hasType` covers that result type like any
 -- other: what comes back is a closure, and the theorem says it is one of the declared type.
-example (v : Value) (h : Decl.Apply adder [] [.int 3] v) : v.HasType (.fn [.int] .int) :=
+example (v : Value) (h : Decl.Apply adder [] [] [.int 3] v) : v.HasType [] (.fn [.int] .int) :=
   h.hasType Globals.wellTyped_nil (by simp [adder, List.lookup])
 
 /-! ## Globals
@@ -473,41 +553,42 @@ lgtm private def answerPlus as "answer-plus" : int :=
 private def arith : Globals := Globals.ofDecls [double, quad, doublePlus, answer, answerPlus]
 
 -- A body may mention a global, and `Decl.check` finds it at the type its declaration gives.
-#guard quad.check arith
-#guard answerPlus.check arith
-#guard Globals.check arith
+#guard quad.check [] arith
+#guard answerPlus.check [] arith
+#guard Globals.check [] arith
 
 -- Without the table the same name is free, and the body does not check.  This is all `Globals` adds
 -- to the checker: `double` has a type in `quad`'s body only because `arith` says so.
-#guard !quad.check []
-#guard !answerPlus.check []
+#guard !quad.check [] []
+#guard !answerPlus.check [] []
 
 -- The arity is the declaration's, so a global is as picky about how many arguments it gets as any
 -- other function, and a nullary global has to be called rather than just named.
-#guard !({ quad with body := [lgtm| double(1, 2)] } : Decl).check arith
-#guard !({ answerPlus with body := [lgtm| answer + 1] } : Decl).check arith
+#guard !({ quad with body := [lgtm| double(1, 2)] } : Decl).check [] arith
+#guard !({ answerPlus with body := [lgtm| answer + 1] } : Decl).check [] arith
 
 -- A parameter shadows a global of the same name, in the checker and in `Env.lookup` alike.
-#guard ({ quad with parameters := [("double", .int)], body := [lgtm| double] } : Decl).check arith
-#guard !({ quad with parameters := [("double", .int)], body := [lgtm| double(1)] } : Decl).check
-  arith
+#guard ({ quad with parameters := [("double", .int)], body := [lgtm| double] }
+  : Decl).check [] arith
+#guard !({ quad with parameters := [("double", .int)], body := [lgtm| double(1)] }
+  : Decl).check [] arith
 
 -- A `let` shadows a global the same way a parameter does, so the name becomes a value rather than
 -- something to call.
-#guard ({ quad with body := [lgtm| let double = n in double] } : Decl).check arith
-#guard !({ quad with body := [lgtm| let double = n in double(1)] } : Decl).check arith
+#guard ({ quad with body := [lgtm| let double = n in double] } : Decl).check [] arith
+#guard !({ quad with body := [lgtm| let double = n in double(1)] } : Decl).check [] arith
 
 -- And `Env.lookup` reads it the same way round: the binding is found before the globals are
 -- consulted, so the closure `double` would have resolved to is never built.
-example : Decl.Apply { quad with body := [lgtm| let double = n in double] } arith [.int 3]
+example : Decl.Apply { quad with body := [lgtm| let double = n in double] } [] arith [.int 3]
     (.int 3) :=
   .EApply _ (.cons "n" (.int 3) .nil) (.ELet _ _ _ (.EVarRef "n" rfl) (.EVarRef "double" rfl))
 
 -- A name that is neither a parameter nor a global is still free.
-#guard !({ double with body := [lgtm| missing(n)] } : Decl).check arith
+#guard !({ double with body := [lgtm| missing(n)] } : Decl).check [] arith
 
 /-- Every declaration in `arith` checks, which is what a call to any of them needs. -/
-private theorem arith.wellTyped : Globals.WellTyped arith := by
+private theorem arith.wellTyped : Globals.WellTyped [] arith := by
   refine Globals.wellTyped_of_forall fun p hp => ?_
   simp only [arith, Globals.ofDecls, List.map_cons, List.map_nil, List.mem_cons,
     List.not_mem_nil, or_false] at hp
@@ -520,7 +601,7 @@ private theorem arith.wellTyped : Globals.WellTyped arith := by
 
 The body then runs in *that* closure's environment — `double`'s own parameter over the same globals
 — and not in the one the call was made from. -/
-private theorem eval_doublePlus : Decl.Apply doublePlus arith [.int 3] (.int 7) :=
+private theorem eval_doublePlus : Decl.Apply doublePlus [] arith [.int 3] (.int 7) :=
   .EApply _ (.cons "n" (.int 3) .nil)
     (.EPlus (n₁ := 6) (n₂ := 1) _ _
       (.EApp (vs := [.int 3]) _ _ (.EVarRef "double" rfl) rfl
@@ -531,12 +612,12 @@ private theorem eval_doublePlus : Decl.Apply doublePlus arith [.int 3] (.int 7) 
 
 -- Soundness covers a call that goes through the table, and the reason is that every declaration in
 -- `arith` checks — nothing about this particular call.
-example (v : Value) (h : Decl.Apply doublePlus arith [.int 3] v) : v.HasType .int :=
+example (v : Value) (h : Decl.Apply doublePlus [] arith [.int 3] v) : v.HasType [] .int :=
   h.hasType arith.wellTyped (arith.wellTyped "double-plus" doublePlus rfl)
 
 -- `Globals.apply_hasType` is that statement read off the table, for whichever entry a name resolves
 -- to, so the caller needs no `Decl.WellTyped` of its own.
-example (v : Value) (h : Decl.Apply answerPlus arith [] v) : v.HasType .int :=
+example (v : Value) (h : Decl.Apply answerPlus [] arith [] v) : v.HasType [] .int :=
   Globals.apply_hasType (x := "answer-plus") arith.wellTyped rfl h
 
 /-- Recursion is what a table of declarations buys over a table of values: `countdown` is checked in
@@ -544,8 +625,8 @@ a context that already holds `countdown`, so it may call itself. -/
 lgtm private def countdown (n : int) : int :=
   countdown(n - 1)
 
-#guard Globals.check (Globals.ofDecls [countdown])
-#guard !countdown.check []
+#guard Globals.check [] (Globals.ofDecls [countdown])
+#guard !countdown.check [] []
 
 /-- Mutual recursion needs nothing further: both are in the context both are checked against. -/
 lgtm private def ping (n : int) : int :=
@@ -554,20 +635,20 @@ lgtm private def ping (n : int) : int :=
 lgtm private def pong (n : int) : int :=
   ping(n - 1)
 
-#guard Globals.check (Globals.ofDecls [ping, pong])
+#guard Globals.check [] (Globals.ofDecls [ping, pong])
 
 -- Neither checks alone, and neither checks with only itself in scope: it is the table that ties
 -- them together.
-#guard !ping.check []
-#guard !ping.check (Globals.ofDecls [ping])
-#guard !Globals.check (Globals.ofDecls [ping])
+#guard !ping.check [] []
+#guard !ping.check [] (Globals.ofDecls [ping])
+#guard !Globals.check [] (Globals.ofDecls [ping])
 
 /-! ## Programs
 
 The same declarations again, read as a source file rather than as a table: `arith` is what
 `arithProgram` presents to its own bodies. -/
 
-private def arithProgram : Program := ⟨[double, quad, doublePlus, answer, answerPlus]⟩
+private def arithProgram : Program := { decls := [double, quad, doublePlus, answer, answerPlus] }
 
 example : arithProgram.globals = arith := rfl
 
@@ -602,11 +683,11 @@ example : arithProgram.Apply "double-plus" [.int 3] (.int 7) :=
 
 -- Soundness at the top: one hypothesis about the whole program covers every call to every name in
 -- it, whatever the arguments.
-example (v : Value) (h : arithProgram.Apply "double-plus" [.int 3] v) : v.HasType .int :=
+example (v : Value) (h : arithProgram.Apply "double-plus" [.int 3] v) : v.HasType [] .int :=
   h.hasType arithProgram.wellTyped rfl
 
 example (v : Value) (args : List Value) (h : arithProgram.Apply "answer-plus" args v) :
-    v.HasType .int :=
+    v.HasType [] .int :=
   h.hasType arithProgram.wellTyped rfl
 
 -- A name the program does not declare has no call at all.
@@ -614,5 +695,221 @@ example (v : Value) : ¬ arithProgram.Apply "missing" [.int 3] v := by
   rintro ⟨d, hd, -⟩
   rw [show arithProgram.lookup "missing" = none from rfl] at hd
   simp at hd
+
+/-! ## Structs
+
+A structure type is a top-level entity, so these examples carry a table of them the way the ones
+above carry a table of declarations.  Evaluation never consults that table — the three struct rules
+work on the value alone — so it shows up only where a type does: in `check`, in `Value.HasType`, and
+in `ArgsHaveType`, which is why `Eval` carries it at all. -/
+
+/-- A point in the plane. -/
+lgtm private struct Point { x : int, y : int }
+
+private def points : Structs := Structs.ofDecls [Point]
+
+/-- A `Point` value has the type `Point` declares exactly when both its coordinates are `int`s.
+
+Every `Value.HasType` for a struct comes down to a case analysis on the field name like this one: the
+declaration and the value agree on which fields there are, and on each field they agree on the type.
+Nothing here is about these particular coordinates, which is why one lemma covers every `Point`. -/
+private theorem hasType_point {a b : Int} :
+    Value.HasType points (.struct "Point" [("x", .int a), ("y", .int b)]) (.struct "Point") :=
+  Value.hasType_struct_of_fields rfl rfl (by
+    rintro p hp
+    simp [Point] at hp
+    rcases hp with rfl | rfl <;> exact .int _)
+
+/-- Swap `p`'s coordinates. -/
+lgtm private def swap (p : struct Point) : struct Point :=
+  new Point { x = p.y, y = p.x }
+
+#guard swap.check points []
+
+-- Without the struct table the body does not check: `new Point { … }` has nothing to check its
+-- fields against, and the result type names nothing.  This is all `Structs` adds to the checker, and
+-- it is the same thing `Globals` adds for names.
+#guard !swap.check [] []
+
+/-- `EStructNew` evaluates one expression per field and keeps each result under that field's name, so
+building a struct out of another one's fields is two `EStructGet`s under an `EStructNew`.
+
+The globals are left open because nothing in this call reads one: `p` is a parameter, so `Env.lookup`
+finds it in the bindings and never reaches the table. -/
+private theorem eval_swap {gs : Globals} : Decl.Apply swap points gs
+    [.struct "Point" [("x", .int 1), ("y", .int 2)]]
+    (.struct "Point" [("x", .int 2), ("y", .int 1)]) :=
+  .EApply _ (.cons "p" hasType_point .nil)
+    (.EStructNew _ _ rfl (by
+      rintro p hp
+      simp at hp
+      rcases hp with rfl | rfl <;> exact .EStructGet _ _ (.EVarRef "p" rfl) rfl))
+
+-- Soundness covers the new forms: what comes back has the declared struct type, and the reason is
+-- that `swap` checks against `points` — nothing about this particular point.
+example (v : Value)
+    (h : Decl.Apply swap points [] [.struct "Point" [("x", .int 1), ("y", .int 2)]] v) :
+    v.HasType points (.struct "Point") :=
+  h.hasType Globals.wellTyped_nil (by simp [swap, Point, points, List.lookup])
+
+/-- One more than `p`'s `x`, which is the field read on its own. -/
+lgtm private def getX as "get-x" (p : struct Point) : int :=
+  p.x + 1
+
+#guard getX.check points []
+
+-- `EStructGet` reads the field out of the value, so it is the `EVarRef` that found the struct that
+-- decides what comes back.
+example : Decl.Apply getX points [] [.struct "Point" [("x", .int 1), ("y", .int 2)]] (.int 2) :=
+  .EApply _ (.cons "p" hasType_point .nil)
+    (.EPlus (n₁ := 1) (n₂ := 1) _ _ (.EStructGet _ _ (.EVarRef "p" rfl) rfl) (.EIntLit 1))
+
+-- A field the declaration does not list is not a field, so a body reading one does not check even
+-- though the value it would be handed at run time carries only declared fields.
+#guard !({ getX with body := [lgtm| p.z + 1] } : Decl).check points []
+
+/-- Reading a field gives what the value has bound to it, which is the property `structGet` exists to
+express: the point's other fields, and whatever else it carries, do not come into it. -/
+private theorem getX.eq_succ_x {fvs : FieldValues} {a : Int} {res : Value}
+    (hx : fvs.lookup "x" = some (.int a))
+    (h : Decl.Apply getX points [] [.struct "Point" fvs] res) : res = .int (a + 1) := by
+  obtain ⟨-, -, hbody⟩ := h
+  cases hbody with
+  | EPlus _ _ h₁ h₂ =>
+    cases h₁ with
+    | EStructGet _ _ hp hfx =>
+      cases hp with
+      | EVarRef _ hlp =>
+        cases h₂ with
+        | EIntLit _ =>
+          simp [getX, Decl.callEnv, Env.extend, Globals.env, Env.lookup] at hlp
+          obtain ⟨rfl, rfl⟩ := hlp
+          grind
+
+/-- Move `p` along the x axis. -/
+lgtm private def shiftX as "shift-x" (p : struct Point) (d : int) : struct Point :=
+  { p with x = p.x + d }
+
+#guard shiftX.check points []
+
+-- An update rebinds the fields it names in place, so `y` comes through untouched and the fields stay
+-- in the order `Point` declares them.
+example : Decl.Apply shiftX points [] [.struct "Point" [("x", .int 1), ("y", .int 2)], .int 10]
+    (.struct "Point" [("x", .int 11), ("y", .int 2)]) := by
+  refine .EApply _ (.cons "p" hasType_point (.cons "d" (.int 10) .nil)) ?_
+  -- Both field lists have to be given: the result is `FieldValues.update fvs us`, and unification
+  -- cannot read either of them back out of the value that comes out.
+  refine .EStructUpdate (fvs := [("x", .int 1), ("y", .int 2)]) (us := [("x", .int 11)])
+    (.varRef "p") [("x", .plus (.structGet (.varRef "p") "x") (.varRef "d"))] ?_ rfl ?_
+  · exact .EVarRef "p" rfl
+  · rintro p hp
+    simp at hp
+    subst hp
+    exact .EPlus (n₁ := 1) (n₂ := 10) _ _ (.EStructGet _ _ (.EVarRef "p" rfl) rfl)
+      (.EVarRef "d" rfl)
+
+-- An empty update is rejected, as `Expression.structUpdate` says it must be: it would be the
+-- expression it updates, written so as to suggest otherwise.
+#guard !({ shiftX with body := [lgtm| { p with }] } : Decl).check points []
+
+-- And a field the declaration does not have cannot be introduced by one.
+#guard !({ shiftX with body := [lgtm| { p with z = d }] } : Decl).check points []
+
+/-- What an update leaves alone is the property it exists to express: `shift-x` moves `x` by `d` and
+hands `y` back as it found it, for every point and every distance.
+
+The update names one field, so `y` is a field it does not name — and `List.lookup_isSome_congr`,
+applied to the premise that the expressions and the values share their field names, is what says an
+update cannot reach a field it did not mention. -/
+private theorem shiftX.eq_shifted {fvs : FieldValues} {a b d : Int} {res : Value}
+    (hx : fvs.lookup "x" = some (.int a)) (hy : fvs.lookup "y" = some (.int b))
+    (h : Decl.Apply shiftX points [] [.struct "Point" fvs, .int d] res) :
+    ∃ fvs', res = .struct "Point" fvs'
+      ∧ fvs'.lookup "x" = some (.int (a + d)) ∧ fvs'.lookup "y" = some (.int b) := by
+  obtain ⟨-, -, hbody⟩ := h
+  cases hbody with
+  | @EStructUpdate _ _ _ us _ _ hp hnames hev =>
+    cases hp with
+    | EVarRef _ hlp =>
+      simp [shiftX, Decl.callEnv, Env.extend, Globals.env, Env.lookup] at hlp
+      obtain ⟨rfl, rfl⟩ := hlp
+      refine ⟨_, rfl, ?_, ?_⟩
+      · -- The one field the update names is `x`, and what it was given there is `p.x + d`.
+        obtain ⟨w, hw⟩ : ∃ w, us.lookup "x" = some w :=
+          Option.isSome_iff_exists.mp (by rw [← List.lookup_isSome_congr hnames "x"]; simp)
+        have hev' := hev _ (List.mem_zip_of_lookup hnames
+          (b := .plus (.structGet (.varRef "p") "x") (.varRef "d")) (by simp) hw)
+        cases hev' with
+        | EPlus _ _ h₁ h₂ =>
+          cases h₁ with
+          | EStructGet _ _ hq hfx =>
+            cases hq with
+            | EVarRef _ hlq =>
+              cases h₂ with
+              | EVarRef _ hld =>
+                simp [shiftX, Decl.callEnv, Env.extend, Globals.env, Env.lookup,
+                  List.lookup] at hlq hld
+                rw [FieldValues.lookup_update, hx, hw]
+                grind
+      · -- And `y` it does not name at all, so `FieldValues.update` passes it straight through.
+        have : us.lookup "y" = none := by
+          rw [← Option.not_isSome_iff_eq_none, ← List.lookup_isSome_congr hnames "y"]
+          simp
+        rw [FieldValues.lookup_update, hy, this]
+        rfl
+
+/-! ### A program with structs
+
+The same declarations again, read as a source file: a `Program` carries its structure types beside
+its declarations, and `Program.structs` is what its bodies are checked and run against. -/
+
+private def pointProgram : Program where
+  decls := [swap, getX, shiftX]
+  structDecls := [Point]
+
+example : pointProgram.structs = points := rfl
+
+#guard pointProgram.check
+
+-- The struct declaration is what makes it check: without it the three bodies mention a type that
+-- names nothing.
+#guard !({ pointProgram with structDecls := [] } : Program).check
+
+-- A program resolves the struct names it declares, and no two of them share a name — the counterpart
+-- of `NamesUnique` for types rather than for declarations.
+example : pointProgram.lookupStruct "Point" = some Point := rfl
+example : pointProgram.lookupStruct "Pair" = none := rfl
+example : pointProgram.StructNamesUnique := by decide
+example : ¬ ({ pointProgram with structDecls := [Point, Point] } : Program).StructNamesUnique := by
+  decide
+
+-- Which is what `lookupStruct_self` is for: being one of the program's structure declarations is
+-- enough to be the one its own name resolves to.
+example : pointProgram.lookupStruct Point.name = some Point :=
+  pointProgram.lookupStruct_self (by decide) (by simp [pointProgram])
+
+/-- `pointProgram` checks, which is a property of the program alone. -/
+private theorem pointProgram.wellTyped : pointProgram.WellTyped := by
+  refine Globals.wellTyped_of_forall fun p hp => ?_
+  simp only [Program.globals, pointProgram, Globals.ofDecls, List.map_cons, List.map_nil,
+    List.mem_cons, List.not_mem_nil, or_false] at hp
+  rcases hp with rfl | rfl | rfl <;>
+    simp [swap, getX, shiftX, Point, Program.globals, Program.structs, pointProgram,
+      Globals.ofDecls, Structs.ofDecls, Decl.ty, List.lookup]
+
+-- Running it is calling one of its names, and soundness at the top covers a struct result type like
+-- any other.
+example : pointProgram.Apply "swap" [.struct "Point" [("x", .int 1), ("y", .int 2)]]
+    (.struct "Point" [("x", .int 2), ("y", .int 1)]) :=
+  .call _ rfl eval_swap
+
+example (v : Value)
+    (h : pointProgram.Apply "swap" [.struct "Point" [("x", .int 1), ("y", .int 2)]] v) :
+    v.HasType pointProgram.structs (.struct "Point") :=
+  h.hasType pointProgram.wellTyped rfl
+
+example (v : Value) (args : List Value) (h : pointProgram.Apply "get-x" args v) :
+    v.HasType pointProgram.structs .int :=
+  h.hasType pointProgram.wellTyped rfl
 
 end Tests
