@@ -1,12 +1,12 @@
 module
 
-public import LgtmDeepLean.IR
-public import LgtmDeepLean.TypeCheck
-public import LgtmDeepLean.Value
-meta import LgtmDeepLean.IR
-meta import LgtmDeepLean.TypeCheck
-meta import LgtmDeepLean.Value
-import LgtmDeepLean.Syntax
+public import LgtmDeepLean.Lang.IR
+public import LgtmDeepLean.Lang.TypeCheck
+public import LgtmDeepLean.Lang.Value
+meta import LgtmDeepLean.Lang.IR
+meta import LgtmDeepLean.Lang.TypeCheck
+meta import LgtmDeepLean.Lang.Value
+import LgtmDeepLean.Lang.Syntax
 
 /-! # Evaluation
 

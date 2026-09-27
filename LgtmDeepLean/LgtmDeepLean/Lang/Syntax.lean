@@ -1,9 +1,9 @@
 module
 
-public import LgtmDeepLean.IR
-public import LgtmDeepLean.TypeCheck
-meta import LgtmDeepLean.IR
-meta import LgtmDeepLean.TypeCheck
+public import LgtmDeepLean.Lang.IR
+public import LgtmDeepLean.Lang.TypeCheck
+meta import LgtmDeepLean.Lang.IR
+meta import LgtmDeepLean.Lang.TypeCheck
 
 /-! # Surface syntax for the IR
 

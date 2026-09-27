@@ -1,7 +1,7 @@
 module
 
-public import LgtmDeepLean.IR
-meta import LgtmDeepLean.IR
+public import LgtmDeepLean.Lang.IR
+meta import LgtmDeepLean.Lang.IR
 
 /-- The types of the variables in scope, innermost binding first. -/
 public abbrev Context := List (String × Ty)
