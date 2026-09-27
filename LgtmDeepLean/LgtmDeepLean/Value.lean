@@ -12,17 +12,22 @@ either to agree with the types `TypeCheck.lean` assigns.  Everything here is sta
 mentioning `Eval`: the evaluation relation is one consumer of this layer, but the notion of a value
 having a type, and of an environment describing a context, stands on its own. -/
 
-mutual
-
 public inductive Value where
 | int : Int → Value
 | string : String → Value
 | list : List Value → Value
-/-- A function together with the environment it was written in.
+/-- A function together with the environment it was written in: the bindings it captured and the
+globals it was reached among, then the parameters and body of the `lam` itself.
 
 The parameters are annotated the way `lam` annotates them, so a closure carries everything needed
-to say what type it has. -/
-| closure : Env → List (String × Ty) → Expression → Value
+to say what type it has.
+
+The two halves of the environment are stored separately rather than as an `Env`, because an `Env`
+holding `Value`s and a `Value` holding an `Env` would have to be declared in a `mutual` block, and
+a structure declared there has neither definitional eta nor reducing projections.  `Env.closure`
+is the way to build one of these from an environment, and `Env.HasType` is what says the two halves
+belong together. -/
+| closure : List (String × Value) → Globals → List (String × Ty) → Expression → Value
 
 /-- What a name is bound to while an expression runs: the local bindings, innermost first, over the
 globals every expression can see.
@@ -33,37 +38,16 @@ shadows what was there.
 `globals` holds *declarations* rather than values, which is what makes globals recursive.  A table
 of values would have to contain, for each global function, a closure that had captured the table —
 a value that is its own descendant, which no inductive type has.  Resolving a global's name to its
-closure is deferred to `Env.lookup` instead, where the table is to hand.
-
-The structure is mutual with `Value` because a closure captures one. -/
+closure is deferred to `Env.lookup` instead, where the table is to hand. -/
 public structure Env where
   bindings : List (String × Value)
   globals : Globals
 
-end
-
-/-! Being declared in a `mutual` block costs `Env` the definitional eta and projection reduction a
-plain structure would have, so the steps every proof below takes through `Env.mk` — projecting out
-of it and rebuilding it — have to be lemmas.
-
-It costs them their reduction *outside* this module too.  `Env.bindings` and `Env.globals` are
-definitions rather than real projections, and a definition the structure command generates cannot
-be marked `@[expose]`, so an importing module cannot unfold either one.  Two consequences, both of
-which the definitions below are written around:
-
-* these three lemmas are indexed here, where the projections still reduce, so `simp` does not reach
-  for them on its own once imported — a proof in another module has to name the one it wants;
-* a definition whose body projects out of its argument stops computing once imported, so the ones
-  an evaluation has to reduce through pattern match on `Env.mk` instead. -/
-
-@[simp] public theorem Env.bindings_mk (bs : List (String × Value)) (gs : Globals) :
-    (Env.mk bs gs).bindings = bs := by simp
-
-@[simp] public theorem Env.globals_mk (bs : List (String × Value)) (gs : Globals) :
-    (Env.mk bs gs).globals = gs := by simp
-
-@[simp] public theorem Env.mk_bindings (env : Env) : Env.mk env.bindings env.globals = env := by
-  cases env; rfl
+/-- The closure a `lam` reached in `env` evaluates to: the two halves of `env`, kept apart the way
+`Value.closure` stores them. -/
+@[expose] public def Env.closure (env : Env) (ps : List (String × Ty)) (body : Expression) :
+    Value :=
+  .closure env.bindings env.globals ps body
 
 /-! The definitions a concrete evaluation computes with are exposed, the way `Program.lookup` and
 its neighbours are: running `Eval` on an environment built out of them leaves goals like
@@ -85,21 +69,17 @@ can reach its siblings and itself. -/
 Building this at each mention rather than once up front is what sidesteps the cyclic value a
 recursive global would otherwise need. -/
 @[expose] public def Globals.value (gs : Globals) (d : Decl) : Value :=
-  .closure (Globals.env gs) d.parameters d.body
+  (Globals.env gs).closure d.parameters d.body
 
 /-- The value `x` is bound to, or `none` when it is unbound.
 
 The local bindings are searched first, so a parameter shadows a global of the same name — the same
 way round as `Decl.check`, which puts the parameters in front of `Globals.types`.  Keeping those two
-orders together is what makes `Eval.hasType`'s variable case go through.
-
-The environment is taken apart by matching rather than read with `env.bindings`, so that a lookup in
-a concrete environment reduces in every module rather than only in this one. -/
-@[expose] public def Env.lookup : Env → String → Option Value
-  | ⟨bindings, globals⟩, x =>
-      match bindings.lookup x with
-      | some v => some v
-      | none => (globals.lookup x).map (Globals.value globals)
+orders together is what makes `Eval.hasType`'s variable case go through. -/
+@[expose] public def Env.lookup (env : Env) (x : String) : Option Value :=
+  match env.bindings.lookup x with
+  | some v => some v
+  | none => (env.globals.lookup x).map (Globals.value env.globals)
 
 /-- The environment binding nothing and declaring nothing. -/
 public instance : EmptyCollection Env := ⟨⟨[], []⟩⟩
@@ -113,15 +93,13 @@ public instance : EmptyCollection Env := ⟨⟨[], []⟩⟩
 /-- A name the bindings supply resolves to the value they give it, globals unconsulted. -/
 public theorem Env.lookup_of_bindings {env : Env} {x : String} {v : Value}
     (h : env.bindings.lookup x = some v) : env.lookup x = some v := by
-  cases env
-  simp_all [Env.lookup]
+  simp [Env.lookup, h]
 
 /-- A name the bindings do not supply falls through to the globals. -/
 public theorem Env.lookup_of_globals {env : Env} {x : String}
     (h : env.bindings.lookup x = none) :
     env.lookup x = (env.globals.lookup x).map (Globals.value env.globals) := by
-  cases env
-  simp only [Env.lookup, h]
+  simp [Env.lookup, h]
 
 /-- The `Ty` a value's representation agrees with.
 
@@ -143,13 +121,14 @@ public inductive Value.HasType : Value → Ty → Prop where
 | int (i : Int) : HasType (.int i) .int
 | string (s : String) : HasType (.string s) .string
 | list {vs : List Value} {t : Ty} : (∀ v ∈ vs, HasType v t) → HasType (.list vs) (.list t)
-| closure {cenv : Env} {ps : Context} {body : Expression} {cctx : Context} {r : Ty} :
-    Globals.WellTyped cenv.globals →
-    (∀ x, (cctx.lookup x).isSome → (cenv.bindings.lookup x).isSome) →
-    (∀ x, (cenv.bindings.lookup x).isSome → (cctx.lookup x).isSome) →
-    (∀ x t v, cctx.lookup x = some t → cenv.bindings.lookup x = some v → HasType v t) →
-    body.infer (ps ++ cctx ++ Globals.types cenv.globals) = some r →
-    HasType (.closure cenv ps body) (.fn (ps.map Prod.snd) r)
+| closure {cbindings : List (String × Value)} {cglobals : Globals} {ps : Context}
+    {body : Expression} {cctx : Context} {r : Ty} :
+    Globals.WellTyped cglobals →
+    (∀ x, (cctx.lookup x).isSome → (cbindings.lookup x).isSome) →
+    (∀ x, (cbindings.lookup x).isSome → (cctx.lookup x).isSome) →
+    (∀ x t v, cctx.lookup x = some t → cbindings.lookup x = some v → HasType v t) →
+    body.infer (ps ++ cctx ++ Globals.types cglobals) = some r →
+    HasType (.closure cbindings cglobals ps body) (.fn (ps.map Prod.snd) r)
 
 /-- `env`'s globals all check, and its bindings are exactly the names `ctx` promises, at the types
 `ctx` gives them.
@@ -172,12 +151,15 @@ apart as the conjunction it is. -/
 /-- What it takes for a closure to have a type, in terms of `Env.HasType`.
 
 The context is existential: a closure's type says nothing about which names it captured, only that
-whatever it captured was enough to type its body. -/
-@[simp] public theorem Value.hasType_closure_iff {cenv : Env} {ps : Context} {body : Expression}
-    {t : Ty} :
-    Value.HasType (.closure cenv ps body) t ↔
-      ∃ cctx r, Env.HasType cenv cctx
-        ∧ body.infer (ps ++ cctx ++ Globals.types cenv.globals) = some r
+whatever it captured was enough to type its body.
+
+The two halves the closure stores are put back together here as the `Env` they came from, which is
+what lets `Eval.hasType` hand `Env.HasType` straight to the induction hypothesis for the body. -/
+@[simp] public theorem Value.hasType_closure_iff {cbindings : List (String × Value)}
+    {cglobals : Globals} {ps : Context} {body : Expression} {t : Ty} :
+    Value.HasType (.closure cbindings cglobals ps body) t ↔
+      ∃ cctx r, Env.HasType ⟨cbindings, cglobals⟩ cctx
+        ∧ body.infer (ps ++ cctx ++ Globals.types cglobals) = some r
         ∧ t = .fn (ps.map Prod.snd) r := by
   constructor
   · intro h
@@ -205,21 +187,11 @@ public theorem Globals.hasType_env {gs : Globals} (h : Globals.WellTyped gs) :
 
 `List.zip` stops at the shorter list, so this only describes a call once the two are known to be the
 same length; `ArgsHaveType` is what supplies that. -/
-@[expose] public def Env.extend : Env → Context → List Value → Env
-  | ⟨bindings, globals⟩, ps, vs => ⟨(ps.map Prod.fst).zip vs ++ bindings, globals⟩
-
-/-- `Env.extend` written back in terms of the projections, which is the form to rewrite with when
-the environment is a variable: the equation the match gives only fires on an `Env.mk`. -/
-public theorem Env.extend_eq (env : Env) (ps : Context) (vs : List Value) :
-    env.extend ps vs = ⟨(ps.map Prod.fst).zip vs ++ env.bindings, env.globals⟩ := by
-  cases env; rfl
-
-@[simp] public theorem Env.bindings_extend (env : Env) (ps : Context) (vs : List Value) :
-    (env.extend ps vs).bindings = (ps.map Prod.fst).zip vs ++ env.bindings := by
-  cases env; simp [Env.extend]
+@[expose] public def Env.extend (env : Env) (ps : Context) (vs : List Value) : Env :=
+  { env with bindings := (ps.map Prod.fst).zip vs ++ env.bindings }
 
 @[simp] public theorem Env.globals_extend (env : Env) (ps : Context) (vs : List Value) :
-    (env.extend ps vs).globals = env.globals := by cases env; simp [Env.extend]
+    (env.extend ps vs).globals = env.globals := by simp [Env.extend]
 
 /-- `ArgsHaveType ps args`: `args` are values a function with parameters `ps` can be called with,
 one argument per parameter and each of the type its parameter declares.
@@ -258,8 +230,8 @@ public theorem Env.hasType_extend {ps : Context} {vs : List Value} {env : Env} {
     (h : ArgsHaveType ps vs) (henv : Env.HasType env ctx) :
     Env.HasType (env.extend ps vs) (ps ++ ctx) := by
   induction h with
-  | nil => simpa [Env.extend_eq] using henv
-  | cons _ hv _ ih => simpa [Env.extend_eq] using Env.hasType_cons hv ih
+  | nil => simpa [Env.extend] using henv
+  | cons _ hv _ ih => simpa [Env.extend] using Env.hasType_cons hv ih
 
 /-- The environment a call to `d` evaluates its body in: each parameter name bound to its
 argument, over the globals and nothing else.

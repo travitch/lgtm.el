@@ -19,7 +19,7 @@ closure captured, not in the one the call was made from. -/
 public inductive Eval : Env → Expression → Value → Prop where
 /-- A `lam` evaluates to itself plus the environment it was reached in; nothing in its body runs
 until it is applied. -/
-| ELam (ps : List (String × Ty)) (body : Expression) : Eval env (.lam ps body) (.closure env ps body)
+| ELam (ps : List (String × Ty)) (body : Expression) : Eval env (.lam ps body) (env.closure ps body)
 /-- A call evaluates its function and its arguments, then the body in the closure's environment
 extended with the parameters.
 
@@ -29,12 +29,15 @@ trade `Value.HasType.list` makes.  `args.length = vs.length` is what makes that 
 `List.zip` would otherwise let a value appear that no argument produced.
 
 As in `Decl.Apply`, `ArgsHaveType` is what makes a call with the wrong arguments stuck rather than
-junk, and it pins the arity that `Env.extend` needs. -/
+junk, and it pins the arity that `Env.extend` needs.
+
+The closure is matched on as the two halves `Value.closure` stores, and they are put back into an
+`Env` to run the body in; `ELam` builds one the other way round, with `Env.closure`. -/
 | EApp (f : Expression) (args : List Expression) :
-    Eval env f (.closure cenv ps body) →
+    Eval env f (.closure cbindings cglobals ps body) →
     args.length = vs.length → (∀ p ∈ args.zip vs, Eval env p.1 p.2) →
     ArgsHaveType ps vs →
-    Eval (Env.extend cenv ps vs) body v →
+    Eval (Env.extend ⟨cbindings, cglobals⟩ ps vs) body v →
     Eval env (.app f args) v
 | EVarRef (x : String) : env.lookup x = some v → Eval env (.varRef x) v
 | EIntLit (i : Int) : Eval env (.intLit i) (.int i)
@@ -88,9 +91,8 @@ public theorem Eval.hasType {env : Env} {ctx : Context} {e : Expression} {v : Va
           rw [hd, Option.map_some] at hx
           obtain rfl : v = Globals.value env.globals d := (Option.some.inj hx).symm
           refine Value.hasType_closure_iff.mpr ⟨[], d.resultType, ?_, ?_, ?_⟩
-          · simpa [Globals.value] using Globals.hasType_env hgs
-          · simpa [Globals.value, Globals.env, Env.globals_mk] using
-              Decl.wellTyped_iff_infer_eq_some.mp (hgs x d hd)
+          · exact Globals.hasType_env hgs
+          · simpa using Decl.wellTyped_iff_infer_eq_some.mp (hgs x d hd)
           · simp [Decl.ty]
   | ECons e₁ e₂ h₁ h₂ ih₁ ih₂ =>
       obtain ⟨t', ht₁, ht₂, rfl⟩ := Expression.infer_lcons_eq_some.mp ht
@@ -134,8 +136,7 @@ public theorem Decl.Apply.hasType {d : Decl} {gs : Globals} {args : List Value} 
     v.HasType d.resultType := by
   cases h with
   | EApply _ hargs hbody =>
-      exact hbody.hasType (Env.hasType_callEnv hgs hargs)
-        (by simpa [Decl.callEnv, Env.globals_extend, Globals.globals_env] using hd)
+      exact hbody.hasType (Env.hasType_callEnv hgs hargs) (by simpa [Decl.callEnv] using hd)
 
 /-- Every declaration in a well-typed globals table is well typed, so a call to any of them returns
 a value of the type it declares. -/
@@ -293,18 +294,18 @@ private def adderExpr : Expression := [lgtm| fun (n : int) => fun (x : int) => ~
 /-- The empty environment describes the empty context, which is all these examples need to say
 about their environment. -/
 private theorem hasType_nil : Env.HasType ∅ [] :=
-  ⟨by simpa [Env.globals_empty] using Globals.wellTyped_nil, by simp [Env.bindings_empty],
-    by simp [Env.bindings_empty]⟩
+  ⟨by simpa using Globals.wellTyped_nil, by simp, by simp⟩
 
 -- Nothing in a lambda's body runs until it is applied; evaluating one only captures the
 -- environment it was reached in.
-example : Eval ∅ adderExpr (.closure ∅ [("n", .int)] [lgtm| fun (x : int) => ~(adderInner)]) :=
+example :
+    Eval ∅ adderExpr ((∅ : Env).closure [("n", .int)] [lgtm| fun (x : int) => ~(adderInner)]) :=
   .ELam _ _
 
 /-- Applying the outer lambda runs its body, which is itself a lambda, so what comes back is a
 closure that has captured `n`. -/
 private theorem eval_adder10 :
-    Eval ∅ [lgtm| ~(adderExpr)(10)] (.closure ⟨[("n", .int 10)], []⟩ [("x", .int)] adderInner) :=
+    Eval ∅ [lgtm| ~(adderExpr)(10)] (.closure [("n", .int 10)] [] [("x", .int)] adderInner) :=
   .EApp (vs := [.int 10]) _ _ (.ELam _ _) rfl
     (by rintro ⟨e, v⟩ hp; simp at hp; obtain ⟨rfl, rfl⟩ := hp; exact .EIntLit 10)
     (.cons "n" (.int 10) .nil) (.ELam _ _)
