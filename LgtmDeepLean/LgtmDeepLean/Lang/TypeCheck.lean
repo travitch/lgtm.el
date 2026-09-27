@@ -26,7 +26,8 @@ declarations: one table, keyed by the name each entry declares, that the whole p
 against.
 
 Unlike `Globals` it never turns into a `Context`, and so it has to be threaded through
-`Expression.infer` explicitly.  A global can be folded into the context before inference starts —
+`Expression.infer` explicitly — as the `ss` field of the `TypeDecls` below, which is the parameter
+inference actually takes.  A global can be folded into the context before inference starts —
 its name is a variable, and `Globals.types` is the bindings it contributes — where a struct name is
 not a variable at all.  Nothing mentions a struct type without also mentioning one of the three
 struct forms, and each of those resolves its name here. -/
@@ -35,12 +36,30 @@ struct forms, and each of those resolves its name here. -/
 public abbrev Structs := List (String × StructDecl)
 
 /-- Key each structure declaration by the name it declares. -/
-@[expose] public def Structs.ofDecls (ss : List StructDecl) : Structs := ss.map fun s => (s.name, s)
+@[expose] public def Structs.ofDecls (sds : List StructDecl) : Structs :=
+  sds.map fun s => (s.name, s)
 
 @[simp] public theorem Structs.ofDecls_nil : Structs.ofDecls [] = [] := by simp [Structs.ofDecls]
 
-@[simp] public theorem Structs.ofDecls_cons (s : StructDecl) (ss : List StructDecl) :
-    Structs.ofDecls (s :: ss) = (s.name, s) :: Structs.ofDecls ss := by simp [Structs.ofDecls]
+@[simp] public theorem Structs.ofDecls_cons (s : StructDecl) (sds : List StructDecl) :
+    Structs.ofDecls (s :: sds) = (s.name, s) :: Structs.ofDecls sds := by simp [Structs.ofDecls]
+
+/-! ## Type declarations
+
+Every table a type name resolves in, bundled into one parameter.  `Structs` is the only one so far,
+but an inductive type declaration is a second, and the bundle is what keeps that from being a second
+parameter threaded through `Expression.infer`, `Value.HasType`, `Eval`, and every rule stated over
+them: a new kind of declaration adds a field here and nothing else changes shape.
+
+Every field defaults to empty, so `{}` is the bundle that declares no types at all — the one a
+program using none of them is checked against. -/
+
+/-- The type declarations in scope everywhere: one bundle, threaded through everything that has a
+type name to resolve. -/
+public structure TypeDecls where
+  /-- The structure types, each under the name it declares. -/
+  ss : Structs := []
+  deriving Repr
 
 /-! Two facts about `List.lookup` over a pair of association lists carrying the same keys in the
 same order.  Every rule about a struct is stated with `lookup`, and these are what carry a fact
@@ -132,38 +151,38 @@ Every form determines its own type: `lnil` carries the element type of the empty
 `lam` carries the types of its parameters, so inference never has to guess and needs no expected
 type to work from.  `Expression.check` is therefore just this function plus a comparison.
 
-`ss` is the one thing inference needs that the context does not supply.  A struct type is a name, so
-each of the three struct forms has to resolve it: `structNew` to find the fields it must initialize,
-`structGet` to find the type of the field it reads, and `structUpdate` to find the types of the
-fields it rebinds. -/
-public def Expression.infer (ss : Structs) (ctx : Context) : Expression → Option Ty
+`td` is the one thing inference needs that the context does not supply.  A struct type is a name, so
+each of the three struct forms has to resolve it in `td.ss`: `structNew` to find the fields it must
+initialize, `structGet` to find the type of the field it reads, and `structUpdate` to find the types
+of the fields it rebinds. -/
+public def Expression.infer (td : TypeDecls) (ctx : Context) : Expression → Option Ty
   | .lam ps body => do
-    let r ← body.infer ss (ps ++ ctx)
+    let r ← body.infer td (ps ++ ctx)
     some (.fn (ps.map Prod.snd) r)
   | .app f args =>
-    match f.infer ss ctx with
-    | some (.fn ps r) => if Expression.inferList ss ctx args == some ps then some r else none
+    match f.infer td ctx with
+    | some (.fn ps r) => if Expression.inferList td ctx args == some ps then some r else none
     | _ => none
   | .let_ x e body => do
-    let t ← e.infer ss ctx
-    body.infer ss ((x, t) :: ctx)
+    let t ← e.infer td ctx
+    body.infer td ((x, t) :: ctx)
   | .varRef x => ctx.lookup x
   | .structNew name fes =>
-    match ss.lookup name with
+    match td.ss.lookup name with
     | some sd =>
-      if Expression.inferFields ss ctx fes == some sd.fields then some (.struct name) else none
+      if Expression.inferFields td ctx fes == some sd.fields then some (.struct name) else none
     | none => none
   | .structGet e f =>
-    match e.infer ss ctx with
+    match e.infer td ctx with
     | some (.struct name) =>
-      match ss.lookup name with
+      match td.ss.lookup name with
       | some sd => sd.fields.lookup f
       | none => none
     | _ => none
   | .structUpdate e fes =>
-    match e.infer ss ctx, Expression.inferFields ss ctx fes with
+    match e.infer td ctx, Expression.inferFields td ctx fes with
     | some (.struct name), some fts =>
-      match ss.lookup name with
+      match td.ss.lookup name with
       | some sd =>
         if !fts.isEmpty && fts.all fun p => sd.fields.lookup p.1 == some p.2 then
           some (.struct name)
@@ -172,15 +191,15 @@ public def Expression.infer (ss : Structs) (ctx : Context) : Expression → Opti
     | _, _ => none
   | .intLit _ => some .int
   | .plus l r | .minus l r =>
-    if l.infer ss ctx == some .int && r.infer ss ctx == some .int then some .int else none
+    if l.infer td ctx == some .int && r.infer td ctx == some .int then some .int else none
   | .stringLit _ => some .string
   | .lnil t => some (.list t)
   | .lcons hd tl => do
-    let t ← hd.infer ss ctx
-    guard (tl.infer ss ctx == some (.list t))
+    let t ← hd.infer td ctx
+    guard (tl.infer td ctx == some (.list t))
     some (.list t)
   | .listReverse l =>
-    match l.infer ss ctx with
+    match l.infer td ctx with
     | some (.list t) => some (.list t)
     | _ => none
 
@@ -188,11 +207,12 @@ public def Expression.infer (ss : Structs) (ctx : Context) : Expression → Opti
 
 This is mutual with `Expression.infer` because `app` holds a `List Expression`, which is how
 `Expression.rec` offers the nesting: one motive for `Expression`, one for `List Expression`. -/
-public def Expression.inferList (ss : Structs) (ctx : Context) : List Expression → Option (List Ty)
+public def Expression.inferList (td : TypeDecls) (ctx : Context) :
+    List Expression → Option (List Ty)
   | [] => some []
   | e :: es => do
-    let t ← e.infer ss ctx
-    let ts ← Expression.inferList ss ctx es
+    let t ← e.infer td ctx
+    let ts ← Expression.inferList td ctx es
     some (t :: ts)
 
 /-- Infer the type of each field's expression, keeping the field it belongs to, or `none` if any one
@@ -201,12 +221,12 @@ of them is ill typed.
 The result is an association list of exactly the fields given, in exactly the order given, which is
 what lets `structNew` compare it against a declaration's field list in one step.  `structUpdate`,
 which names only some of the fields, reads it with `lookup` instead. -/
-public def Expression.inferFields (ss : Structs) (ctx : Context) :
+public def Expression.inferFields (td : TypeDecls) (ctx : Context) :
     List (FieldName × Expression) → Option (List (FieldName × Ty))
   | [] => some []
   | (f, e) :: fes => do
-    let t ← e.infer ss ctx
-    let fts ← Expression.inferFields ss ctx fes
+    let t ← e.infer td ctx
+    let fts ← Expression.inferFields td ctx fes
     some ((f, t) :: fts)
 
 end
@@ -214,40 +234,40 @@ end
 /-! Inversion principles for `infer`, one per syntactic form.
 
 `infer`'s body is not visible outside this module, so a proof elsewhere cannot unfold it and has
-to go through these instead.  They are `simp` lemmas, so a hypothesis `e.infer ss ctx = some t`
+to go through these instead.  They are `simp` lemmas, so a hypothesis `e.infer td ctx = some t`
 decomposes into premises about `e`'s subterms automatically. -/
 
-@[simp, grind =] public theorem Expression.infer_varRef {ss : Structs} {ctx : Context}
+@[simp, grind =] public theorem Expression.infer_varRef {td : TypeDecls} {ctx : Context}
     {x : String} :
-    (Expression.varRef x).infer ss ctx = ctx.lookup x := by
+    (Expression.varRef x).infer td ctx = ctx.lookup x := by
   simp [Expression.infer]
 
-@[simp, grind =] public theorem Expression.infer_intLit {ss : Structs} {ctx : Context} {i : Int} :
-    (Expression.intLit i).infer ss ctx = some .int := by
+@[simp, grind =] public theorem Expression.infer_intLit {td : TypeDecls} {ctx : Context} {i : Int} :
+    (Expression.intLit i).infer td ctx = some .int := by
   simp [Expression.infer]
 
-@[simp, grind =] public theorem Expression.infer_stringLit {ss : Structs} {ctx : Context}
+@[simp, grind =] public theorem Expression.infer_stringLit {td : TypeDecls} {ctx : Context}
     {s : String} :
-    (Expression.stringLit s).infer ss ctx = some .string := by
+    (Expression.stringLit s).infer td ctx = some .string := by
   simp [Expression.infer]
 
-@[simp, grind =] public theorem Expression.infer_lnil {ss : Structs} {ctx : Context} {t : Ty} :
-    (Expression.lnil t).infer ss ctx = some (.list t) := by
+@[simp, grind =] public theorem Expression.infer_lnil {td : TypeDecls} {ctx : Context} {t : Ty} :
+    (Expression.lnil t).infer td ctx = some (.list t) := by
   simp [Expression.infer]
 
 /-- A `plus` is typeable exactly when both operands are `int`s, and then it is an `int`. -/
-@[simp, grind =] public theorem Expression.infer_plus_eq_some {ss : Structs} {ctx : Context}
+@[simp, grind =] public theorem Expression.infer_plus_eq_some {td : TypeDecls} {ctx : Context}
     {l r : Expression} {t : Ty} :
-    (Expression.plus l r).infer ss ctx = some t ↔
-      l.infer ss ctx = some .int ∧ r.infer ss ctx = some .int ∧ t = .int := by
+    (Expression.plus l r).infer td ctx = some t ↔
+      l.infer td ctx = some .int ∧ r.infer td ctx = some .int ∧ t = .int := by
   simp [Expression.infer]
   grind
 
 /-- A `minus` is typeable exactly when both operands are `int`s, and then it is an `int`. -/
-@[simp, grind =] public theorem Expression.infer_minus_eq_some {ss : Structs} {ctx : Context}
+@[simp, grind =] public theorem Expression.infer_minus_eq_some {td : TypeDecls} {ctx : Context}
     {l r : Expression} {t : Ty} :
-    (Expression.minus l r).infer ss ctx = some t ↔
-      l.infer ss ctx = some .int ∧ r.infer ss ctx = some .int ∧ t = .int := by
+    (Expression.minus l r).infer td ctx = some t ↔
+      l.infer td ctx = some .int ∧ r.infer td ctx = some .int ∧ t = .int := by
   simp [Expression.infer]
   grind
 
@@ -255,10 +275,10 @@ decomposes into premises about `e`'s subterms automatically. -/
 
 This is what makes the values `Eval` builds homogeneous: the element type is read off the head
 and then *required* of the tail, so one `Ty` covers every element. -/
-@[simp, grind =] public theorem Expression.infer_lcons_eq_some {ss : Structs} {ctx : Context}
+@[simp, grind =] public theorem Expression.infer_lcons_eq_some {td : TypeDecls} {ctx : Context}
     {hd tl : Expression} {t : Ty} :
-    (Expression.lcons hd tl).infer ss ctx = some t ↔
-      ∃ t', hd.infer ss ctx = some t' ∧ tl.infer ss ctx = some (.list t') ∧ t = .list t' := by
+    (Expression.lcons hd tl).infer td ctx = some t ↔
+      ∃ t', hd.infer td ctx = some t' ∧ tl.infer td ctx = some (.list t') ∧ t = .list t' := by
   simp [Expression.infer, Option.bind_eq_some_iff, guard]
   grind
 
@@ -267,10 +287,10 @@ type.
 
 Reversing preserves both the length and the element type, so the operand's type is also the
 result's: unlike `lcons`, this form introduces no new type structure. -/
-@[simp, grind =] public theorem Expression.infer_listReverse_eq_some {ss : Structs} {ctx : Context}
-    {l : Expression} {t : Ty} :
-    (Expression.listReverse l).infer ss ctx = some t ↔
-      ∃ t', l.infer ss ctx = some (.list t') ∧ t = .list t' := by
+@[simp, grind =] public theorem Expression.infer_listReverse_eq_some {td : TypeDecls}
+    {ctx : Context} {l : Expression} {t : Ty} :
+    (Expression.listReverse l).infer td ctx = some t ↔
+      ∃ t', l.infer td ctx = some (.list t') ∧ t = .list t' := by
   simp only [Expression.infer]
   split <;> grind
 
@@ -279,10 +299,10 @@ context, and then it is a function from the parameters' types to the body's.
 
 Parameters go on the front of the context, so they shadow same-named bindings from outside, and — as
 in `Decl.callEnv` — a name repeated in the parameter list refers to its leftmost occurrence. -/
-@[simp, grind =] public theorem Expression.infer_lam_eq_some {ss : Structs} {ctx : Context}
+@[simp, grind =] public theorem Expression.infer_lam_eq_some {td : TypeDecls} {ctx : Context}
     {ps : List (String × Ty)} {body : Expression} {t : Ty} :
-    (Expression.lam ps body).infer ss ctx = some t ↔
-      ∃ r, body.infer ss (ps ++ ctx) = some r ∧ t = .fn (ps.map Prod.snd) r := by
+    (Expression.lam ps body).infer td ctx = some t ↔
+      ∃ r, body.infer td (ps ++ ctx) = some r ∧ t = .fn (ps.map Prod.snd) r := by
   simp [Expression.infer, Option.bind_eq_some_iff]
   grind
 
@@ -291,10 +311,10 @@ are the types of the arguments, in order, and then it is that function type's re
 
 Because `Ty.fn` records all the parameters at once, arity is part of that one comparison: a call
 passing too few arguments is ill typed rather than partially applied. -/
-@[simp, grind =] public theorem Expression.infer_app_eq_some {ss : Structs} {ctx : Context}
+@[simp, grind =] public theorem Expression.infer_app_eq_some {td : TypeDecls} {ctx : Context}
     {f : Expression} {args : List Expression} {t : Ty} :
-    (Expression.app f args).infer ss ctx = some t ↔
-      ∃ ps, f.infer ss ctx = some (.fn ps t) ∧ Expression.inferList ss ctx args = some ps := by
+    (Expression.app f args).infer td ctx = some t ↔
+      ∃ ps, f.infer td ctx = some (.fn ps t) ∧ Expression.inferList td ctx args = some ps := by
   simp only [Expression.infer]
   split <;> grind
 
@@ -305,10 +325,10 @@ The bound expression's type is inferred rather than annotated, which is why `let
 there is nothing for the writer to declare that inference does not already determine.  The name goes
 on the front of the context, so it shadows an outer binding of the same name, and the bound
 expression is typed *before* it is added, so `let x = x` still refers to the outer `x`. -/
-@[simp, grind =] public theorem Expression.infer_let_eq_some {ss : Structs} {ctx : Context}
+@[simp, grind =] public theorem Expression.infer_let_eq_some {td : TypeDecls} {ctx : Context}
     {x : String} {e body : Expression} {t : Ty} :
-    (Expression.let_ x e body).infer ss ctx = some t ↔
-      ∃ t', e.infer ss ctx = some t' ∧ body.infer ss ((x, t') :: ctx) = some t := by
+    (Expression.let_ x e body).infer td ctx = some t ↔
+      ∃ t', e.infer td ctx = some t' ∧ body.infer td ((x, t') :: ctx) = some t := by
   simp [Expression.infer, Option.bind_eq_some_iff]
 
 /-- A `structNew` is typeable exactly when the name it gives is declared and the fields it gives are
@@ -319,12 +339,12 @@ field's name beside the type inferred for its expression, so a missing field, a 
 does not have, a repeated field, and a field at the wrong type all make the two lists differ.  It
 also fixes the order, so the values `Eval` builds are in the order the declaration wrote its fields.
 
-The type is just the name.  Nothing about the fields survives into it, which is what makes `ss`
+The type is just the name.  Nothing about the fields survives into it, which is what makes `td.ss`
 necessary everywhere a struct is taken apart again. -/
-@[simp, grind =] public theorem Expression.infer_structNew_eq_some {ss : Structs} {ctx : Context}
+@[simp, grind =] public theorem Expression.infer_structNew_eq_some {td : TypeDecls} {ctx : Context}
     {name : String} {fes : List (FieldName × Expression)} {t : Ty} :
-    (Expression.structNew name fes).infer ss ctx = some t ↔
-      ∃ sd, ss.lookup name = some sd ∧ Expression.inferFields ss ctx fes = some sd.fields
+    (Expression.structNew name fes).infer td ctx = some t ↔
+      ∃ sd, td.ss.lookup name = some sd ∧ Expression.inferFields td ctx fes = some sd.fields
         ∧ t = .struct name := by
   simp only [Expression.infer]
   split <;> grind
@@ -335,10 +355,10 @@ then it has that field's declared type.
 Both lookups have to succeed: a struct type whose name is not declared has no fields to read, and a
 field the declaration does not list is not a field of it.  There is no structural fallback — a value
 that happens to carry the field is still ill typed unless its declaration says so. -/
-@[simp, grind =] public theorem Expression.infer_structGet_eq_some {ss : Structs} {ctx : Context}
+@[simp, grind =] public theorem Expression.infer_structGet_eq_some {td : TypeDecls} {ctx : Context}
     {e : Expression} {f : FieldName} {t : Ty} :
-    (Expression.structGet e f).infer ss ctx = some t ↔
-      ∃ name sd, e.infer ss ctx = some (.struct name) ∧ ss.lookup name = some sd
+    (Expression.structGet e f).infer td ctx = some t ↔
+      ∃ name sd, e.infer td ctx = some (.struct name) ∧ td.ss.lookup name = some sd
         ∧ sd.fields.lookup f = some t := by
   simp only [Expression.infer]
   split <;> grind
@@ -354,11 +374,11 @@ that suggests otherwise.
 
 Updating cannot change a struct's type, so the result type is read off the operand rather than built.
 That is what lets updates chain. -/
-@[simp, grind =] public theorem Expression.infer_structUpdate_eq_some {ss : Structs} {ctx : Context}
-    {e : Expression} {fes : List (FieldName × Expression)} {t : Ty} :
-    (Expression.structUpdate e fes).infer ss ctx = some t ↔
-      ∃ name sd fts, e.infer ss ctx = some (.struct name) ∧ ss.lookup name = some sd
-        ∧ Expression.inferFields ss ctx fes = some fts ∧ fts ≠ []
+@[simp, grind =] public theorem Expression.infer_structUpdate_eq_some {td : TypeDecls}
+    {ctx : Context} {e : Expression} {fes : List (FieldName × Expression)} {t : Ty} :
+    (Expression.structUpdate e fes).infer td ctx = some t ↔
+      ∃ name sd fts, e.infer td ctx = some (.struct name) ∧ td.ss.lookup name = some sd
+        ∧ Expression.inferFields td ctx fes = some fts ∧ fts ≠ []
         ∧ (∀ p ∈ fts, sd.fields.lookup p.1 = some p.2) ∧ t = .struct name := by
   simp only [Expression.infer]
   split <;> grind
@@ -366,14 +386,14 @@ That is what lets updates chain. -/
 /-! Inversion principles for `inferList`.  Together these say what it computes: the argument types
 in order, and `none` as soon as one argument has no type. -/
 
-@[simp, grind =] public theorem Expression.inferList_nil {ss : Structs} {ctx : Context} :
-    Expression.inferList ss ctx [] = some [] := by
+@[simp, grind =] public theorem Expression.inferList_nil {td : TypeDecls} {ctx : Context} :
+    Expression.inferList td ctx [] = some [] := by
   simp [Expression.inferList]
 
-@[simp, grind =] public theorem Expression.inferList_cons_eq_some {ss : Structs} {ctx : Context}
+@[simp, grind =] public theorem Expression.inferList_cons_eq_some {td : TypeDecls} {ctx : Context}
     {e : Expression} {es : List Expression} {ts : List Ty} :
-    Expression.inferList ss ctx (e :: es) = some ts ↔
-      ∃ t ts', e.infer ss ctx = some t ∧ Expression.inferList ss ctx es = some ts'
+    Expression.inferList td ctx (e :: es) = some ts ↔
+      ∃ t ts', e.infer td ctx = some t ∧ Expression.inferList td ctx es = some ts'
         ∧ ts = t :: ts' := by
   simp [Expression.inferList, Option.bind_eq_some_iff]
   grind
@@ -381,15 +401,15 @@ in order, and `none` as soon as one argument has no type. -/
 /-! Inversion principles for `inferFields`, and then what it says about the list it produces: the
 fields it was given, in order, and `none` as soon as one field's expression has no type. -/
 
-@[simp, grind =] public theorem Expression.inferFields_nil {ss : Structs} {ctx : Context} :
-    Expression.inferFields ss ctx [] = some [] := by
+@[simp, grind =] public theorem Expression.inferFields_nil {td : TypeDecls} {ctx : Context} :
+    Expression.inferFields td ctx [] = some [] := by
   simp [Expression.inferFields]
 
-@[simp, grind =] public theorem Expression.inferFields_cons_eq_some {ss : Structs} {ctx : Context}
+@[simp, grind =] public theorem Expression.inferFields_cons_eq_some {td : TypeDecls} {ctx : Context}
     {f : FieldName} {e : Expression} {fes : List (FieldName × Expression)}
     {fts : List (FieldName × Ty)} :
-    Expression.inferFields ss ctx ((f, e) :: fes) = some fts ↔
-      ∃ t fts', e.infer ss ctx = some t ∧ Expression.inferFields ss ctx fes = some fts'
+    Expression.inferFields td ctx ((f, e) :: fes) = some fts ↔
+      ∃ t fts', e.infer td ctx = some t ∧ Expression.inferFields td ctx fes = some fts'
         ∧ fts = (f, t) :: fts' := by
   simp [Expression.inferFields, Option.bind_eq_some_iff]
   grind
@@ -399,9 +419,9 @@ fields it was given, in order, and `none` as soon as one field's expression has 
 This is the fact that ties the three lists a `structNew` involves together.  Its declaration's fields
 are `inferFields`' output, the expressions are its input, and `Eval` relates those to the values, so
 one key sequence runs through all four. -/
-public theorem Expression.map_fst_of_inferFields {ss : Structs} {ctx : Context}
+public theorem Expression.map_fst_of_inferFields {td : TypeDecls} {ctx : Context}
     {fes : List (FieldName × Expression)} {fts : List (FieldName × Ty)}
-    (h : Expression.inferFields ss ctx fes = some fts) :
+    (h : Expression.inferFields td ctx fes = some fts) :
     fts.map Prod.fst = fes.map Prod.fst := by
   induction fes generalizing fts with
   | nil => simp_all
@@ -414,10 +434,10 @@ public theorem Expression.map_fst_of_inferFields {ss : Structs} {ctx : Context}
 
 Stated over `lookup` rather than position because that is how both struct rules read the list: a
 field's expression is found by name, and the type beside it is the one that field has. -/
-public theorem Expression.lookup_of_inferFields {ss : Structs} {ctx : Context}
+public theorem Expression.lookup_of_inferFields {td : TypeDecls} {ctx : Context}
     {fes : List (FieldName × Expression)} {fts : List (FieldName × Ty)}
-    (h : Expression.inferFields ss ctx fes = some fts) {f : FieldName} {e : Expression}
-    (hf : fes.lookup f = some e) : ∃ t, fts.lookup f = some t ∧ e.infer ss ctx = some t := by
+    (h : Expression.inferFields td ctx fes = some fts) {f : FieldName} {e : Expression}
+    (hf : fes.lookup f = some e) : ∃ t, fts.lookup f = some t ∧ e.infer td ctx = some t := by
   induction fes generalizing fts with
   | nil => simp at hf
   | cons p fes ih =>
@@ -429,17 +449,17 @@ public theorem Expression.lookup_of_inferFields {ss : Structs} {ctx : Context}
       · exact ih hfts hf
 
 /-- Check `e` against the expected type `ty` under `ctx`. -/
-public def Expression.check (ss : Structs) (ctx : Context) (e : Expression) (ty : Ty) : Bool :=
-  e.infer ss ctx == some ty
+public def Expression.check (td : TypeDecls) (ctx : Context) (e : Expression) (ty : Ty) : Bool :=
+  e.infer td ctx == some ty
 
 /-- `e` is well typed under `ctx` at some type. -/
-public def Expression.WellTyped (ss : Structs) (ctx : Context) (e : Expression) : Prop :=
-  ∃ t, e.check ss ctx t = true
+public def Expression.WellTyped (td : TypeDecls) (ctx : Context) (e : Expression) : Prop :=
+  ∃ t, e.check td ctx t = true
 
 /-- Inference is complete for well-typed expressions: since every form carries enough
 information to determine its own type, a type exists exactly when `infer` finds one. -/
-public theorem Expression.wellTyped_iff_infer_isSome (ss : Structs) (ctx : Context)
-    (e : Expression) : e.WellTyped ss ctx ↔ (e.infer ss ctx).isSome := by
+public theorem Expression.wellTyped_iff_infer_isSome (td : TypeDecls) (ctx : Context)
+    (e : Expression) : e.WellTyped td ctx ↔ (e.infer td ctx).isSome := by
   simp [Expression.WellTyped, Expression.check, Option.isSome_iff_exists]
 
 /-! ## Globals
@@ -491,19 +511,19 @@ parameters over the globals.
 
 The parameters come first, so a parameter shadows a global of the same name.  `Env.lookup` resolves
 a name the same way round, and that agreement is what `Eval.hasType` rests on. -/
-public def Decl.check (d : Decl) (ss : Structs) (gs : Globals) : Bool :=
-  d.body.check ss (d.parameters ++ Globals.types gs) d.resultType
+public def Decl.check (d : Decl) (td : TypeDecls) (gs : Globals) : Bool :=
+  d.body.check td (d.parameters ++ Globals.types gs) d.resultType
 
-/-- `d`'s body agrees with the types `d` declares for its parameters and its result, given `ss` and
+/-- `d`'s body agrees with the types `d` declares for its parameters and its result, given `td` and
 `gs`. -/
-public def Decl.WellTyped (d : Decl) (ss : Structs) (gs : Globals) : Prop :=
-  d.check ss gs = true
+public def Decl.WellTyped (d : Decl) (td : TypeDecls) (gs : Globals) : Prop :=
+  d.check td gs = true
 
 /-- `Decl.check`'s body is not visible outside this module, so this is how a proof elsewhere gets
 at what `WellTyped` says: inference on the body finds exactly the declared result type. -/
-@[simp, grind =] public theorem Decl.wellTyped_iff_infer_eq_some {d : Decl} {ss : Structs}
+@[simp, grind =] public theorem Decl.wellTyped_iff_infer_eq_some {d : Decl} {td : TypeDecls}
     {gs : Globals} :
-    d.WellTyped ss gs ↔ d.body.infer ss (d.parameters ++ Globals.types gs) = some d.resultType := by
+    d.WellTyped td gs ↔ d.body.infer td (d.parameters ++ Globals.types gs) = some d.resultType := by
   simp [Decl.WellTyped, Decl.check, Expression.check]
 
 /-- Every declaration in `gs` checks, each under a context holding all of them.
@@ -516,11 +536,11 @@ which would need typing again, and no inductive relation survives that regress.
 Exposed, unlike the rest of this module's definitions: it is a specification rather than an
 algorithm, there is nothing in it for an inversion principle to recover, and every consumer needs to
 instantiate it at a name. -/
-@[expose] public def Globals.WellTyped (ss : Structs) (gs : Globals) : Prop :=
-  ∀ x d, gs.lookup x = some d → d.WellTyped ss gs
+@[expose] public def Globals.WellTyped (td : TypeDecls) (gs : Globals) : Prop :=
+  ∀ x d, gs.lookup x = some d → d.WellTyped td gs
 
 /-- A program with no globals has nothing to check, whatever structs it declares. -/
-public theorem Globals.wellTyped_nil {ss : Structs} : Globals.WellTyped ss [] := by
+public theorem Globals.wellTyped_nil {td : TypeDecls} : Globals.WellTyped td [] := by
   intro x d hx; simp at hx
 
 /-- A lookup only ever hands back an entry the table contains. -/
@@ -532,18 +552,18 @@ public theorem Globals.mem_of_lookup {gs : Globals} {x : String} {d : Decl}
 
 Stated over membership rather than lookup because that is what a table written out as a literal can
 be discharged against, one entry at a time. -/
-public theorem Globals.wellTyped_of_forall {ss : Structs} {gs : Globals}
-    (h : ∀ p ∈ gs, Decl.WellTyped p.2 ss gs) : Globals.WellTyped ss gs :=
+public theorem Globals.wellTyped_of_forall {td : TypeDecls} {gs : Globals}
+    (h : ∀ p ∈ gs, Decl.WellTyped p.2 td gs) : Globals.WellTyped td gs :=
   fun x d hx => h (x, d) (Globals.mem_of_lookup hx)
 
 /-- Run the checker over a whole table.  Decides `Globals.WellTyped`, which `#guard` can report on
 even where the kernel cannot reduce `Expression.infer`. -/
-public def Globals.check (ss : Structs) (gs : Globals) : Bool := gs.all fun p => p.2.check ss gs
+public def Globals.check (td : TypeDecls) (gs : Globals) : Bool := gs.all fun p => p.2.check td gs
 
 /-- `Globals.check` is what it says it is.  It is the stronger of the two: it checks every entry,
 where `Globals.WellTyped` only constrains the ones a lookup can reach. -/
-public theorem Globals.wellTyped_of_check {ss : Structs} {gs : Globals}
-    (h : Globals.check ss gs = true) : Globals.WellTyped ss gs :=
+public theorem Globals.wellTyped_of_check {td : TypeDecls} {gs : Globals}
+    (h : Globals.check td gs = true) : Globals.WellTyped td gs :=
   Globals.wellTyped_of_forall fun p hp => List.all_eq_true.mp h p hp
 
 @[simp] public theorem Globals.ofDecls_nil : Globals.ofDecls [] = [] := by simp [Globals.ofDecls]
@@ -559,9 +579,9 @@ public theorem Globals.lookup_ofDecls_self {ds : List Decl} (hu : (ds.map Decl.n
 /-- With no repeated names, `Structs.ofDecls` resolves every structure declaration to itself.  This
 is what `Program.StructNamesUnique` buys, exactly as `Globals.lookup_ofDecls_self` is what
 `Program.NamesUnique` buys. -/
-public theorem Structs.lookup_ofDecls_self {ss : List StructDecl}
-    (hu : (ss.map StructDecl.name).Nodup) {sd : StructDecl} (hd : sd ∈ ss) :
-    (Structs.ofDecls ss).lookup sd.name = some sd := by
+public theorem Structs.lookup_ofDecls_self {sds : List StructDecl}
+    (hu : (sds.map StructDecl.name).Nodup) {sd : StructDecl} (hd : sd ∈ sds) :
+    (Structs.ofDecls sds).lookup sd.name = some sd := by
   simpa [Structs.ofDecls] using List.lookup_keyed_self hu hd
 
 /-! ## Programs
@@ -583,6 +603,14 @@ Derived rather than stored, so a declaration can never be filed under a name oth
 Derived the same way and for the same reason as `Program.globals`. -/
 @[expose] public def Program.structs (p : Program) : Structs := Structs.ofDecls p.structDecls
 
+/-- The type declarations `p` presents to its own bodies, as the one bundle everything that resolves
+a type name takes.
+
+This is what `p` is checked and evaluated against, so a kind of declaration added to `Program` is
+added here too and nowhere else. -/
+@[expose] public def Program.typeDecls (p : Program) : TypeDecls where
+  ss := p.structs
+
 /-- The declaration `x` names in `p`, or `none` if it names nothing. -/
 @[expose] public def Program.lookup (p : Program) (x : String) : Option Decl := p.globals.lookup x
 
@@ -592,11 +620,11 @@ Derived the same way and for the same reason as `Program.globals`. -/
 
 /-- Check a whole program: every declaration against the signatures of all of them, its own
 included, and against the structure types it declares. -/
-public def Program.check (p : Program) : Bool := Globals.check p.structs p.globals
+public def Program.check (p : Program) : Bool := Globals.check p.typeDecls p.globals
 
 /-- Every declaration in `p` checks, under `p`. -/
 @[expose] public def Program.WellTyped (p : Program) : Prop :=
-  Globals.WellTyped p.structs p.globals
+  Globals.WellTyped p.typeDecls p.globals
 
 public theorem Program.wellTyped_of_check {p : Program} (h : p.check = true) : p.WellTyped :=
   Globals.wellTyped_of_check h
@@ -641,7 +669,7 @@ public theorem Program.lookupStruct_self {p : Program} (hu : p.StructNamesUnique
 
 /-- Everything a well-typed program declares is well typed under it. -/
 public theorem Program.wellTyped_decl {p : Program} (hp : p.WellTyped) (hu : p.NamesUnique)
-    {d : Decl} (hd : d ∈ p.decls) : d.WellTyped p.structs p.globals :=
+    {d : Decl} (hd : d ∈ p.decls) : d.WellTyped p.typeDecls p.globals :=
   hp d.name d (Program.lookup_self hu hd)
 
 section Tests
@@ -656,171 +684,171 @@ private def box : StructDecl where
   name := "Box"
   fields := [("label", .string), ("items", .list .int), ("origin", .struct "Point")]
 
-private def structs : Structs := Structs.ofDecls [point, box]
+private def types : TypeDecls := { ss := Structs.ofDecls [point, box] }
 
 private def ctx : Context :=
   [("xs", .list .int), ("n", .int), ("s", .string), ("f", .fn [.int, .string] .int),
     ("p", .struct "Point"), ("b", .struct "Box")]
 
 -- Inference determines the type of every form.
-#guard (Expression.intLit 3).infer structs ctx == some .int
-#guard (Expression.stringLit "hi").infer structs ctx == some .string
-#guard (Expression.varRef "n").infer structs ctx == some .int
-#guard (Expression.varRef "s").infer structs ctx == some .string
-#guard (Expression.varRef "xs").infer structs ctx == some (.list .int)
-#guard (Expression.varRef "f").infer structs ctx == some (.fn [.int, .string] .int)
-#guard (Expression.varRef "nope").infer structs ctx == none
-#guard (Expression.plus (.varRef "n") (.intLit 1)).infer structs ctx == some .int
-#guard (Expression.minus (.intLit 1) (.varRef "xs")).infer structs ctx == none
+#guard (Expression.intLit 3).infer types ctx == some .int
+#guard (Expression.stringLit "hi").infer types ctx == some .string
+#guard (Expression.varRef "n").infer types ctx == some .int
+#guard (Expression.varRef "s").infer types ctx == some .string
+#guard (Expression.varRef "xs").infer types ctx == some (.list .int)
+#guard (Expression.varRef "f").infer types ctx == some (.fn [.int, .string] .int)
+#guard (Expression.varRef "nope").infer types ctx == none
+#guard (Expression.plus (.varRef "n") (.intLit 1)).infer types ctx == some .int
+#guard (Expression.minus (.intLit 1) (.varRef "xs")).infer types ctx == none
 
 -- Arithmetic is on `int`s only: a string operand is rejected on either side.
-#guard (Expression.plus (.stringLit "a") (.stringLit "b")).infer structs ctx == none
-#guard (Expression.plus (.varRef "n") (.stringLit "b")).infer structs ctx == none
-#guard (Expression.minus (.stringLit "a") (.varRef "n")).infer structs ctx == none
+#guard (Expression.plus (.stringLit "a") (.stringLit "b")).infer types ctx == none
+#guard (Expression.plus (.varRef "n") (.stringLit "b")).infer types ctx == none
+#guard (Expression.minus (.stringLit "a") (.varRef "n")).infer types ctx == none
 
 -- An empty list takes its type from its annotation, not from its context.
-#guard (Expression.lnil .int).infer structs ctx == some (.list .int)
-#guard (Expression.lnil (.list .int)).infer structs ctx == some (.list (.list .int))
+#guard (Expression.lnil .int).infer types ctx == some (.list .int)
+#guard (Expression.lnil (.list .int)).infer types ctx == some (.list (.list .int))
 
 -- A non-empty list takes its element type from its head, and its tail has to agree.
-#guard (Expression.lcons (.intLit 1) (.lnil .int)).infer structs ctx == some (.list .int)
-#guard (Expression.lcons (.intLit 1) (.varRef "xs")).infer structs ctx == some (.list .int)
-#guard (Expression.lcons (.varRef "xs") (.lnil (.list .int))).infer structs ctx
+#guard (Expression.lcons (.intLit 1) (.lnil .int)).infer types ctx == some (.list .int)
+#guard (Expression.lcons (.intLit 1) (.varRef "xs")).infer types ctx == some (.list .int)
+#guard (Expression.lcons (.varRef "xs") (.lnil (.list .int))).infer types ctx
   == some (.list (.list .int))
-#guard (Expression.lcons (.intLit 1) (.intLit 2)).infer structs ctx == none
-#guard (Expression.lcons (.intLit 1) (.lnil (.list .int))).infer structs ctx == none
-#guard (Expression.lcons (.varRef "xs") (.varRef "xs")).infer structs ctx == none
+#guard (Expression.lcons (.intLit 1) (.intLit 2)).infer types ctx == none
+#guard (Expression.lcons (.intLit 1) (.lnil (.list .int))).infer types ctx == none
+#guard (Expression.lcons (.varRef "xs") (.varRef "xs")).infer types ctx == none
 
 -- Lists are homogeneous across the new type too, so a mixed list has no type.
-#guard (Expression.lcons (.stringLit "a") (.lnil .string)).infer structs ctx == some (.list .string)
-#guard (Expression.lcons (.stringLit "a") (.lnil .int)).infer structs ctx == none
-#guard (Expression.lcons (.intLit 1) (.lnil .string)).infer structs ctx == none
-#guard (Expression.lcons (.stringLit "a") (.varRef "xs")).infer structs ctx == none
+#guard (Expression.lcons (.stringLit "a") (.lnil .string)).infer types ctx == some (.list .string)
+#guard (Expression.lcons (.stringLit "a") (.lnil .int)).infer types ctx == none
+#guard (Expression.lcons (.intLit 1) (.lnil .string)).infer types ctx == none
+#guard (Expression.lcons (.stringLit "a") (.varRef "xs")).infer types ctx == none
 
 -- A list of empty lists needs no expected type to be inferred, only agreeing annotations.
-#guard (Expression.lcons (.lnil .int) (.lnil (.list .int))).infer structs ctx
+#guard (Expression.lcons (.lnil .int) (.lnil (.list .int))).infer types ctx
   == some (.list (.list .int))
-#guard (Expression.lcons (.lnil .int) (.lnil .int)).infer structs ctx == none
+#guard (Expression.lcons (.lnil .int) (.lnil .int)).infer types ctx == none
 
 -- Reversing a list keeps its type, whatever the element type is.
-#guard (Expression.listReverse (.varRef "xs")).infer structs ctx == some (.list .int)
-#guard (Expression.listReverse (.lnil .string)).infer structs ctx == some (.list .string)
-#guard (Expression.listReverse (.lcons (.intLit 1) (.lnil .int))).infer structs ctx
+#guard (Expression.listReverse (.varRef "xs")).infer types ctx == some (.list .int)
+#guard (Expression.listReverse (.lnil .string)).infer types ctx == some (.list .string)
+#guard (Expression.listReverse (.lcons (.intLit 1) (.lnil .int))).infer types ctx
   == some (.list .int)
-#guard (Expression.listReverse (.lnil (.list .int))).infer structs ctx == some (.list (.list .int))
+#guard (Expression.listReverse (.lnil (.list .int))).infer types ctx == some (.list (.list .int))
 
 -- Only a list can be reversed, so a non-list operand is ill typed rather than passed through.
-#guard (Expression.listReverse (.intLit 1)).infer structs ctx == none
-#guard (Expression.listReverse (.stringLit "a")).infer structs ctx == none
-#guard (Expression.listReverse (.varRef "n")).infer structs ctx == none
-#guard (Expression.listReverse (.varRef "f")).infer structs ctx == none
+#guard (Expression.listReverse (.intLit 1)).infer types ctx == none
+#guard (Expression.listReverse (.stringLit "a")).infer types ctx == none
+#guard (Expression.listReverse (.varRef "n")).infer types ctx == none
+#guard (Expression.listReverse (.varRef "f")).infer types ctx == none
 
 -- An ill-typed operand makes the whole reversal ill typed.
-#guard (Expression.listReverse (.varRef "nope")).infer structs ctx == none
-#guard (Expression.listReverse (.lcons (.intLit 1) (.lnil .string))).infer structs ctx == none
+#guard (Expression.listReverse (.varRef "nope")).infer types ctx == none
+#guard (Expression.listReverse (.lcons (.intLit 1) (.lnil .string))).infer types ctx == none
 
 -- Reversals nest, since each one gives back a list.
-#guard (Expression.listReverse (.listReverse (.varRef "xs"))).infer structs ctx == some (.list .int)
-#guard (Expression.listReverse (.listReverse (.intLit 1))).infer structs ctx == none
+#guard (Expression.listReverse (.listReverse (.varRef "xs"))).infer types ctx == some (.list .int)
+#guard (Expression.listReverse (.listReverse (.intLit 1))).infer types ctx == none
 
 -- A `lam` takes its parameter types from its annotation and its result type from its body.
-#guard (Expression.lam [("x", .int)] (.varRef "x")).infer structs ctx == some (.fn [.int] .int)
-#guard (Expression.lam [("x", .int), ("y", .string)] (.varRef "y")).infer structs ctx
+#guard (Expression.lam [("x", .int)] (.varRef "x")).infer types ctx == some (.fn [.int] .int)
+#guard (Expression.lam [("x", .int), ("y", .string)] (.varRef "y")).infer types ctx
   == some (.fn [.int, .string] .string)
-#guard (Expression.lam [] (.intLit 1)).infer structs ctx == some (.fn [] .int)
-#guard (Expression.lam [("x", .int)] (.varRef "nope")).infer structs ctx == none
-#guard (Expression.lam [("x", .string)] (.plus (.varRef "x") (.intLit 1))).infer structs ctx == none
+#guard (Expression.lam [] (.intLit 1)).infer types ctx == some (.fn [] .int)
+#guard (Expression.lam [("x", .int)] (.varRef "nope")).infer types ctx == none
+#guard (Expression.lam [("x", .string)] (.plus (.varRef "x") (.intLit 1))).infer types ctx == none
 
 -- A body sees the enclosing context as well as the parameters, and the parameters shadow it.
-#guard (Expression.lam [("x", .int)] (.plus (.varRef "x") (.varRef "n"))).infer structs ctx
+#guard (Expression.lam [("x", .int)] (.plus (.varRef "x") (.varRef "n"))).infer types ctx
   == some (.fn [.int] .int)
-#guard (Expression.lam [("n", .string)] (.varRef "n")).infer structs ctx
+#guard (Expression.lam [("n", .string)] (.varRef "n")).infer types ctx
   == some (.fn [.string] .string)
-#guard (Expression.lam [("x", .int), ("x", .string)] (.varRef "x")).infer structs ctx
+#guard (Expression.lam [("x", .int), ("x", .string)] (.varRef "x")).infer types ctx
   == some (.fn [.int, .string] .int)
 
 -- Function types are types like any other: a `lam` can return one, and a list can hold them.
-#guard (Expression.lam [("x", .int)] (.lam [("y", .string)] (.varRef "x"))).infer structs ctx
+#guard (Expression.lam [("x", .int)] (.lam [("y", .string)] (.varRef "x"))).infer types ctx
   == some (.fn [.int] (.fn [.string] .int))
-#guard (Expression.lcons (.varRef "f") (.lnil (.fn [.int, .string] .int))).infer structs ctx
+#guard (Expression.lcons (.varRef "f") (.lnil (.fn [.int, .string] .int))).infer types ctx
   == some (.list (.fn [.int, .string] .int))
-#guard (Expression.lcons (.varRef "f") (.lnil (.fn [.int] .int))).infer structs ctx == none
+#guard (Expression.lcons (.varRef "f") (.lnil (.fn [.int] .int))).infer types ctx == none
 
 -- An `app` needs a function, and arguments whose types are the parameter types in order.
-#guard (Expression.app (.varRef "f") [.intLit 1, .stringLit "a"]).infer structs ctx == some .int
+#guard (Expression.app (.varRef "f") [.intLit 1, .stringLit "a"]).infer types ctx == some .int
 #guard (Expression.app (.lam [("x", .int)] (.plus (.varRef "x") (.intLit 1)))
-  [.intLit 2]).infer structs ctx == some .int
-#guard (Expression.app (.lam [] (.intLit 1)) []).infer structs ctx == some .int
-#guard (Expression.app (.varRef "f") [.stringLit "a", .intLit 1]).infer structs ctx == none
-#guard (Expression.app (.varRef "f") [.varRef "nope", .stringLit "a"]).infer structs ctx == none
-#guard (Expression.app (.varRef "n") [.intLit 1]).infer structs ctx == none
-#guard (Expression.app (.lnil .int) []).infer structs ctx == none
+  [.intLit 2]).infer types ctx == some .int
+#guard (Expression.app (.lam [] (.intLit 1)) []).infer types ctx == some .int
+#guard (Expression.app (.varRef "f") [.stringLit "a", .intLit 1]).infer types ctx == none
+#guard (Expression.app (.varRef "f") [.varRef "nope", .stringLit "a"]).infer types ctx == none
+#guard (Expression.app (.varRef "n") [.intLit 1]).infer types ctx == none
+#guard (Expression.app (.lnil .int) []).infer types ctx == none
 
 -- Arity is part of the function type, so a call with the wrong number of arguments is ill typed
 -- rather than partially applied.
-#guard (Expression.app (.varRef "f") [.intLit 1]).infer structs ctx == none
-#guard (Expression.app (.varRef "f") []).infer structs ctx == none
-#guard (Expression.app (.varRef "f") [.intLit 1, .stringLit "a", .intLit 2]).infer structs ctx
+#guard (Expression.app (.varRef "f") [.intLit 1]).infer types ctx == none
+#guard (Expression.app (.varRef "f") []).infer types ctx == none
+#guard (Expression.app (.varRef "f") [.intLit 1, .stringLit "a", .intLit 2]).infer types ctx
   == none
 
 -- Applying a function that returns a function gives the inner function type, which can then be
 -- applied in turn.
 #guard (Expression.app (.lam [("x", .int)] (.lam [("y", .string)] (.varRef "x"))) [.intLit 1]).infer
-  structs ctx == some (.fn [.string] .int)
+  types ctx == some (.fn [.string] .int)
 #guard (Expression.app (.app (.lam [("x", .int)] (.lam [("y", .string)] (.varRef "x"))) [.intLit 1])
-  [.stringLit "a"]).infer structs ctx == some .int
+  [.stringLit "a"]).infer types ctx == some .int
 
 -- A `let_` gives its body's type, with the bound name at the type inferred for what it binds.
-#guard (Expression.let_ "x" (.intLit 1) (.plus (.varRef "x") (.intLit 2))).infer structs ctx
+#guard (Expression.let_ "x" (.intLit 1) (.plus (.varRef "x") (.intLit 2))).infer types ctx
   == some .int
-#guard (Expression.let_ "x" (.stringLit "a") (.varRef "x")).infer structs ctx == some .string
-#guard (Expression.let_ "x" (.varRef "xs") (.varRef "x")).infer structs ctx == some (.list .int)
+#guard (Expression.let_ "x" (.stringLit "a") (.varRef "x")).infer types ctx == some .string
+#guard (Expression.let_ "x" (.varRef "xs") (.varRef "x")).infer types ctx == some (.list .int)
 #guard (Expression.let_ "g" (.lam [("y", .int)] (.varRef "y"))
-  (.app (.varRef "g") [.intLit 1])).infer structs ctx == some .int
+  (.app (.varRef "g") [.intLit 1])).infer types ctx == some .int
 
 -- An ill-typed expression on either side makes the whole `let_` ill typed.
-#guard (Expression.let_ "x" (.varRef "nope") (.intLit 1)).infer structs ctx == none
-#guard (Expression.let_ "x" (.intLit 1) (.plus (.varRef "x") (.stringLit "a"))).infer structs ctx
+#guard (Expression.let_ "x" (.varRef "nope") (.intLit 1)).infer types ctx == none
+#guard (Expression.let_ "x" (.intLit 1) (.plus (.varRef "x") (.stringLit "a"))).infer types ctx
   == none
-#guard (Expression.let_ "x" (.intLit 1) (.varRef "nope")).infer structs ctx == none
+#guard (Expression.let_ "x" (.intLit 1) (.varRef "nope")).infer types ctx == none
 
 -- The name is added after the expression it binds is typed, so a `let_` is not recursive: the bound
 -- expression sees the enclosing context only.
-#guard (Expression.let_ "x" (.varRef "x") (.varRef "x")).infer structs ctx == none
-#guard (Expression.let_ "n" (.plus (.varRef "n") (.intLit 1)) (.varRef "n")).infer structs ctx
+#guard (Expression.let_ "x" (.varRef "x") (.varRef "x")).infer types ctx == none
+#guard (Expression.let_ "n" (.plus (.varRef "n") (.intLit 1)) (.varRef "n")).infer types ctx
   == some .int
 
 -- The binding shadows an enclosing one of the same name, inner `let_`s included.
-#guard (Expression.let_ "n" (.stringLit "a") (.varRef "n")).infer structs ctx == some .string
-#guard (Expression.let_ "n" (.stringLit "a") (.plus (.varRef "n") (.intLit 1))).infer structs ctx
+#guard (Expression.let_ "n" (.stringLit "a") (.varRef "n")).infer types ctx == some .string
+#guard (Expression.let_ "n" (.stringLit "a") (.plus (.varRef "n") (.intLit 1))).infer types ctx
   == none
 #guard (Expression.let_ "x" (.intLit 1)
-  (.let_ "x" (.stringLit "a") (.varRef "x"))).infer structs ctx == some .string
+  (.let_ "x" (.stringLit "a") (.varRef "x"))).infer types ctx == some .string
 
 -- `let_`s nest, and a later one sees what an earlier one bound.
 #guard (Expression.let_ "x" (.intLit 1)
   (.let_ "y" (.plus (.varRef "x") (.intLit 1))
-    (.plus (.varRef "x") (.varRef "y")))).infer structs ctx == some .int
+    (.plus (.varRef "x") (.varRef "y")))).infer types ctx == some .int
 
 -- A `lam` body sees a `let_` from outside it, and a `let_` body sees the parameters.
 #guard (Expression.let_ "x" (.intLit 1)
-  (.lam [("y", .int)] (.plus (.varRef "x") (.varRef "y")))).infer structs ctx
+  (.lam [("y", .int)] (.plus (.varRef "x") (.varRef "y")))).infer types ctx
   == some (.fn [.int] .int)
 #guard (Expression.lam [("y", .int)]
-  (.let_ "x" (.varRef "y") (.plus (.varRef "x") (.varRef "y")))).infer structs ctx
+  (.let_ "x" (.varRef "y") (.plus (.varRef "x") (.varRef "y")))).infer types ctx
   == some (.fn [.int] .int)
 
 -- Checking agrees with inference.
-#guard (Expression.lnil .int).check structs ctx (.list .int)
-#guard !(Expression.lnil .int).check structs ctx .int
-#guard (Expression.plus (.varRef "n") (.intLit 1)).check structs ctx .int
-#guard !(Expression.plus (.varRef "n") (.intLit 1)).check structs ctx (.list .int)
-#guard !(Expression.plus (.varRef "n") (.lnil .int)).check structs ctx .int
-#guard (Expression.stringLit "hi").check structs ctx .string
-#guard !(Expression.stringLit "hi").check structs ctx .int
-#guard (Expression.lam [("x", .int)] (.varRef "x")).check structs ctx (.fn [.int] .int)
-#guard !(Expression.lam [("x", .int)] (.varRef "x")).check structs ctx (.fn [.string] .string)
-#guard !(Expression.lam [("x", .int)] (.varRef "x")).check structs ctx .int
+#guard (Expression.lnil .int).check types ctx (.list .int)
+#guard !(Expression.lnil .int).check types ctx .int
+#guard (Expression.plus (.varRef "n") (.intLit 1)).check types ctx .int
+#guard !(Expression.plus (.varRef "n") (.intLit 1)).check types ctx (.list .int)
+#guard !(Expression.plus (.varRef "n") (.lnil .int)).check types ctx .int
+#guard (Expression.stringLit "hi").check types ctx .string
+#guard !(Expression.stringLit "hi").check types ctx .int
+#guard (Expression.lam [("x", .int)] (.varRef "x")).check types ctx (.fn [.int] .int)
+#guard !(Expression.lam [("x", .int)] (.varRef "x")).check types ctx (.fn [.string] .string)
+#guard !(Expression.lam [("x", .int)] (.varRef "x")).check types ctx .int
 
 /-- `fun (x : int) (y : int) => x + (y - 1)` -/
 private def addPred : Decl where
@@ -831,12 +859,12 @@ private def addPred : Decl where
   resultType := .int
 
 -- A declaration checks when its body agrees with the result type it declares.
-#guard addPred.check [] []
-#guard !({ addPred with resultType := .list .int } : Decl).check [] []
+#guard addPred.check {} []
+#guard !({ addPred with resultType := .list .int } : Decl).check {} []
 
 -- The parameter list is all the body has to work with, and it is checked at the types it gives.
-#guard !({ addPred with parameters := [("x", .int)] } : Decl).check [] []
-#guard !({ addPred with parameters := [("x", .int), ("y", .list .int)] } : Decl).check [] []
+#guard !({ addPred with parameters := [("x", .int)] } : Decl).check {} []
+#guard !({ addPred with parameters := [("x", .int), ("y", .list .int)] } : Decl).check {} []
 
 /-- `fun (s : string) => ["!", s]` -/
 private def bang : Decl where
@@ -846,9 +874,9 @@ private def bang : Decl where
   body := .lcons (.stringLit "!") (.lcons (.varRef "s") (.lnil .string))
   resultType := .list .string
 
-#guard bang.check [] []
-#guard !({ bang with resultType := .list .int } : Decl).check [] []
-#guard !({ bang with parameters := [("s", .int)] } : Decl).check [] []
+#guard bang.check {} []
+#guard !({ bang with resultType := .list .int } : Decl).check {} []
+#guard !({ bang with parameters := [("s", .int)] } : Decl).check {} []
 
 /-- `fun (g : (int) -> int) (x : int) => g(x)` -/
 private def applyTo : Decl where
@@ -859,11 +887,11 @@ private def applyTo : Decl where
   resultType := .int
 
 -- A parameter of function type is callable, at the arity and types its type gives.
-#guard applyTo.check [] []
-#guard !({ applyTo with parameters := [("g", .fn [.string] .int), ("x", .int)] } : Decl).check [] []
+#guard applyTo.check {} []
+#guard !({ applyTo with parameters := [("g", .fn [.string] .int), ("x", .int)] } : Decl).check {} []
 #guard !({ applyTo with parameters := [("g", .fn [.int, .int] .int), ("x", .int)] }
-  : Decl).check [] []
-#guard !({ applyTo with resultType := .string } : Decl).check [] []
+  : Decl).check {} []
+#guard !({ applyTo with resultType := .string } : Decl).check {} []
 
 /-- `fun (n : int) => fun (m : int) => n + m` -/
 private def adder : Decl where
@@ -874,13 +902,13 @@ private def adder : Decl where
   resultType := .fn [.int] .int
 
 -- A declaration can return a function, and its result type is checked like any other.
-#guard adder.check [] []
-#guard !({ adder with resultType := .int } : Decl).check [] []
-#guard !({ adder with resultType := .fn [.string] .int } : Decl).check [] []
+#guard adder.check {} []
+#guard !({ adder with resultType := .int } : Decl).check {} []
+#guard !({ adder with resultType := .fn [.string] .int } : Decl).check {} []
 
 /-! ### Structs
 
-`point` and `box` are the declarations `structs` holds, and `ctx` gives `p` and `b` one of each.
+`point` and `box` are the declarations `types` holds, and `ctx` gives `p` and `b` one of each.
 `pair` below is declared nowhere: it is what a struct type that names nothing looks like. -/
 
 /-- The same fields as `point` under another name, which is how nominality gets tested: nothing a
@@ -893,83 +921,83 @@ private def pair : StructDecl where
 -- list cannot hold one of each.
 #guard Ty.struct "Point" == Ty.struct "Point"
 #guard Ty.struct "Point" != Ty.struct "Pair"
-#guard (Expression.lcons (.varRef "p") (.lnil (.struct "Point"))).infer structs ctx
+#guard (Expression.lcons (.varRef "p") (.lnil (.struct "Point"))).infer types ctx
   == some (.list (.struct "Point"))
-#guard (Expression.lcons (.varRef "p") (.lnil (.struct "Pair"))).infer structs ctx == none
+#guard (Expression.lcons (.varRef "p") (.lnil (.struct "Pair"))).infer types ctx == none
 
 -- A `structNew` initializing every declared field, in the declared order and at the declared types,
 -- has the struct's type.
-#guard (Expression.structNew "Point" [("x", .intLit 1), ("y", .intLit 2)]).infer structs ctx
+#guard (Expression.structNew "Point" [("x", .intLit 1), ("y", .intLit 2)]).infer types ctx
   == some (.struct "Point")
 #guard (Expression.structNew "Point"
-  [("x", .varRef "n"), ("y", .plus (.varRef "n") (.intLit 1))]).infer structs ctx
+  [("x", .varRef "n"), ("y", .plus (.varRef "n") (.intLit 1))]).infer types ctx
   == some (.struct "Point")
 #guard (Expression.structNew "Box"
-  [("label", .stringLit "b"), ("items", .varRef "xs"), ("origin", .varRef "p")]).infer structs ctx
+  [("label", .stringLit "b"), ("items", .varRef "xs"), ("origin", .varRef "p")]).infer types ctx
   == some (.struct "Box")
 
 -- Every field has to be there, once, at the right type, and in the order the declaration wrote them.
-#guard (Expression.structNew "Point" [("x", .intLit 1)]).infer structs ctx == none
-#guard (Expression.structNew "Point" []).infer structs ctx == none
-#guard (Expression.structNew "Point" [("y", .intLit 2), ("x", .intLit 1)]).infer structs ctx == none
+#guard (Expression.structNew "Point" [("x", .intLit 1)]).infer types ctx == none
+#guard (Expression.structNew "Point" []).infer types ctx == none
+#guard (Expression.structNew "Point" [("y", .intLit 2), ("x", .intLit 1)]).infer types ctx == none
 #guard (Expression.structNew "Point" [("x", .intLit 1), ("y", .intLit 2), ("z", .intLit 3)]).infer
-  structs ctx == none
-#guard (Expression.structNew "Point" [("x", .intLit 1), ("x", .intLit 2)]).infer structs ctx == none
-#guard (Expression.structNew "Point" [("x", .intLit 1), ("y", .stringLit "a")]).infer structs ctx
+  types ctx == none
+#guard (Expression.structNew "Point" [("x", .intLit 1), ("x", .intLit 2)]).infer types ctx == none
+#guard (Expression.structNew "Point" [("x", .intLit 1), ("y", .stringLit "a")]).infer types ctx
   == none
-#guard (Expression.structNew "Point" [("x", .intLit 1), ("y", .varRef "nope")]).infer structs ctx
+#guard (Expression.structNew "Point" [("x", .intLit 1), ("y", .varRef "nope")]).infer types ctx
   == none
 
 -- A name the table does not declare is not a struct at all, however plausible its fields look.
-#guard (Expression.structNew "Pair" [("x", .intLit 1), ("y", .intLit 2)]).infer structs ctx == none
-#guard (Expression.structNew "Point" [("x", .intLit 1), ("y", .intLit 2)]).infer [] ctx == none
+#guard (Expression.structNew "Pair" [("x", .intLit 1), ("y", .intLit 2)]).infer types ctx == none
+#guard (Expression.structNew "Point" [("x", .intLit 1), ("y", .intLit 2)]).infer {} ctx == none
 
 -- `structGet` gives the field its declaration gives, whatever type that is.
-#guard (Expression.structGet (.varRef "p") "x").infer structs ctx == some .int
-#guard (Expression.structGet (.varRef "b") "label").infer structs ctx == some .string
-#guard (Expression.structGet (.varRef "b") "items").infer structs ctx == some (.list .int)
-#guard (Expression.structGet (.varRef "b") "origin").infer structs ctx == some (.struct "Point")
+#guard (Expression.structGet (.varRef "p") "x").infer types ctx == some .int
+#guard (Expression.structGet (.varRef "b") "label").infer types ctx == some .string
+#guard (Expression.structGet (.varRef "b") "items").infer types ctx == some (.list .int)
+#guard (Expression.structGet (.varRef "b") "origin").infer types ctx == some (.struct "Point")
 
 -- So reads chain, and what comes back is usable as the type it has.
-#guard (Expression.structGet (.structGet (.varRef "b") "origin") "y").infer structs ctx == some .int
-#guard (Expression.plus (.structGet (.varRef "p") "x") (.intLit 1)).infer structs ctx == some .int
-#guard (Expression.listReverse (.structGet (.varRef "b") "items")).infer structs ctx
+#guard (Expression.structGet (.structGet (.varRef "b") "origin") "y").infer types ctx == some .int
+#guard (Expression.plus (.structGet (.varRef "p") "x") (.intLit 1)).infer types ctx == some .int
+#guard (Expression.listReverse (.structGet (.varRef "b") "items")).infer types ctx
   == some (.list .int)
 #guard (Expression.structGet (.structNew "Point" [("x", .intLit 1), ("y", .intLit 2)]) "x").infer
-  structs ctx == some .int
+  types ctx == some .int
 
 -- A field the declaration does not list is not a field, and only a struct has fields at all.
-#guard (Expression.structGet (.varRef "p") "z").infer structs ctx == none
-#guard (Expression.structGet (.varRef "b") "x").infer structs ctx == none
-#guard (Expression.structGet (.varRef "n") "x").infer structs ctx == none
-#guard (Expression.structGet (.varRef "xs") "x").infer structs ctx == none
-#guard (Expression.structGet (.varRef "f") "x").infer structs ctx == none
-#guard (Expression.structGet (.varRef "nope") "x").infer structs ctx == none
-#guard (Expression.structGet (.varRef "p") "x").infer [] ctx == none
+#guard (Expression.structGet (.varRef "p") "z").infer types ctx == none
+#guard (Expression.structGet (.varRef "b") "x").infer types ctx == none
+#guard (Expression.structGet (.varRef "n") "x").infer types ctx == none
+#guard (Expression.structGet (.varRef "xs") "x").infer types ctx == none
+#guard (Expression.structGet (.varRef "f") "x").infer types ctx == none
+#guard (Expression.structGet (.varRef "nope") "x").infer types ctx == none
+#guard (Expression.structGet (.varRef "p") "x").infer {} ctx == none
 
 -- `structUpdate` keeps the type it was given, and may name its fields in any order.
-#guard (Expression.structUpdate (.varRef "p") [("x", .intLit 1)]).infer structs ctx
+#guard (Expression.structUpdate (.varRef "p") [("x", .intLit 1)]).infer types ctx
   == some (.struct "Point")
 #guard (Expression.structUpdate (.varRef "p")
-  [("y", .intLit 2), ("x", .intLit 1)]).infer structs ctx == some (.struct "Point")
-#guard (Expression.structUpdate (.varRef "b") [("origin", .varRef "p")]).infer structs ctx
+  [("y", .intLit 2), ("x", .intLit 1)]).infer types ctx == some (.struct "Point")
+#guard (Expression.structUpdate (.varRef "b") [("origin", .varRef "p")]).infer types ctx
   == some (.struct "Box")
 
 -- Which is what lets updates chain, and lets one be read straight away.
 #guard (Expression.structUpdate (.structUpdate (.varRef "p") [("x", .intLit 1)])
-  [("y", .intLit 2)]).infer structs ctx == some (.struct "Point")
-#guard (Expression.structGet (.structUpdate (.varRef "p") [("x", .intLit 1)]) "x").infer structs ctx
+  [("y", .intLit 2)]).infer types ctx == some (.struct "Point")
+#guard (Expression.structGet (.structUpdate (.varRef "p") [("x", .intLit 1)]) "x").infer types ctx
   == some .int
 
 -- Only a declared field, only at its declared type, and never none of them.
-#guard (Expression.structUpdate (.varRef "p") []).infer structs ctx == none
-#guard (Expression.structUpdate (.varRef "p") [("z", .intLit 1)]).infer structs ctx == none
-#guard (Expression.structUpdate (.varRef "p") [("x", .stringLit "a")]).infer structs ctx == none
+#guard (Expression.structUpdate (.varRef "p") []).infer types ctx == none
+#guard (Expression.structUpdate (.varRef "p") [("z", .intLit 1)]).infer types ctx == none
+#guard (Expression.structUpdate (.varRef "p") [("x", .stringLit "a")]).infer types ctx == none
 #guard (Expression.structUpdate (.varRef "p")
-  [("x", .intLit 1), ("z", .intLit 2)]).infer structs ctx == none
-#guard (Expression.structUpdate (.varRef "p") [("x", .varRef "nope")]).infer structs ctx == none
-#guard (Expression.structUpdate (.varRef "n") [("x", .intLit 1)]).infer structs ctx == none
-#guard (Expression.structUpdate (.varRef "p") [("x", .intLit 1)]).infer [] ctx == none
+  [("x", .intLit 1), ("z", .intLit 2)]).infer types ctx == none
+#guard (Expression.structUpdate (.varRef "p") [("x", .varRef "nope")]).infer types ctx == none
+#guard (Expression.structUpdate (.varRef "n") [("x", .intLit 1)]).infer types ctx == none
+#guard (Expression.structUpdate (.varRef "p") [("x", .intLit 1)]).infer {} ctx == none
 
 /-- `fun (p : Point) => new Point { x = p.y, y = p.x }` -/
 private def swap : Decl where
@@ -980,11 +1008,11 @@ private def swap : Decl where
     [("x", .structGet (.varRef "p") "y"), ("y", .structGet (.varRef "p") "x")]
   resultType := .struct "Point"
 
--- A declaration takes and returns structs like any other type, and it is the struct table rather
+-- A declaration takes and returns types like any other type, and it is the struct table rather
 -- than the globals that has to supply the declaration its parameter names.
-#guard swap.check structs []
-#guard !swap.check [] []
-#guard !({ swap with resultType := .struct "Pair" } : Decl).check structs []
+#guard swap.check types []
+#guard !swap.check {} []
+#guard !({ swap with resultType := .struct "Pair" } : Decl).check types []
 
 /-- `fun (p : Point) => { p with x = p.x + 1 }` -/
 private def shift : Decl where
@@ -994,7 +1022,7 @@ private def shift : Decl where
   body := .structUpdate (.varRef "p") [("x", .plus (.structGet (.varRef "p") "x") (.intLit 1))]
   resultType := .struct "Point"
 
-#guard shift.check structs []
-#guard !shift.check [] []
+#guard shift.check types []
+#guard !shift.check {} []
 
 end Tests
