@@ -44,12 +44,65 @@ public abbrev Structs := List (String × StructDecl)
 @[simp] public theorem Structs.ofDecls_cons (s : StructDecl) (sds : List StructDecl) :
     Structs.ofDecls (s :: sds) = (s.name, s) :: Structs.ofDecls sds := by simp [Structs.ofDecls]
 
+/-! ## Inductive type declarations
+
+The types a `Ty.ind` can name.  An `Inductives` is to inductive types exactly what `Structs` is to
+structure types — one table, keyed by the name each entry declares — and it is threaded through
+inference for the same reason: an inductive type's name is not a variable, so there is nothing for a
+`Context` to say about it. -/
+
+/-- The inductive types in scope everywhere, each under the name it declares. -/
+public abbrev Inductives := List (String × InductiveDecl)
+
+/-- Key each inductive declaration by the name it declares. -/
+@[expose] public def Inductives.ofDecls (ids : List InductiveDecl) : Inductives :=
+  ids.map fun d => (d.name, d)
+
+@[simp] public theorem Inductives.ofDecls_nil : Inductives.ofDecls [] = [] := by
+  simp [Inductives.ofDecls]
+
+@[simp] public theorem Inductives.ofDecls_cons (d : InductiveDecl) (ids : List InductiveDecl) :
+    Inductives.ofDecls (d :: ids) = (d.name, d) :: Inductives.ofDecls ids := by
+  simp [Inductives.ofDecls]
+
+/-- The one type every entry of `ts` is, or `none` if they differ or there are none of them.
+
+This is what an `indMatch` has to be able to do with the types of its alternatives: the match has one
+type, so they all have to be that one.  There is no expected type to fall back on for an empty list,
+so `none` it is — which is what makes a match over a type with no constructors ill typed. -/
+public def Ty.common : List Ty → Option Ty
+  | [] => none
+  | t :: ts => if ts.all (· == t) then some t else none
+
+/-- `Ty.common` is what it says it is: a type they all are, and there is at least one of them. -/
+@[simp, grind =] public theorem Ty.common_eq_some {ts : List Ty} {t : Ty} :
+    Ty.common ts = some t ↔ ts ≠ [] ∧ ∀ t' ∈ ts, t' = t := by
+  cases ts with
+  | nil => simp [Ty.common]
+  | cons t₀ ts =>
+      constructor
+      · intro h
+        simp only [Ty.common] at h
+        split at h
+        · next hall =>
+            obtain rfl : t₀ = t := Option.some.inj h
+            refine ⟨by simp, fun t' ht' => ?_⟩
+            rcases List.mem_cons.mp ht' with rfl | ht'
+            · rfl
+            · simpa using List.all_eq_true.mp hall t' ht'
+        · simp at h
+      · rintro ⟨-, hall⟩
+        obtain rfl : t₀ = t := hall t₀ (by simp)
+        have hcond : (ts.all (· == t₀)) = true :=
+          List.all_eq_true.mpr fun t' ht' => by simp [hall t' (List.mem_cons_of_mem _ ht')]
+        simp [Ty.common, hcond]
+
 /-! ## Type declarations
 
-Every table a type name resolves in, bundled into one parameter.  `Structs` is the only one so far,
-but an inductive type declaration is a second, and the bundle is what keeps that from being a second
-parameter threaded through `Expression.infer`, `Value.HasType`, `Eval`, and every rule stated over
-them: a new kind of declaration adds a field here and nothing else changes shape.
+Every table a type name resolves in, bundled into one parameter.  There are two of them —
+`Structs` and `Inductives` — and the bundle is what keeps them from being two parameters threaded
+through `Expression.infer`, `Value.HasType`, `Eval`, and every rule stated over them: a further kind
+of declaration adds a field here and nothing else changes shape.
 
 Every field defaults to empty, so `{}` is the bundle that declares no types at all — the one a
 program using none of them is checked against. -/
@@ -59,6 +112,8 @@ type name to resolve. -/
 public structure TypeDecls where
   /-- The structure types, each under the name it declares. -/
   ss : Structs := []
+  /-- The inductive types, each under the name it declares. -/
+  is : Inductives := []
   deriving Repr
 
 /-! Two facts about `List.lookup` over a pair of association lists carrying the same keys in the
@@ -154,7 +209,9 @@ type to work from.  `Expression.check` is therefore just this function plus a co
 `td` is the one thing inference needs that the context does not supply.  A struct type is a name, so
 each of the three struct forms has to resolve it in `td.ss`: `structNew` to find the fields it must
 initialize, `structGet` to find the type of the field it reads, and `structUpdate` to find the types
-of the fields it rebinds. -/
+of the fields it rebinds.  An inductive type is a name in the same way: `indNew` resolves it in
+`td.is` to find the data types its constructor takes, and `indMatch` to find the constructors it has
+to have an alternative for and the types those alternatives bind. -/
 public def Expression.infer (td : TypeDecls) (ctx : Context) : Expression → Option Ty
   | .lam ps body => do
     let r ← body.infer td (ps ++ ctx)
@@ -189,6 +246,18 @@ public def Expression.infer (td : TypeDecls) (ctx : Context) : Expression → Op
         else none
       | none => none
     | _, _ => none
+  | .indNew name c args => do
+    let d ← td.is.lookup name
+    let ts ← d.constructors.lookup c
+    guard (Expression.inferList td ctx args == some ts)
+    some (.ind name)
+  | .indMatch scrut alts =>
+    match scrut.infer td ctx with
+    | some (.ind name) => do
+      let d ← td.is.lookup name
+      let rs ← Expression.inferAlts td ctx d.constructors alts
+      Ty.common rs
+    | _ => none
   | .intLit _ => some .int
   | .plus l r | .minus l r =>
     if l.infer td ctx == some .int && r.infer td ctx == some .int then some .int else none
@@ -228,6 +297,30 @@ public def Expression.inferFields (td : TypeDecls) (ctx : Context) :
     let t ← e.infer td ctx
     let fts ← Expression.inferFields td ctx fes
     some ((f, t) :: fts)
+
+/-- Infer the type of each alternative's expression, in order, or `none` if the alternatives are not
+the constructors `cs` in the order `cs` gives them, or if any one of them is ill typed.
+
+The two lists are walked together, which is what makes a match exhaustive: an alternative is checked
+against the constructor at the same position, so a missing constructor, an extra alternative, a
+repeated one and one out of order all make the walk fail.  A constructor's data types are then the
+types of the names its alternative binds — positionally, since that is what a constructor carries —
+so the expression is inferred under `xs.zip ts` in front of the enclosing context, and the bindings
+shadow it the way a `lam`'s parameters do.
+
+What comes back is one type per alternative rather than one type for the match: they all have to
+agree, and comparing them is `Expression.infer`'s business, where the non-empty case is also ruled
+on. -/
+public def Expression.inferAlts (td : TypeDecls) (ctx : Context) :
+    List (CtorName × List Ty) → List (CtorName × List String × Expression) → Option (List Ty)
+  | [], [] => some []
+  | (c, ts) :: cs, (c', xs, body) :: alts =>
+    if c == c' && xs.length == ts.length then do
+      let t ← body.infer td (xs.zip ts ++ ctx)
+      let rs ← Expression.inferAlts td ctx cs alts
+      some (t :: rs)
+    else none
+  | _, _ => none
 
 end
 
@@ -383,6 +476,45 @@ That is what lets updates chain. -/
   simp only [Expression.infer]
   split <;> grind
 
+/-- An `indNew` is typeable exactly when the type it names is declared, that declaration has the
+constructor it names, and the arguments are the data types that constructor takes, in order — and
+then it has the inductive type's type.
+
+Arity is part of that one comparison, the way it is for `app`: a constructor given too few arguments
+is ill typed rather than partially applied, and a constructor of no arguments takes exactly none.
+
+The type is just the name.  Which constructor built the value does not survive into it — that is the
+whole point of an inductive type — which is what makes `indMatch` the only way to find out again. -/
+@[simp, grind =] public theorem Expression.infer_indNew_eq_some {td : TypeDecls} {ctx : Context}
+    {name : String} {c : CtorName} {args : List Expression} {t : Ty} :
+    (Expression.indNew name c args).infer td ctx = some t ↔
+      ∃ d ts, td.is.lookup name = some d ∧ d.constructors.lookup c = some ts
+        ∧ Expression.inferList td ctx args = some ts ∧ t = .ind name := by
+  simp [Expression.infer, Option.bind_eq_some_iff, guard]
+  grind
+
+/-- An `indMatch` is typeable exactly when its scrutinee is a declared inductive type, its
+alternatives are that declaration's constructors in order and all check, and they all have one type —
+and then that is its type.
+
+`Expression.inferAlts` is what covers the first two of those: it walks the constructors and the
+alternatives together, so exhaustiveness is not a separate condition.  What is left here is that the
+alternatives agree on a type, which they must because the match has one type however the value was
+built.
+
+The list of types being non-empty is what rules out a match on a type with no constructors: there
+would be no alternative to read a type off, and nothing an expected type could be inferred from.  An
+inductive type declaring no constructors is therefore a type nothing can take apart — though nothing
+can build a value of it either. -/
+@[simp, grind =] public theorem Expression.infer_indMatch_eq_some {td : TypeDecls} {ctx : Context}
+    {scrut : Expression} {alts : List (CtorName × List String × Expression)} {t : Ty} :
+    (Expression.indMatch scrut alts).infer td ctx = some t ↔
+      ∃ name d rs, scrut.infer td ctx = some (.ind name) ∧ td.is.lookup name = some d
+        ∧ Expression.inferAlts td ctx d.constructors alts = some rs ∧ rs ≠ []
+        ∧ ∀ t' ∈ rs, t' = t := by
+  simp only [Expression.infer]
+  split <;> simp_all [Option.bind_eq_some_iff]
+
 /-! Inversion principles for `inferList`.  Together these say what it computes: the argument types
 in order, and `none` as soon as one argument has no type. -/
 
@@ -447,6 +579,70 @@ public theorem Expression.lookup_of_inferFields {td : TypeDecls} {ctx : Context}
       split at hf
       · exact ⟨t, by simp_all, by grind⟩
       · exact ih hfts hf
+
+/-! Inversion principles for `inferAlts`.  The three degenerate cases say that the two lists have to
+run out together — which is exhaustiveness — and the fourth says what one step of the walk asks for.
+-/
+
+@[simp, grind =] public theorem Expression.inferAlts_nil {td : TypeDecls} {ctx : Context} :
+    Expression.inferAlts td ctx [] [] = some [] := by
+  simp [Expression.inferAlts]
+
+@[simp, grind =] public theorem Expression.inferAlts_nil_cons {td : TypeDecls} {ctx : Context}
+    {a : CtorName × List String × Expression} {alts : List (CtorName × List String × Expression)} :
+    Expression.inferAlts td ctx [] (a :: alts) = none := by
+  simp [Expression.inferAlts]
+
+@[simp, grind =] public theorem Expression.inferAlts_cons_nil {td : TypeDecls} {ctx : Context}
+    {p : CtorName × List Ty} {cs : List (CtorName × List Ty)} :
+    Expression.inferAlts td ctx (p :: cs) [] = none := by
+  simp [Expression.inferAlts]
+
+/-- One step of the walk: the alternative is for the constructor at this position, it binds one name
+per data type that constructor carries, and its expression is typeable under those names at those
+types. -/
+@[simp, grind =] public theorem Expression.inferAlts_cons_eq_some {td : TypeDecls} {ctx : Context}
+    {c c' : CtorName} {ts : List Ty} {cs : List (CtorName × List Ty)} {xs : List String}
+    {body : Expression} {alts : List (CtorName × List String × Expression)} {rs : List Ty} :
+    Expression.inferAlts td ctx ((c, ts) :: cs) ((c', xs, body) :: alts) = some rs ↔
+      ∃ t rs', c = c' ∧ xs.length = ts.length ∧ body.infer td (xs.zip ts ++ ctx) = some t
+        ∧ Expression.inferAlts td ctx cs alts = some rs' ∧ rs = t :: rs' := by
+  simp [Expression.inferAlts, Option.bind_eq_some_iff]
+  grind
+
+/-- The alternative a constructor's name resolves to is the one checked against that constructor's
+data types, and the type inferred for its expression is one of the types `inferAlts` reports.
+
+This is what carries the result of the walk over to a *particular* constructor: `Eval` finds an
+alternative by the name the value it took apart carries, and `Value.HasType` finds that name's data
+types by looking them up in the declaration.  Both lookups take the leftmost entry of a repeated
+name, and the walk has already made the two lists agree name for name, so the two find the same
+position — which is what makes this provable for a declaration repeating a constructor name as well
+as for one that does not. -/
+public theorem Expression.lookup_of_inferAlts {td : TypeDecls} {ctx : Context}
+    {cs : List (CtorName × List Ty)} {alts : List (CtorName × List String × Expression)}
+    {rs : List Ty} (h : Expression.inferAlts td ctx cs alts = some rs) {c : CtorName}
+    {ts : List Ty} {xs : List String} {body : Expression} (hc : cs.lookup c = some ts)
+    (ha : alts.lookup c = some (xs, body)) :
+    ∃ t, t ∈ rs ∧ xs.length = ts.length ∧ body.infer td (xs.zip ts ++ ctx) = some t := by
+  induction cs generalizing alts rs with
+  | nil => simp at hc
+  | cons p cs ih =>
+      obtain ⟨c₀, ts₀⟩ := p
+      cases alts with
+      | nil => simp at h
+      | cons q alts =>
+          obtain ⟨c₁, xs₀, body₀⟩ := q
+          obtain ⟨t₀, rs', rfl, hlen, hbody, halts, rfl⟩ := Expression.inferAlts_cons_eq_some.mp h
+          rw [List.lookup_cons] at hc ha
+          by_cases hcc : c == c₀
+          · simp only [hcc] at hc ha
+            obtain rfl : ts = ts₀ := by grind
+            obtain ⟨rfl, rfl⟩ : xs = xs₀ ∧ body = body₀ := by grind
+            exact ⟨t₀, by simp, hlen, hbody⟩
+          · simp only [hcc] at hc ha
+            obtain ⟨t, htmem, htlen, htbody⟩ := ih halts hc ha
+            exact ⟨t, List.mem_cons_of_mem _ htmem, htlen, htbody⟩
 
 /-- Check `e` against the expected type `ty` under `ctx`. -/
 public def Expression.check (td : TypeDecls) (ctx : Context) (e : Expression) (ty : Ty) : Bool :=
@@ -584,6 +780,13 @@ public theorem Structs.lookup_ofDecls_self {sds : List StructDecl}
     (Structs.ofDecls sds).lookup sd.name = some sd := by
   simpa [Structs.ofDecls] using List.lookup_keyed_self hu hd
 
+/-- With no repeated names, `Inductives.ofDecls` resolves every inductive declaration to itself: the
+same fact again, for the other table `Program.InductiveNamesUnique` is about. -/
+public theorem Inductives.lookup_ofDecls_self {ids : List InductiveDecl}
+    (hu : (ids.map InductiveDecl.name).Nodup) {d : InductiveDecl} (hd : d ∈ ids) :
+    (Inductives.ofDecls ids).lookup d.name = some d := by
+  simpa [Inductives.ofDecls] using List.lookup_keyed_self hu hd
+
 /-! ## Programs
 
 A `Program` is the source-level artifact — a file's worth of declarations — where a `Globals` is the
@@ -603,6 +806,11 @@ Derived rather than stored, so a declaration can never be filed under a name oth
 Derived the same way and for the same reason as `Program.globals`. -/
 @[expose] public def Program.structs (p : Program) : Structs := Structs.ofDecls p.structDecls
 
+/-- The inductive table `p` presents to its own bodies: each inductive type under the name it
+declares.  Derived the same way and for the same reason as `Program.globals`. -/
+@[expose] public def Program.inductives (p : Program) : Inductives :=
+  Inductives.ofDecls p.inductiveDecls
+
 /-- The type declarations `p` presents to its own bodies, as the one bundle everything that resolves
 a type name takes.
 
@@ -610,6 +818,7 @@ This is what `p` is checked and evaluated against, so a kind of declaration adde
 added here too and nowhere else. -/
 @[expose] public def Program.typeDecls (p : Program) : TypeDecls where
   ss := p.structs
+  is := p.inductives
 
 /-- The declaration `x` names in `p`, or `none` if it names nothing. -/
 @[expose] public def Program.lookup (p : Program) (x : String) : Option FuncDecl :=
@@ -619,8 +828,12 @@ added here too and nowhere else. -/
 @[expose] public def Program.lookupStruct (p : Program) (name : String) : Option StructDecl :=
   p.structs.lookup name
 
+/-- The inductive type `name` names in `p`, or `none` if it names nothing. -/
+@[expose] public def Program.lookupInductive (p : Program) (name : String) : Option InductiveDecl :=
+  p.inductives.lookup name
+
 /-- Check a whole program: every declaration against the signatures of all of them, its own
-included, and against the structure types it declares. -/
+included, and against the types it declares. -/
 public def Program.check (p : Program) : Bool := Globals.check p.typeDecls p.globals
 
 /-- Every declaration in `p` checks, under `p`. -/
@@ -669,6 +882,24 @@ public theorem Program.lookupStruct_self {p : Program} (hu : p.StructNamesUnique
     {sd : StructDecl} (hd : sd ∈ p.structDecls) : p.lookupStruct sd.name = some sd :=
   Structs.lookup_ofDecls_self hu hd
 
+/-- No two inductive declarations share a name.
+
+`Program.StructNamesUnique` for the other kind of type declaration, and it matters for the same
+reason: a `Ty.ind` is a name, so two declarations under one name would make one type with two sets of
+constructors and leave the order they were written in to decide which one a match has to be
+exhaustive over. -/
+@[expose] public def Program.InductiveNamesUnique (p : Program) : Prop :=
+  (p.inductiveDecls.map InductiveDecl.name).Nodup
+
+public instance (p : Program) : Decidable p.InductiveNamesUnique :=
+  inferInstanceAs (Decidable (p.inductiveDecls.map InductiveDecl.name).Nodup)
+
+/-- With no repeated names, every inductive declaration in the program is the one its own name
+resolves to. -/
+public theorem Program.lookupInductive_self {p : Program} (hu : p.InductiveNamesUnique)
+    {d : InductiveDecl} (hd : d ∈ p.inductiveDecls) : p.lookupInductive d.name = some d :=
+  Inductives.lookup_ofDecls_self hu hd
+
 /-- Everything a well-typed program declares is well typed under it. -/
 public theorem Program.wellTyped_decl {p : Program} (hp : p.WellTyped) (hu : p.NamesUnique)
     {d : FuncDecl} (hd : d ∈ p.funcDecls) : d.WellTyped p.typeDecls p.globals :=
@@ -686,11 +917,29 @@ private def box : StructDecl where
   name := "Box"
   fields := [("label", .string), ("items", .list .int), ("origin", .struct "Point")]
 
-private def types : TypeDecls := { ss := Structs.ofDecls [point, box] }
+/-- `inductive Color { Red, Green, Blue }`: an enumeration, which is what an inductive type whose
+constructors all carry nothing comes to. -/
+private def color : InductiveDecl where
+  name := "Color"
+  constructors := [("Red", []), ("Green", []), ("Blue", [])]
+
+/-- Constructors carrying data, of one type and of several, one of them a declared struct. -/
+private def shape : InductiveDecl where
+  name := "Shape"
+  constructors := [("Circle", [.int]), ("Rect", [.int, .int]), ("At", [.struct "Point"])]
+
+/-- A recursive type: `Node` carries two more `Tree`s. -/
+private def tree : InductiveDecl where
+  name := "Tree"
+  constructors := [("Leaf", [.int]), ("Node", [.ind "Tree", .ind "Tree"])]
+
+private def types : TypeDecls :=
+  { ss := Structs.ofDecls [point, box], is := Inductives.ofDecls [color, shape, tree] }
 
 private def ctx : Context :=
   [("xs", .list .int), ("n", .int), ("s", .string), ("f", .fn [.int, .string] .int),
-    ("p", .struct "Point"), ("b", .struct "Box")]
+    ("p", .struct "Point"), ("b", .struct "Box"), ("c", .ind "Color"), ("sh", .ind "Shape"),
+    ("t", .ind "Tree")]
 
 -- Inference determines the type of every form.
 #guard (Expression.intLit 3).infer types ctx == some .int
@@ -1027,5 +1276,168 @@ private def shift : FuncDecl where
 
 #guard shift.check types []
 #guard !shift.check {} []
+
+/-! ### Inductive types
+
+`color`, `shape` and `tree` are the declarations `types` holds, and `ctx` gives `c`, `sh` and `t` one
+of each.  `hue` below is declared nowhere: it is what an inductive type that names nothing looks
+like. -/
+
+/-- The same constructors as `color` under another name: nominality again, for the other kind of
+type declaration. -/
+private def hue : InductiveDecl where
+  name := "Hue"
+  constructors := [("Red", []), ("Green", []), ("Blue", [])]
+
+#guard Ty.ind "Color" == Ty.ind "Color"
+#guard Ty.ind "Color" != Ty.ind "Hue"
+#guard Ty.ind "Point" != Ty.struct "Point"
+#guard (Expression.lcons (.varRef "c") (.lnil (.ind "Color"))).infer types ctx
+  == some (.list (.ind "Color"))
+#guard (Expression.lcons (.varRef "c") (.lnil (.ind "Hue"))).infer types ctx == none
+
+-- A constructor application gives the type it belongs to, whatever that constructor carries.
+#guard (Expression.indNew "Color" "Red" []).infer types ctx == some (.ind "Color")
+#guard (Expression.indNew "Shape" "Circle" [.intLit 1]).infer types ctx == some (.ind "Shape")
+#guard (Expression.indNew "Shape" "Rect" [.varRef "n", .plus (.varRef "n") (.intLit 1)]).infer
+  types ctx == some (.ind "Shape")
+#guard (Expression.indNew "Shape" "At" [.varRef "p"]).infer types ctx == some (.ind "Shape")
+
+-- The arguments have to be the data types it declares, in that order and no other number of them.
+#guard (Expression.indNew "Color" "Red" [.intLit 1]).infer types ctx == none
+#guard (Expression.indNew "Shape" "Circle" []).infer types ctx == none
+#guard (Expression.indNew "Shape" "Rect" [.intLit 1]).infer types ctx == none
+#guard (Expression.indNew "Shape" "Rect" [.intLit 1, .intLit 2, .intLit 3]).infer types ctx == none
+#guard (Expression.indNew "Shape" "Circle" [.stringLit "a"]).infer types ctx == none
+#guard (Expression.indNew "Shape" "At" [.varRef "b"]).infer types ctx == none
+#guard (Expression.indNew "Shape" "Circle" [.varRef "nope"]).infer types ctx == none
+
+-- A constructor belongs to the type that declares it, and a name the table does not declare is not
+-- a type at all — however plausible its constructors look.
+#guard (Expression.indNew "Shape" "Red" []).infer types ctx == none
+#guard (Expression.indNew "Color" "Purple" []).infer types ctx == none
+#guard (Expression.indNew "Hue" "Red" []).infer types ctx == none
+#guard (Expression.indNew "Color" "Red" []).infer {} ctx == none
+
+-- A recursive constructor needs nothing further: `Tree` is in scope in its own declaration, because
+-- resolving the name happens here rather than when it was declared.
+#guard (Expression.indNew "Tree" "Leaf" [.intLit 1]).infer types ctx == some (.ind "Tree")
+#guard (Expression.indNew "Tree" "Node"
+  [.varRef "t", .indNew "Tree" "Leaf" [.intLit 1]]).infer types ctx == some (.ind "Tree")
+#guard (Expression.indNew "Tree" "Node" [.varRef "t", .intLit 1]).infer types ctx == none
+
+-- A `match` gives the type its alternatives agree on, with each alternative's names bound to what
+-- its constructor carries.
+#guard (Expression.indMatch (.varRef "c")
+  [("Red", [], .intLit 0), ("Green", [], .intLit 1), ("Blue", [], .intLit 2)]).infer types ctx
+  == some .int
+#guard (Expression.indMatch (.varRef "sh")
+  [("Circle", ["r"], .varRef "r"), ("Rect", ["w", "h"], .plus (.varRef "w") (.varRef "h")),
+    ("At", ["q"], .structGet (.varRef "q") "x")]).infer types ctx == some .int
+#guard (Expression.indMatch (.varRef "c")
+  [("Red", [], .stringLit "r"), ("Green", [], .stringLit "g"),
+    ("Blue", [], .stringLit "b")]).infer types ctx == some .string
+
+-- Exhaustive, in the declaration's order, and no alternative twice or for a constructor the
+-- declaration does not have.
+#guard (Expression.indMatch (.varRef "c") [("Red", [], .intLit 0)]).infer types ctx == none
+#guard (Expression.indMatch (.varRef "c")
+  [("Red", [], .intLit 0), ("Blue", [], .intLit 2), ("Green", [], .intLit 1)]).infer types ctx
+  == none
+#guard (Expression.indMatch (.varRef "c")
+  [("Red", [], .intLit 0), ("Red", [], .intLit 1), ("Blue", [], .intLit 2)]).infer types ctx == none
+#guard (Expression.indMatch (.varRef "c")
+  [("Red", [], .intLit 0), ("Green", [], .intLit 1), ("Blue", [], .intLit 2),
+    ("Purple", [], .intLit 3)]).infer types ctx == none
+#guard (Expression.indMatch (.varRef "c") []).infer types ctx == none
+
+-- One name per thing the constructor carries, no more and no fewer.
+#guard (Expression.indMatch (.varRef "sh")
+  [("Circle", [], .intLit 0), ("Rect", ["w", "h"], .varRef "w"),
+    ("At", ["q"], .intLit 0)]).infer types ctx == none
+#guard (Expression.indMatch (.varRef "sh")
+  [("Circle", ["r", "r'"], .varRef "r"), ("Rect", ["w", "h"], .varRef "w"),
+    ("At", ["q"], .intLit 0)]).infer types ctx == none
+
+-- The names are bound at the types their constructor declares, and at nothing else.
+#guard (Expression.indMatch (.varRef "sh")
+  [("Circle", ["r"], .plus (.varRef "r") (.intLit 1)), ("Rect", ["w", "h"], .varRef "w"),
+    ("At", ["q"], .intLit 0)]).infer types ctx == some .int
+#guard (Expression.indMatch (.varRef "sh")
+  [("Circle", ["r"], .listReverse (.varRef "r")), ("Rect", ["w", "h"], .varRef "w"),
+    ("At", ["q"], .intLit 0)]).infer types ctx == none
+#guard (Expression.indMatch (.varRef "sh")
+  [("Circle", ["r"], .intLit 0), ("Rect", ["w", "h"], .intLit 0),
+    ("At", ["q"], .structGet (.varRef "q") "z")]).infer types ctx == none
+
+-- They are in scope in their own alternative and nowhere else, and they shadow the enclosing
+-- context the way a `lam`'s parameters do.
+#guard (Expression.indMatch (.varRef "sh")
+  [("Circle", ["r"], .intLit 0), ("Rect", ["w", "h"], .varRef "r"),
+    ("At", ["q"], .intLit 0)]).infer types ctx == none
+#guard (Expression.indMatch (.varRef "sh")
+  [("Circle", ["n"], .plus (.varRef "n") (.varRef "n")), ("Rect", ["w", "h"], .varRef "w"),
+    ("At", ["q"], .intLit 0)]).infer types ctx == some .int
+#guard (Expression.indMatch (.varRef "sh")
+  [("Circle", ["s"], .plus (.varRef "s") (.intLit 1)), ("Rect", ["w", "h"], .varRef "w"),
+    ("At", ["q"], .intLit 0)]).infer types ctx == some .int
+
+-- Every alternative has to produce the same type, because the match has one type however the value
+-- it took apart was built.
+#guard (Expression.indMatch (.varRef "c")
+  [("Red", [], .intLit 0), ("Green", [], .stringLit "g"),
+    ("Blue", [], .intLit 2)]).infer types ctx == none
+#guard (Expression.indMatch (.varRef "c")
+  [("Red", [], .varRef "nope"), ("Green", [], .intLit 1),
+    ("Blue", [], .intLit 2)]).infer types ctx == none
+
+-- Only a value of a declared inductive type can be taken apart, and the alternatives are the
+-- constructors of *its* declaration.
+#guard (Expression.indMatch (.varRef "n") [("Red", [], .intLit 0)]).infer types ctx == none
+#guard (Expression.indMatch (.varRef "p") [("Red", [], .intLit 0)]).infer types ctx == none
+#guard (Expression.indMatch (.varRef "nope") [("Red", [], .intLit 0)]).infer types ctx == none
+#guard (Expression.indMatch (.varRef "c")
+  [("Red", [], .intLit 0), ("Green", [], .intLit 1), ("Blue", [], .intLit 2)]).infer {} ctx == none
+
+-- A match is an expression like any other: it can be built out of one and read out of one, and its
+-- scrutinee can be anything of the right type.
+#guard (Expression.plus (.indMatch (.indNew "Color" "Red" [])
+  [("Red", [], .intLit 0), ("Green", [], .intLit 1), ("Blue", [], .intLit 2)])
+  (.intLit 1)).infer types ctx == some .int
+#guard (Expression.indMatch (.varRef "c")
+  [("Red", [], .indNew "Shape" "Circle" [.intLit 1]),
+    ("Green", [], .indNew "Shape" "Rect" [.intLit 1, .intLit 2]),
+    ("Blue", [], .varRef "sh")]).infer types ctx == some (.ind "Shape")
+
+/-- `fun (s : Shape) => match s with | Circle(r) => r + r | Rect(w, h) => w + h | At(q) => q.x` -/
+private def size : FuncDecl where
+  docstring := "How big `s` is, for a rough enough notion of size."
+  name := "size"
+  parameters := [("s", .ind "Shape")]
+  body := .indMatch (.varRef "s")
+    [("Circle", ["r"], .plus (.varRef "r") (.varRef "r")),
+      ("Rect", ["w", "h"], .plus (.varRef "w") (.varRef "h")),
+      ("At", ["q"], .structGet (.varRef "q") "x")]
+  resultType := .int
+
+-- A declaration takes and returns an inductive type like any other type, and it is the inductive
+-- table that has to supply the declaration its parameter names — `At` also needs the struct table,
+-- so `size` checks only against the bundle holding both.
+#guard size.check types []
+#guard !size.check {} []
+#guard !size.check { is := Inductives.ofDecls [color, shape, tree] } []
+#guard !({ size with resultType := .string } : FuncDecl).check types []
+
+/-- `fun (n : int) => Shape.Rect(n, n)` -/
+private def square : FuncDecl where
+  docstring := "A square of side `n`."
+  name := "square"
+  parameters := [("n", .int)]
+  body := .indNew "Shape" "Rect" [.varRef "n", .varRef "n"]
+  resultType := .ind "Shape"
+
+#guard square.check types []
+#guard !square.check {} []
+#guard !({ square with resultType := .ind "Color" } : FuncDecl).check types []
 
 end Tests

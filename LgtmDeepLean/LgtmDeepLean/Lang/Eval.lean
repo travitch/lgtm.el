@@ -21,11 +21,13 @@ using standard Lean techniques.  The `Expression` is the DSL term while the `Val
 how it would be evaluated in Lean.  Proofs are over the latter, which can use the full
 Lean standard library.
 
-`td` is carried only so that `EApp` can state `ArgsHaveType`: nothing here consults a struct
+`td` is carried only so that `EApp` can state `ArgsHaveType`: nothing here consults a type
 declaration to compute anything.  A `structNew` is a name and the values its fields were given, a
 `structGet` reads a field out of the value it finds, and a `structUpdate` rebinds the fields it names,
-so evaluation needs no more of a struct than the value carries.  Whether that agrees with the
-declaration is the type checker's business, and `Eval.hasType` is where the two meet. -/
+so evaluation needs no more of a struct than the value carries.  An `indNew` and an `indMatch` are
+the same: the value carries the constructor it was built by, which is all the match needs to find its
+alternative.  Whether that agrees with the declaration is the type checker's business, and
+`Eval.hasType` is where the two meet. -/
 public inductive Eval (td : TypeDecls) : Env → Expression → Value → Prop where
 | ELam (ps : List (String × Ty)) (body : Expression) :
     Eval td env (.lam ps body) (env.closure ps body)
@@ -73,6 +75,33 @@ struct does not have are therefore dropped rather than added — again a case ty
     fes.map Prod.fst = us.map Prod.fst →
     (∀ p ∈ fes.zip us, Eval td env p.1.2 p.2.2) →
     Eval td env (.structUpdate e fes) (.struct name (FieldValues.update fvs us))
+/-- Applying a constructor evaluates one expression per data type it takes and keeps the values in
+the order they were given, which is the order the constructor takes them in.
+
+The premise is one evaluation per argument, the way `EStructNew`'s is one per field and `EApp`'s is
+one per argument, with the lengths pinned down separately because `List.zip` stops at the shorter
+list.  The two names are carried through as they were written: nothing here says the type has such a
+constructor, or that it takes as many arguments as it was given.  Being ill typed is what rules those
+out. -/
+| EIndNew (name : String) (c : CtorName) (args : List Expression) :
+    args.length = vs.length → (∀ p ∈ args.zip vs, Eval td env p.1 p.2) →
+    Eval td env (.indNew name c args) (.ind name c vs)
+/-- A match evaluates its scrutinee, takes the alternative for the constructor that built the value,
+binds that alternative's names to the values the constructor carries, and evaluates its expression.
+
+The alternative is found by name, so nothing here depends on the alternatives being the declaration's
+constructors in the declaration's order: a match with no alternative for the value it was handed is
+stuck, which is exactly what the exhaustiveness the type checker insists on rules out.
+
+The names are bound the way a call binds its parameters — in front of the environment, so they shadow
+it, and by `List.zip`, so a name repeated in one alternative takes the value of its leftmost
+occurrence.  They are the alternative's own names: nothing about them survives into the value, which
+is why the *type* of each has to come from the declaration when `Eval.hasType` types this. -/
+| EIndMatch (scrut : Expression) (alts : List (CtorName × List String × Expression)) :
+    Eval td env scrut (.ind name c vs) →
+    alts.lookup c = some (xs, body) →
+    Eval td ⟨xs.zip vs ++ env.bindings, env.globals⟩ body v →
+    Eval td env (.indMatch scrut alts) v
 | EIntLit (i : Int) : Eval td env (.intLit i) (.int i)
 | EPlus (e₁ : Expression) (e₂ : Expression) : Eval td env e₁ (.int n₁) → Eval td env e₂ (.int n₂) → Eval td env (.plus e₁ e₂) (.int (n₁ + n₂))
 | EMinus (e₁ : Expression) (e₂ : Expression) : Eval td env e₁ (.int n₁) → Eval td env e₂ (.int n₂) → Eval td env (.minus e₁ e₂) (.int (n₁ - n₂))
@@ -192,6 +221,22 @@ public theorem Eval.hasType {td : TypeDecls} {env : Env} {ctx : Context} {e : Ex
         have := hfields (f, t'') (List.mem_of_lookup hft'')
         grind
       exact ihev _ (List.mem_zip_of_lookup hnames he' hus) henv hinfer
+  | EIndNew name c args hlen hev ihev =>
+      obtain ⟨d, ts, hd, hc, hts, rfl⟩ := Expression.infer_indNew_eq_some.mp ht
+      obtain ⟨hvlen, hall⟩ :=
+        Value.hasType_zip_of_inferList hlen hts fun p hp t' ht' => ihev p hp henv ht'
+      exact .ind hd hc hvlen hall
+  | EIndMatch scrut alts _ halt _ ihscrut ihbody =>
+      obtain ⟨name', d, rs, hsc, hd, halts, -, hrs⟩ := Expression.infer_indMatch_eq_some.mp ht
+      obtain ⟨d', ts, hd', hc, hvlen, hvals, hname⟩ := Value.hasType_ind_iff.mp (ihscrut henv hsc)
+      simp only [Ty.ind.injEq] at hname
+      subst hname
+      obtain rfl : d' = d := by grind
+      -- The alternative the value's constructor resolves to is the one checked against that
+      -- constructor's data types, and every alternative was checked at the match's own type.
+      obtain ⟨t', htmem, hxlen, hinfer⟩ := Expression.lookup_of_inferAlts halts hc halt
+      obtain rfl : t' = t := hrs t' htmem
+      exact ihbody (Env.hasType_match hxlen hvlen hvals henv) (by simpa using hinfer)
   | _ => grind [Value.HasType]
 
 /-- `Apply d gs args v`: calling `d` with `args` among the globals `gs` returns `v`.
@@ -913,5 +958,185 @@ example (v : Value)
 example (v : Value) (args : List Value) (h : pointProgram.Apply "get-x" args v) :
     v.HasType pointProgram.typeDecls .int :=
   h.hasType pointProgram.wellTyped rfl
+
+/-! ## Inductive types
+
+An inductive type is a top-level entity the way a structure type is, so these carry a table of them
+the same way.  Evaluation does not consult that table either: `EIndNew` keeps the two names it was
+given, and `EIndMatch` finds its alternative by the constructor the value it took apart carries. -/
+
+/-- A colour, which is what an inductive type carrying nothing anywhere comes to. -/
+lgtm private inductive Color { Red, Green, Blue }
+
+/-- A shape, whose constructors carry what it takes to measure one. -/
+lgtm private inductive Shape { Circle(int), Rect(int, int) }
+
+private def shapes : TypeDecls := { is := Inductives.ofDecls [Color, Shape] }
+
+/-- A `Rect` has the type `Shape` declares exactly when both its sides are `int`s.
+
+Every `Value.HasType` for an inductive value comes down to a walk along the zip like this one: the
+constructor is looked up in the declaration, and what it carries is held to the types found there,
+one for one.  Nothing here is about these particular sides, which is why one lemma covers every
+`Rect`. -/
+private theorem hasType_rect {w h : Int} :
+    Value.HasType shapes (.ind "Shape" "Rect" [.int w, .int h]) (.ind "Shape") :=
+  .ind rfl rfl rfl (by rintro p hp; simp at hp; rcases hp with rfl | rfl <;> exact .int _)
+
+/-- A constructor carrying nothing has nothing to hold to a type, so the walk is empty. -/
+private theorem hasType_red : Value.HasType shapes (.ind "Color" "Red" []) (.ind "Color") :=
+  .ind rfl rfl rfl (by simp)
+
+/-- How big `s` is, for a rough enough notion of size. -/
+lgtm private def area (s : inductive Shape) : int :=
+  match s with | Circle(r) => r + r | Rect(w, h) => w + h
+
+#guard area.check shapes []
+
+-- Without the inductive table the body does not check: the alternatives have no constructors to be
+-- exhaustive over, and the parameter's type names nothing.  This is all `Inductives` adds to the
+-- checker, and it is the same thing `Structs` adds for the other kind of type.
+#guard !area.check {} []
+
+/-- `EIndMatch` takes the alternative for the constructor the value carries and binds that
+alternative's names to what the constructor holds, so a call comes down to the arithmetic in one
+alternative and nothing at all in the others. -/
+private theorem eval_area {gs : Globals} : FuncDecl.Apply area shapes gs
+    [.ind "Shape" "Rect" [.int 3, .int 4]] (.int 7) :=
+  .EApply _ (.cons "s" hasType_rect .nil)
+    (.EIndMatch _ _ (.EVarRef "s" rfl) rfl
+      (.EPlus (n₁ := 3) (n₂ := 4) _ _ (.EVarRef "w" rfl) (.EVarRef "h" rfl)))
+
+-- The other alternative is chosen by the other constructor, and the names it binds are its own.
+example : FuncDecl.Apply area shapes [] [.ind "Shape" "Circle" [.int 5]] (.int 10) :=
+  .EApply _ (.cons "s" (.ind rfl rfl rfl (by rintro p hp; simp at hp; subst hp; exact .int _)) .nil)
+    (.EIndMatch _ _ (.EVarRef "s" rfl) rfl
+      (.EPlus (n₁ := 5) (n₂ := 5) _ _ (.EVarRef "r" rfl) (.EVarRef "r" rfl)))
+
+-- Soundness covers the new forms: what comes back has the declared type, and the reason is that
+-- `area` checks against `shapes` — nothing about this particular shape.
+example (v : Value) (h : FuncDecl.Apply area shapes [] [.ind "Shape" "Rect" [.int 3, .int 4]] v) :
+    v.HasType shapes .int :=
+  h.hasType Globals.wellTyped_nil (by simp [area, Color, Shape, shapes, List.lookup])
+
+/-- Which alternative runs is decided by the constructor and nothing else, and what it computes with
+is what that constructor carries: this is the property a match exists to express, for every `Rect`
+rather than for one. -/
+private theorem area.rect {w h : Int} {res : Value}
+    (hres : FuncDecl.Apply area shapes [] [.ind "Shape" "Rect" [.int w, .int h]] res) :
+    res = .int (w + h) := by
+  obtain ⟨-, -, hbody⟩ := hres
+  cases hbody with
+  | EIndMatch _ _ hs halt hb =>
+    cases hs with
+    | EVarRef _ hls =>
+      simp [area, FuncDecl.callEnv, Env.extend, Globals.env, Env.lookup] at hls
+      obtain ⟨rfl, rfl, rfl⟩ := hls
+      simp [List.lookup] at halt
+      obtain ⟨rfl, rfl⟩ := halt
+      cases hb with
+      | EPlus _ _ h₁ h₂ =>
+        cases h₁ with
+        | EVarRef _ hlw =>
+          cases h₂ with
+          | EVarRef _ hlh =>
+            simp [area, FuncDecl.callEnv, Env.extend, Globals.env, Env.lookup,
+              List.lookup] at hlw hlh
+            grind
+
+/-- A square of side `n`, which is the other half: a constructor applied to values. -/
+lgtm private def square (n : int) : inductive Shape :=
+  new Shape.Rect(n, n)
+
+#guard square.check shapes []
+
+-- `EIndNew` evaluates one expression per thing the constructor carries and keeps the values in that
+-- order, under the two names it was given.
+example : FuncDecl.Apply square shapes [] [.int 2] (.ind "Shape" "Rect" [.int 2, .int 2]) :=
+  .EApply _ (.cons "n" (.int 2) .nil)
+    (.EIndNew (vs := [.int 2, .int 2]) _ _ _ rfl (by
+      rintro p hp
+      simp at hp
+      rcases hp with rfl | rfl <;> exact .EVarRef "n" rfl))
+
+example (v : Value) (h : FuncDecl.Apply square shapes [] [.int 2] v) :
+    v.HasType shapes (.ind "Shape") :=
+  h.hasType Globals.wellTyped_nil (by simp [square, Color, Shape, shapes, List.lookup])
+
+/-! ### Recursion
+
+A constructor may carry the very type it belongs to, and a global may call itself, so a recursive
+function over a recursive type needs nothing this language does not already have. -/
+
+/-- A binary tree with an `int` at each branch. -/
+lgtm private inductive Tree { Leaf, Node(inductive Tree, int, inductive Tree) }
+
+private def trees : TypeDecls := { is := Inductives.ofDecls [Tree] }
+
+/-- The sum of `t`'s labels. -/
+lgtm private def total (t : inductive Tree) : int :=
+  match t with | Leaf => 0 | Node(l, n, r) => total(l) + n + total(r)
+
+private def forest : Globals := Globals.ofDecls [total]
+
+-- The declaration checks against a context holding itself, exactly as `countdown` does: it is the
+-- table that makes the recursive call resolve, and the recursive *type* needs nothing at all, since
+-- `Tree` is resolved where it is mentioned rather than where it was declared.
+#guard Globals.check trees forest
+#guard !total.check trees []
+
+/-- `Leaf` carries nothing, so the empty alternative runs and the recursion stops. -/
+private theorem hasType_leaf : Value.HasType trees (.ind "Tree" "Leaf" []) (.ind "Tree") :=
+  .ind rfl rfl rfl (by simp)
+
+example : FuncDecl.Apply total trees forest [.ind "Tree" "Leaf" []] (.int 0) :=
+  .EApply _ (.cons "t" hasType_leaf .nil) (.EIndMatch _ _ (.EVarRef "t" rfl) rfl (.EIntLit 0))
+
+/-! ### A program with inductive types
+
+The same declarations again, read as a source file: a `Program` carries its inductive types beside
+its structure types and its declarations, and `Program.typeDecls` is the bundle its bodies are
+checked and run against. -/
+
+private def shapeProgram : Program where
+  funcDecls := [area, square]
+  inductiveDecls := [Color, Shape]
+
+example : shapeProgram.typeDecls = shapes := rfl
+
+#guard shapeProgram.check
+
+-- The type declarations are what make it check: without them both bodies mention a type that names
+-- nothing.
+#guard !({ shapeProgram with inductiveDecls := [] } : Program).check
+
+-- A program resolves the inductive names it declares, and no two of them share a name — the
+-- counterpart of `StructNamesUnique` for the other kind of type.
+example : shapeProgram.lookupInductive "Shape" = some Shape := rfl
+example : shapeProgram.lookupInductive "Hue" = none := rfl
+example : shapeProgram.InductiveNamesUnique := by decide
+example : ¬ ({ shapeProgram with inductiveDecls := [Color, Color] }
+    : Program).InductiveNamesUnique := by decide
+example : shapeProgram.lookupInductive Shape.name = some Shape :=
+  shapeProgram.lookupInductive_self (by decide) (by simp [shapeProgram])
+
+/-- `shapeProgram` checks, which is a property of the program alone. -/
+private theorem shapeProgram.wellTyped : shapeProgram.WellTyped := by
+  refine Globals.wellTyped_of_forall fun p hp => ?_
+  simp only [Program.globals, shapeProgram, Globals.ofDecls, List.map_cons, List.map_nil,
+    List.mem_cons, List.not_mem_nil, or_false] at hp
+  rcases hp with rfl | rfl <;>
+    simp [area, square, Color, Shape, Program.globals, Program.typeDecls, Program.structs,
+      Program.inductives, shapeProgram, Globals.ofDecls, Structs.ofDecls, Inductives.ofDecls,
+      FuncDecl.ty, List.lookup]
+
+-- Running it is calling one of its names, and soundness at the top covers an inductive result type
+-- like any other.
+example : shapeProgram.Apply "area" [.ind "Shape" "Rect" [.int 3, .int 4]] (.int 7) :=
+  .call _ rfl eval_area
+
+example (v : Value) (args : List Value) (h : shapeProgram.Apply "square" args v) :
+    v.HasType shapeProgram.typeDecls (.ind "Shape") :=
+  h.hasType shapeProgram.wellTyped rfl
 
 end Tests

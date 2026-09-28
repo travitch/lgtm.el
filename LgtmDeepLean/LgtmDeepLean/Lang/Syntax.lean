@@ -18,6 +18,7 @@ Four entry points:
 * `[lgtm| fun (x : int) => x + 1]` elaborates to an `Expression`.
 * `lgtm def` is a command that declares a `FuncDecl`.
 * `lgtm struct` is a command that declares a `StructDecl`.
+* `lgtm inductive` is a command that declares an `InductiveDecl`.
 
 Everything is a macro, so these expand to ordinary constructor applications and cost nothing at
 run time.  A DSL term is *not* checked by `Expression.infer` when it elaborates — `[lgtm| 1 + "a"]`
@@ -34,8 +35,9 @@ The keywords inside a DSL term — `int`, `string`, `list`, `reverse`, `var`, `s
 reserved token: a command's leading keyword has to be reserved for the command parser to find it at
 all, so a file importing this module cannot also name something `lgtm`.
 
-`let`, `in`, and `with` are written as plain symbols rather than with `&`, because Lean reserves all
-three already: declaring them here takes nothing away that was available before.
+`let`, `in`, `with`, `match` and `inductive` are written as plain symbols rather than with `&`,
+because Lean reserves all of them already: declaring them here takes nothing away that was available
+before, and a reserved word is not an identifier, so `&` would not match it in the first place.
 -/
 
 /-! `behavior := symbol` is what lets the keywords be non-reserved: it tells the category to consider
@@ -58,6 +60,10 @@ syntax:max &"list" lgtmTy:max : lgtmTy
 `var` is for variables. -/
 syntax:max &"struct" ident : lgtmTy
 syntax:max &"struct" str : lgtmTy
+/-- `inductive Color` is the type the `lgtm inductive` named `Color` declares, with the same string
+escape hatch `struct` has. -/
+syntax:max "inductive " ident : lgtmTy
+syntax:max "inductive " str : lgtmTy
 syntax:max "(" lgtmTy ")" : lgtmTy
 syntax:20 "(" lgtmTy,* ")" " -> " lgtmTy:20 : lgtmTy
 syntax:max "~" "(" term ")" : lgtmTy
@@ -71,6 +77,8 @@ macro_rules
   | `([lgtm_ty| list $t]) => `(Ty.list [lgtm_ty| $t])
   | `([lgtm_ty| struct $n:ident]) => `(Ty.struct $(Lean.quote n.getId.toString))
   | `([lgtm_ty| struct $n:str]) => `(Ty.struct $n)
+  | `([lgtm_ty| inductive $n:ident]) => `(Ty.ind $(Lean.quote n.getId.toString))
+  | `([lgtm_ty| inductive $n:str]) => `(Ty.ind $n)
   | `([lgtm_ty| ($t)]) => `([lgtm_ty| $t])
   | `([lgtm_ty| ($ts,*) -> $r]) => do
       let ps ← ts.getElems.mapM fun t => `([lgtm_ty| $t])
@@ -110,6 +118,25 @@ instead. -/
 syntax:max lgtmExpr:max noWs "." noWs ident : lgtmExpr
 /-- `{ p with x = 1, y = 2 }` is `p` with those fields rebound and the rest left alone. -/
 syntax:max "{" lgtmExpr " with " (ident " = " lgtmExpr),* "}" : lgtmExpr
+/-- `new Color.Rgb(255, 0, 0)` applies the constructor `Rgb` of the inductive type `Color`, and
+`new Color.Red()` one that takes nothing — the parentheses are always there, as they are for a call.
+
+The type and the constructor are one dotted identifier because that is how the two are written
+everywhere else, and because it is one token as far as Lean's tokenizer is concerned.  Exactly two
+components are expected; `new "my-type" "Red"(1)` is the escape hatch for names that are not Lean
+identifiers. -/
+syntax:max &"new" ident "(" lgtmExpr,* ")" : lgtmExpr
+syntax:max &"new" str str "(" lgtmExpr,* ")" : lgtmExpr
+/-- One alternative of a `match`: the constructor's name, the names to bind the values it carries to,
+and the expression to evaluate when the value was built by it.  A constructor that carries nothing
+takes no parentheses. -/
+public syntax lgtmAlt := " | " ident ("(" ident,* ")")? " => " lgtmExpr
+/-- `match c with | Red => 0 | Rgb(r, g, b) => r` takes a value of an inductive type apart.
+
+The alternatives have to be the type's constructors in the order it declares them, which is the type
+checker's business rather than the parser's.  An alternative's expression extends as far right as it
+can, so a `match` nested inside one needs parentheses — the same way a `let` does. -/
+syntax:10 "match " lgtmExpr " with" lgtmAlt* : lgtmExpr
 syntax:65 lgtmExpr:65 " + " lgtmExpr:66 : lgtmExpr
 syntax:65 lgtmExpr:65 " - " lgtmExpr:66 : lgtmExpr
 syntax:55 lgtmExpr:56 " :: " lgtmExpr:55 : lgtmExpr
@@ -170,6 +197,27 @@ macro_rules
   | `([lgtm| { $e with $[$fs:ident = $es:lgtmExpr],* }]) => do
       let bs ← (fs.zip es).mapM fun (f, e) => `(($(Lean.quote f.getId.toString), [lgtm| $e]))
       `(Expression.structUpdate [lgtm| $e] [$bs,*])
+  | `([lgtm| new $n:ident($args,*)]) => do
+      match n.getId.toString.splitOn "." with
+      | [ty, c] =>
+          let as ← args.getElems.mapM fun a => `([lgtm| $a])
+          `(Expression.indNew $(Lean.quote ty) $(Lean.quote c) [$as,*])
+      | _ =>
+          Lean.Macro.throwErrorAt n
+            "a constructor is written `new Type.Ctor(...)`, with the type and the constructor it \
+             belongs to"
+  | `([lgtm| new $ty:str $c:str($args,*)]) => do
+      let as ← args.getElems.mapM fun a => `([lgtm| $a])
+      `(Expression.indNew $ty $c [$as,*])
+  | `([lgtm| match $e with $alts:lgtmAlt*]) => do
+      let as ← alts.mapM fun alt =>
+        match alt with
+        | `(lgtmAlt| | $c:ident $[($xs:ident,*)]? => $b:lgtmExpr) => do
+            let ns : Array (Lean.TSyntax `term) :=
+              ((xs.map (·.getElems)).getD #[]).map fun x => Lean.quote x.getId.toString
+            `(($(Lean.quote c.getId.toString), [$ns,*], [lgtm| $b]))
+        | _ => Lean.Macro.throwUnsupported
+      `(Expression.indMatch [lgtm| $e] [$as,*])
 
 /-! ## Declarations -/
 
@@ -230,6 +278,40 @@ macro_rules
       match vis with
       | some _ => `($[$doc:docComment]? private def $n : StructDecl := $val)
       | none => `($[$doc:docComment]? def $n : StructDecl := $val)
+
+/-- One constructor of a `lgtm inductive`: its name, and the types of the data it carries.  A
+constructor that carries nothing takes no parentheses, which is what makes a plain enumeration look
+like one. -/
+public syntax lgtmCtor := ident ("(" lgtmTy,* ")")?
+
+/-- `lgtm inductive Color { Red, Green, Rgb(int, int, int) }` declares `Color : InductiveDecl`.
+
+The same shape as `lgtm struct`: the IR name defaults to the Lean name and `as "color"` overrides it,
+and `lgtm private inductive` makes the generated Lean declaration `private`.  The constructors are in
+the order they are written, which is the order a `match` has to give its alternatives in.
+
+A constructor's data has types but no names — it is taken apart by position — so a constructor is
+written like a function type's parameter list rather than like a struct's fields.
+
+A doc comment documents the Lean declaration only.  An `InductiveDecl` has no docstring field to put
+it in, as a `StructDecl` has not. -/
+syntax (docComment)? "lgtm " (lgtmVis)? "inductive " ident (&"as" str)?
+  "{" lgtmCtor,* "}" : command
+
+macro_rules
+  | `($[$doc:docComment]? lgtm $[$vis:lgtmVis]? inductive $n:ident $[as $ir:str]?
+        { $cs:lgtmCtor,* }) => do
+      let ctors ← cs.getElems.mapM fun c =>
+        match c with
+        | `(lgtmCtor| $cn:ident $[($ts:lgtmTy,*)]?) => do
+            let tys ← ((ts.map (·.getElems)).getD #[]).mapM fun t => `([lgtm_ty| $t])
+            `(($(Lean.quote cn.getId.toString), [$tys,*]))
+        | _ => Lean.Macro.throwUnsupported
+      let irName := ir.getD (Lean.quote n.getId.toString)
+      let val ← `({ name := $irName, constructors := [$ctors,*] : InductiveDecl })
+      match vis with
+      | some _ => `($[$doc:docComment]? private def $n : InductiveDecl := $val)
+      | none => `($[$doc:docComment]? def $n : InductiveDecl := $val)
 
 section Tests
 
@@ -473,5 +555,95 @@ lgtm def shift (p : struct Point) (d : int) : struct Point :=
   { p with x = p.x + d }
 
 #guard shift.check { ss := Structs.ofDecls [Point] } []
+
+/-! ### Inductive types -/
+
+-- An inductive type is written with its name, and is a type like any other.
+example : [lgtm_ty| inductive Color] = Ty.ind "Color" := rfl
+example : [lgtm_ty| inductive "my-type"] = Ty.ind "my-type" := rfl
+example : [lgtm_ty| list inductive Color] = Ty.list (.ind "Color") := rfl
+example : [lgtm_ty| (inductive Color) -> struct Point]
+    = Ty.fn [.ind "Color"] (.struct "Point") := rfl
+
+-- `new Type.Ctor(...)` applies a constructor, with the parentheses written even when it takes
+-- nothing, the way a call of no arguments is.
+example : [lgtm| new Color.Red()] = Expression.indNew "Color" "Red" [] := rfl
+example : [lgtm| new Color.Rgb(1, 2, 3)]
+    = Expression.indNew "Color" "Rgb" [.intLit 1, .intLit 2, .intLit 3] := rfl
+example : [lgtm| new Shape.Rect(w + 1, f(2))]
+    = Expression.indNew "Shape" "Rect"
+        [.plus (.varRef "w") (.intLit 1), .app (.varRef "f") [.intLit 2]] := rfl
+example : [lgtm| new "my-type" "my-ctor"(n)]
+    = Expression.indNew "my-type" "my-ctor" [.varRef "n"] := rfl
+
+-- And it is an ordinary operand everywhere else, constructors nested inside it included.
+example : [lgtm| new Color.Red() :: cs]
+    = Expression.lcons (.indNew "Color" "Red" []) (.varRef "cs") := rfl
+example : [lgtm| new Tree.Node(new Tree.Leaf(), new Tree.Leaf())]
+    = Expression.indNew "Tree" "Node" [.indNew "Tree" "Leaf" [], .indNew "Tree" "Leaf" []] := rfl
+
+-- A `match` is one alternative per constructor, each binding a name to everything that constructor
+-- carries.
+example : [lgtm| match c with | Red => 0 | Rgb(r, g, b) => r]
+    = Expression.indMatch (.varRef "c")
+        [("Red", [], .intLit 0), ("Rgb", ["r", "g", "b"], .varRef "r")] := rfl
+example : [lgtm| match f(1) with | Circle(r) => r]
+    = Expression.indMatch (.app (.varRef "f") [.intLit 1]) [("Circle", ["r"], .varRef "r")] := rfl
+
+-- An alternative's expression extends as far right as it can, so it stops only at the next `|`, and
+-- a `match` inside one needs parentheses just as a `let` does.
+example : [lgtm| match c with | Red => 1 + 2 | Green => let x = 1 in x + x]
+    = Expression.indMatch (.varRef "c")
+        [("Red", [], .plus (.intLit 1) (.intLit 2)),
+          ("Green", [], .let_ "x" (.intLit 1) (.plus (.varRef "x") (.varRef "x")))] := rfl
+example : [lgtm| (match c with | Red => 1) + 2]
+    = Expression.plus (.indMatch (.varRef "c") [("Red", [], .intLit 1)]) (.intLit 2) := rfl
+
+-- The parser is not the exhaustiveness check: a match with no alternatives at all is written the
+-- same way as any other, and it is the type checker that has nothing to say for it.
+example : [lgtm| match c with] = Expression.indMatch (.varRef "c") [] := rfl
+
+/-- A colour. -/
+lgtm inductive Color { Red, Green, Blue }
+
+-- The command builds the `InductiveDecl` constructor by constructor, in the order they are written,
+-- with an empty list of data types for the ones that carry nothing.
+example : Color = { name := "Color", constructors := [("Red", []), ("Green", []), ("Blue", [])] } :=
+  rfl
+
+lgtm inductive Shape { Circle(int), Rect(int, int) }
+example : Shape.constructors = [("Circle", [.int]), ("Rect", [.int, .int])] := rfl
+
+-- A constructor's data may be of any type, another inductive type and the type being declared
+-- included: nothing about a constructor's types is resolved when it is declared.
+lgtm inductive Tree { Leaf, Node(inductive Tree, inductive Tree) }
+example : Tree.constructors = [("Leaf", []), ("Node", [.ind "Tree", .ind "Tree"])] := rfl
+
+lgtm inductive Wrapped { C(list int, struct Point, (int) -> int) }
+example : Wrapped.constructors
+    = [("C", [.list .int, .struct "Point", .fn [.int] .int])] := rfl
+
+-- With no `as`, the IR name is the Lean name; `as` overrides it, and a type may declare no
+-- constructors at all — nothing can build a value of it, and nothing can take one apart.
+lgtm inductive RenamedInd as "my-type" { C }
+example : RenamedInd.name = "my-type" := rfl
+
+lgtm private inductive NoCtors {}
+example : NoCtors.constructors = [] := rfl
+
+/-- The perimeter of `s`, which is what a `match` is for: one answer per constructor, computed from
+what that constructor carries. -/
+lgtm def perimeter (s : inductive Shape) : int :=
+  match s with | Circle(r) => r + r + r + r + r + r | Rect(w, h) => w + w + h + h
+
+-- And what the two commands build together type checks, which is the point of writing it this way.
+#guard perimeter.check { is := Inductives.ofDecls [Shape] } []
+#guard !perimeter.check {} []
+
+/-- `Rect` with both sides `n`, which is the other half: a constructor applied to values. -/
+lgtm def square (n : int) : inductive Shape :=
+  new Shape.Rect(n, n)
+
+#guard square.check { is := Inductives.ofDecls [Shape] } []
 
 end Tests

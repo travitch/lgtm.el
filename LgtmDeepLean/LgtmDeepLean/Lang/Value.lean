@@ -39,6 +39,19 @@ The field names are spelled `String` rather than `FieldName` — the same type �
 `sizeOf` for a nested inductive treats the abbreviation as a second shape of list and then fails to
 prove the two agree.  `FieldValues` is the name to use everywhere else. -/
 | struct : String → List (String × Value) → Value
+/-- A value of the inductive type of the given name, built by the constructor of the given name out
+of one value per data type that constructor declares.
+
+A name, a constructor and its data, and nothing else — the same way `Value.struct` is a name and its
+fields.  Which constructors the type has and what each one carries is the business of the
+`InductiveDecl` the type's name resolves to, and `Value.HasType` is where the two are held against
+each other.
+
+The type's name is carried as well as the constructor's because a constructor name on its own does
+not say which declaration to look in, exactly as in `Expression.indNew`.  The values are positional,
+because a constructor's data is: the names belong to whichever `indMatch` alternative takes this
+apart. -/
+| ind : String → CtorName → List Value → Value
 
 /-- The values of the variables in scope, innermost binding first.
 
@@ -213,6 +226,21 @@ way the closure case does. -/
     (∀ f, (sd.fields.lookup f).isSome = (fvs.lookup f).isSome) →
     (∀ f t v, sd.fields.lookup f = some t → fvs.lookup f = some v → HasType td v t) →
     HasType td (.struct name fvs) (.struct name)
+/-- The type's name is declared, that declaration has the constructor the value was built by, and
+the value carries one value per data type that constructor takes, each of the type it takes there.
+
+Positional where the struct case is by name, because that is how the two kinds of declaration list
+what they hold: the length and the zip are what "one per data type, in order" comes to.
+
+Recursion needs nothing extra.  A constructor may take the very type it belongs to, so this rule may
+ask for a value of `.ind name` again — of a value the one in hand carries, which is smaller, so the
+relation is as well founded here as it is for `list`. -/
+| ind {name : String} {d : InductiveDecl} {c : CtorName} {ts : List Ty} {vs : List Value} :
+    td.is.lookup name = some d →
+    d.constructors.lookup c = some ts →
+    vs.length = ts.length →
+    (∀ p ∈ vs.zip ts, HasType td p.1 p.2) →
+    HasType td (.ind name c vs) (.ind name)
 
 /-- `env`'s globals all check, and its bindings are exactly the names `ctx` promises, at the types
 `ctx` gives them.
@@ -279,6 +307,54 @@ alike, so a struct value has at most one type, and it is the declaration — the
     | struct hsd hdom htys => exact ⟨_, hsd, hdom, htys, rfl⟩
   · rintro ⟨sd, hsd, hdom, htys, rfl⟩
     exact .struct hsd hdom htys
+
+/-- What it takes for a value of an inductive type to have a type, as one existential over the
+declaration its type's name resolves to and the data types its constructor takes.
+
+Neither the type's name nor the constructor's is existential: both appear in the value, and the
+type's appears in the type as well.  What has to be found is what a `Ty.ind` does not carry — the
+declaration, and through it the types the constructor's data is held to. -/
+@[simp] public theorem Value.hasType_ind_iff {td : TypeDecls} {name : String} {c : CtorName}
+    {vs : List Value} {t : Ty} :
+    Value.HasType td (.ind name c vs) t ↔
+      ∃ d ts, td.is.lookup name = some d ∧ d.constructors.lookup c = some ts
+        ∧ vs.length = ts.length ∧ (∀ p ∈ vs.zip ts, Value.HasType td p.1 p.2)
+        ∧ t = .ind name := by
+  constructor
+  · intro h
+    cases h with
+    | ind hd hc hlen htys => exact ⟨_, _, hd, hc, hlen, htys, rfl⟩
+  · rintro ⟨d, ts, hd, hc, hlen, htys, rfl⟩
+    exact .ind hd hc hlen htys
+
+/-- The values a list of expressions evaluated to have the types inference gave those expressions,
+one for one and in order.
+
+This is the positional counterpart of `Expression.lookup_of_inferFields`: a struct's fields are
+matched up by name, where a constructor's data is matched up by position, so what a constructor
+application needs about its arguments is stated over the zip.  It is a fact about `inferList` and an
+assumption about the values, so it says nothing about *how* they were arrived at — `Eval.hasType`
+supplies the assumption from its induction hypothesis. -/
+public theorem Value.hasType_zip_of_inferList {td : TypeDecls} {ctx : Context}
+    {es : List Expression} {vs : List Value} {ts : List Ty} (hlen : es.length = vs.length)
+    (hts : Expression.inferList td ctx es = some ts)
+    (hev : ∀ p ∈ es.zip vs, ∀ t, p.1.infer td ctx = some t → Value.HasType td p.2 t) :
+    vs.length = ts.length ∧ ∀ p ∈ vs.zip ts, Value.HasType td p.1 p.2 := by
+  induction es generalizing vs ts with
+  | nil =>
+      obtain rfl : vs = [] := List.eq_nil_of_length_eq_zero hlen.symm
+      simp_all
+  | cons e es ih =>
+      obtain ⟨t, ts', ht, hts', rfl⟩ := Expression.inferList_cons_eq_some.mp hts
+      cases vs with
+      | nil => simp at hlen
+      | cons v vs =>
+          obtain ⟨hlen', hall⟩ := ih (by simpa using hlen) hts'
+            fun p hp t' ht' => hev p (List.mem_cons_of_mem _ hp) t' ht'
+          refine ⟨by simpa using hlen', fun p hp => ?_⟩
+          rcases List.mem_cons.mp (by simpa using hp) with rfl | hp'
+          · exact hev (e, v) (by simp) t ht
+          · exact hall p hp'
 
 /-- A struct value whose fields are the declaration's fields, name for name and in order, each with a
 value of its declared type, has that declaration's struct type.
@@ -369,6 +445,45 @@ public theorem Env.hasType_extend {td : TypeDecls} {ps : Context} {vs : List Val
   induction h with
   | nil => simpa [Env.extend] using henv
   | cons _ hv _ ih => simpa [Env.extend] using Env.hasType_cons hv ih
+
+/-- Values of a constructor's data types are arguments for parameters of those types under any names
+at all, provided there is a name for each of them.
+
+A constructor's data has no names, and a match alternative's names have no types; putting the two
+lists together with `zip` is what makes a `Context` out of them, and this is what says the values
+still fit. -/
+public theorem ArgsHaveType.zip {td : TypeDecls} {xs : List String} {ts : List Ty}
+    {vs : List Value} (hxs : xs.length = ts.length) (hvs : vs.length = ts.length)
+    (hall : ∀ p ∈ vs.zip ts, Value.HasType td p.1 p.2) : ArgsHaveType td (xs.zip ts) vs := by
+  induction xs generalizing ts vs with
+  | nil =>
+      obtain rfl : ts = [] := List.eq_nil_of_length_eq_zero hxs.symm
+      obtain rfl : vs = [] := List.eq_nil_of_length_eq_zero hvs
+      exact .nil
+  | cons x xs ih =>
+      cases ts with
+      | nil => simp at hxs
+      | cons t ts =>
+          cases vs with
+          | nil => simp at hvs
+          | cons v vs =>
+              refine .cons x (hall (v, t) (by simp)) (ih (by simpa using hxs) (by simpa using hvs)
+                fun p hp => hall p (by simp [hp]))
+
+/-- Binding a constructor's values to the names a match alternative gives them describes the context
+that alternative's expression is checked in.
+
+This is `Env.hasType_extend` read for a match rather than for a call: the names and the types arrive
+separately — the names from the alternative, the types from the declaration — so the context is their
+zip, and the bindings are the names zipped with the values instead.  The two agree because the names
+are as many as the types, which is what the type checker made sure of. -/
+public theorem Env.hasType_match {td : TypeDecls} {env : Env} {ctx : Context} {xs : List String}
+    {ts : List Ty} {vs : List Value} (hxs : xs.length = ts.length) (hvs : vs.length = ts.length)
+    (hall : ∀ p ∈ vs.zip ts, Value.HasType td p.1 p.2) (henv : Env.HasType td env ctx) :
+    Env.HasType td ⟨xs.zip vs ++ env.bindings, env.globals⟩ (xs.zip ts ++ ctx) := by
+  have h := Env.hasType_extend (ArgsHaveType.zip hxs hvs hall) henv
+  rwa [show env.extend (xs.zip ts) vs = ⟨xs.zip vs ++ env.bindings, env.globals⟩ by
+    simp [Env.extend, List.map_fst_zip (Nat.le_of_eq hxs)]] at h
 
 /-- The environment a call to `d` evaluates its body in: each parameter name bound to its
 argument, over the globals and nothing else.
