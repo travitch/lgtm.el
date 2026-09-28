@@ -2,6 +2,7 @@ module
 
 
 public inductive Ty where
+| bool
 | int
 | string
 | list : Ty → Ty
@@ -82,6 +83,7 @@ lists of types, which is how `Ty.rec` offers the nesting: one motive for `Ty`, o
 mutual
 
 public def Ty.beq : Ty → Ty → Bool
+  | .bool, .bool => true
   | .int, .int => true
   | .string, .string => true
   | .list a, .list b => Ty.beq a b
@@ -102,6 +104,7 @@ public instance : BEq Ty := ⟨Ty.beq⟩
 mutual
 
 public theorem Ty.beq_iff_eq : ∀ (a b : Ty), Ty.beq a b = true ↔ a = b
+  | .bool, b => by cases b <;> simp [Ty.beq]
   | .int, b => by cases b <;> simp [Ty.beq]
   | .string, b => by cases b <;> simp [Ty.beq]
   | .list a, b => by cases b <;> simp [Ty.beq, Ty.beq_iff_eq a]
@@ -121,13 +124,19 @@ public instance : LawfulBEq Ty where
 
 public instance : DecidableEq Ty := fun a b => decidable_of_iff _ (Ty.beq_iff_eq a b)
 
--- TODO: Add ite
-
 public inductive Expression where
 /-- A function, annotated with the name and type of each of its parameters -/
 | lam : List (String × Ty) → Expression → Expression
 /-- Apply a function to all of its arguments at once -/
 | app : Expression → List Expression → Expression
+| boolLit : Bool → Expression
+/-- A polymorphic conditional.
+
+    > if $expression1 then { $expression2 } else { $expression3 }
+
+    The condition expression must be a boolean.  The two body expressions can be any type, as long
+    as it is the same for both. -/
+| ite : Expression → Expression → Expression → Expression
 /-- Introduce a let binding.  Binds the first expression to the given name, which
     becomes available in the second expression. -/
 | let_ : String → Expression → Expression → Expression

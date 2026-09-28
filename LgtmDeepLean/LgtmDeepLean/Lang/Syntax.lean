@@ -29,15 +29,19 @@ Scoping is the IR's, not Lean's: an identifier always becomes a `varRef` of its 
 `x` in `[lgtm| fun (x : int) => x]` refers to the DSL binder and never to a Lean variable called
 `x`.  To reach a Lean term of type `Expression` or `Ty`, splice it with `~(...)`.
 
-The keywords inside a DSL term — `int`, `string`, `list`, `reverse`, `var`, `struct`, `new`, and `as`
-— are declared with `&`, Lean's non-reserved symbol form, so importing this module does not stop
-`int` or `list` from being used as ordinary Lean identifiers.  `lgtm` is the one exception and *is* a
-reserved token: a command's leading keyword has to be reserved for the command parser to find it at
-all, so a file importing this module cannot also name something `lgtm`.
+The keywords inside a DSL term — `bool`, `int`, `string`, `list`, `true`, `false`, `reverse`, `var`,
+`struct`, `new`, and `as` — are declared with `&`, Lean's non-reserved symbol form, so importing this
+module does not stop `int` or `true` from being used as ordinary Lean identifiers.  What it does cost
+is those names as *DSL variables*: the categories below are declared `behavior := symbol`, so an
+identifier matching one of them is that keyword and never a `varRef`, and `var "true"` is how a
+variable of such a name is reached.  `lgtm` is the one exception and
+*is* a reserved token: a command's leading keyword has to be reserved for the command parser to find
+it at all, so a file importing this module cannot also name something `lgtm`.
 
-`let`, `in`, `with`, `match` and `inductive` are written as plain symbols rather than with `&`,
-because Lean reserves all of them already: declaring them here takes nothing away that was available
-before, and a reserved word is not an identifier, so `&` would not match it in the first place.
+`let`, `in`, `with`, `match`, `inductive`, `if`, `then` and `else` are written as plain symbols rather
+than with `&`, because Lean reserves all of them already: declaring them here takes nothing away that
+was available before, and a reserved word is not an identifier, so `&` would not match it in the first
+place.
 -/
 
 /-! `behavior := symbol` is what lets the keywords be non-reserved: it tells the category to consider
@@ -52,6 +56,7 @@ declare_syntax_cat lgtmExpr (behavior := symbol)
 `Ty.fn` records every parameter at once, so a function type is written with its parameters in one
 comma-separated group: `(int, string) -> int`, and `() -> int` for a function of no arguments. -/
 
+syntax:max &"bool" : lgtmTy
 syntax:max &"int" : lgtmTy
 syntax:max &"string" : lgtmTy
 syntax:max &"list" lgtmTy:max : lgtmTy
@@ -72,6 +77,7 @@ syntax:max "~" "(" term ")" : lgtmTy
 syntax:max "[lgtm_ty| " lgtmTy "]" : term
 
 macro_rules
+  | `([lgtm_ty| bool]) => `(Ty.bool)
   | `([lgtm_ty| int]) => `(Ty.int)
   | `([lgtm_ty| string]) => `(Ty.string)
   | `([lgtm_ty| list $t]) => `(Ty.list [lgtm_ty| $t])
@@ -102,6 +108,11 @@ the postfix `.` is what reads a field of something that is not a bare name — `
 syntax:max ident : lgtmExpr
 syntax:max num : lgtmExpr
 syntax:max str : lgtmExpr
+/-- `true` and `false` are the two `bool` literals.  They are keywords rather than identifiers, so
+neither is available as a variable name inside a DSL term; `var "true"` is the escape hatch, the same
+one `reverse` and `new` leave. -/
+syntax:max &"true" : lgtmExpr
+syntax:max &"false" : lgtmExpr
 syntax:max "(" lgtmExpr ")" : lgtmExpr
 syntax:max "~" "(" term ")" : lgtmExpr
 /-- `var "x"` is the variable `x`, for IR names that are not Lean identifiers. -/
@@ -137,6 +148,16 @@ The alternatives have to be the type's constructors in the order it declares the
 checker's business rather than the parser's.  An alternative's expression extends as far right as it
 can, so a `match` nested inside one needs parentheses — the same way a `let` does. -/
 syntax:10 "match " lgtmExpr " with" lgtmAlt* : lgtmExpr
+/-- `if b then { 1 } else { 2 }` chooses between its two branches.
+
+The branches are braced, so the form ends where the last `}` does and needs no parentheses to be an
+operand: `if b then { 1 } else { 2 } + 1` adds to the conditional rather than to its second branch,
+which is the opposite of how a `let` or a `match` alternative reads.  The condition takes no braces
+because `then` is what ends it.
+
+Both branches must have the same type and the condition must be a `bool`, which is the type checker's
+business rather than the parser's. -/
+syntax:max "if " lgtmExpr " then " "{" lgtmExpr "}" " else " "{" lgtmExpr "}" : lgtmExpr
 syntax:65 lgtmExpr:65 " + " lgtmExpr:66 : lgtmExpr
 syntax:65 lgtmExpr:65 " - " lgtmExpr:66 : lgtmExpr
 syntax:55 lgtmExpr:56 " :: " lgtmExpr:55 : lgtmExpr
@@ -161,6 +182,8 @@ macro_rules
             acc ← `(Expression.structGet $acc $(Lean.quote f))
           return acc
   | `([lgtm| var $s:str]) => `(Expression.varRef $s)
+  | `([lgtm| true]) => `(Expression.boolLit true)
+  | `([lgtm| false]) => `(Expression.boolLit false)
   | `([lgtm| $n:num]) => `(Expression.intLit $n)
   | `([lgtm| $s:str]) => `(Expression.stringLit $s)
   | `([lgtm| ($e)]) => `([lgtm| $e])
@@ -183,6 +206,8 @@ macro_rules
       `(Expression.lam [$ps,*] [lgtm| $b])
   | `([lgtm| let $x:ident = $e in $b]) =>
       `(Expression.let_ $(Lean.quote x.getId.toString) [lgtm| $e] [lgtm| $b])
+  | `([lgtm| if $c then { $thn } else { $els }]) =>
+      `(Expression.ite [lgtm| $c] [lgtm| $thn] [lgtm| $els])
   | `([lgtm| new $n:ident { $[$fs:ident = $es:lgtmExpr],* }]) => do
       let bs ← (fs.zip es).mapM fun (f, e) => `(($(Lean.quote f.getId.toString), [lgtm| $e]))
       `(Expression.structNew $(Lean.quote n.getId.toString) [$bs,*])
@@ -349,6 +374,9 @@ section Tests
 
 -- Types elaborate to the constructors they describe, `fn` taking all its parameters at once.
 example : [lgtm_ty| int] = Ty.int := rfl
+example : [lgtm_ty| bool] = Ty.bool := rfl
+example : [lgtm_ty| list bool] = Ty.list .bool := rfl
+example : [lgtm_ty| (bool, int) -> bool] = Ty.fn [.bool, .int] .bool := rfl
 example : [lgtm_ty| list string] = Ty.list .string := rfl
 example : [lgtm_ty| list list int] = Ty.list (.list .int) := rfl
 example : [lgtm_ty| (int, string) -> int] = Ty.fn [.int, .string] .int := rfl
@@ -361,6 +389,23 @@ example : [lgtm| x] = Expression.varRef "x" := rfl
 example : [lgtm| var "my-var"] = Expression.varRef "my-var" := rfl
 example : [lgtm| 3] = Expression.intLit 3 := rfl
 example : [lgtm| "hi"] = Expression.stringLit "hi" := rfl
+example : [lgtm| true] = Expression.boolLit true := rfl
+example : [lgtm| false] = Expression.boolLit false := rfl
+
+-- `true` and `false` are keywords, so neither is a variable name inside a DSL term.  Outside one
+-- they are Lean's own `true` and `false`, which declaring them with `&` is what preserves.
+example : [lgtm| var "true"] = Expression.varRef "true" := rfl
+example : (true : Bool) = Bool.true := rfl
+
+-- A `bool` literal is an ordinary operand: it goes in a list, in a call, and in a conditional.
+example : [lgtm| [true, false : bool]]
+    = Expression.lcons (.boolLit true) (.lcons (.boolLit false) (.lnil .bool)) := rfl
+example : [lgtm| f(true, 1)] = Expression.app (.varRef "f") [.boolLit true, .intLit 1] := rfl
+example : [lgtm| true :: bs] = Expression.lcons (.boolLit true) (.varRef "bs") := rfl
+example : [lgtm| let b = true in b]
+    = Expression.let_ "b" (.boolLit true) (.varRef "b") := rfl
+example : [lgtm| fun (b : bool) => true]
+    = Expression.lam [("b", .bool)] (.boolLit true) := rfl
 
 -- Arithmetic is left-associative, and parentheses group as written.
 example : [lgtm| x + 1] = Expression.plus (.varRef "x") (.intLit 1) := rfl
@@ -433,6 +478,34 @@ example : [lgtm| let xs = reverse ys in x :: xs]
 example : [lgtm| (let x = 1 in x) + 2]
     = Expression.plus (.let_ "x" (.intLit 1) (.varRef "x")) (.intLit 2) := rfl
 
+-- A conditional is its condition and its two braced branches.
+example : [lgtm| if b then { 1 } else { 2 }]
+    = Expression.ite (.varRef "b") (.intLit 1) (.intLit 2) := rfl
+example : [lgtm| if true then { 1 } else { 2 }]
+    = Expression.ite (.boolLit true) (.intLit 1) (.intLit 2) := rfl
+example : [lgtm| if b then { true } else { false }]
+    = Expression.ite (.varRef "b") (.boolLit true) (.boolLit false) := rfl
+example : [lgtm| if f(x) then { x + 1 } else { x - 1 }]
+    = Expression.ite (.app (.varRef "f") [.varRef "x"])
+        (.plus (.varRef "x") (.intLit 1)) (.minus (.varRef "x") (.intLit 1)) := rfl
+
+-- The braces end the branches, so a conditional is an ordinary operand: the `+ 1` below applies to
+-- the whole of it rather than to its second branch, and neither branch needs parentheses.
+example : [lgtm| if b then { 1 } else { 2 } + 1]
+    = Expression.plus (.ite (.varRef "b") (.intLit 1) (.intLit 2)) (.intLit 1) := rfl
+example : [lgtm| if b then { let x = 1 in x } else { match c with | Red => 0 }]
+    = Expression.ite (.varRef "b") (.let_ "x" (.intLit 1) (.varRef "x"))
+        (.indMatch (.varRef "c") [("Red", [], .intLit 0)]) := rfl
+example : [lgtm| f(if b then { 1 } else { 2 })]
+    = Expression.app (.varRef "f") [.ite (.varRef "b") (.intLit 1) (.intLit 2)] := rfl
+
+-- And conditionals nest, in the branches and in the condition alike.
+example : [lgtm| if b then { if c then { 1 } else { 2 } } else { 3 }]
+    = Expression.ite (.varRef "b") (.ite (.varRef "c") (.intLit 1) (.intLit 2)) (.intLit 3) := rfl
+example : [lgtm| if if b then { c } else { d } then { 1 } else { 2 }]
+    = Expression.ite (.ite (.varRef "b") (.varRef "c") (.varRef "d"))
+        (.intLit 1) (.intLit 2) := rfl
+
 -- Identifiers are IR names, never Lean ones: `n` below is a `varRef`, not this Lean `n`.
 private def n : Expression := .intLit 99
 example : [lgtm| n] = Expression.varRef "n" := rfl
@@ -488,6 +561,38 @@ lgtm def letDouble as "let-double" (n : int) : int :=
 
 #guard letDouble.check {} []
 
+/-- `x` when `b`, and `y` otherwise. -/
+lgtm def pick (b : bool) (x : int) (y : int) : int :=
+  if b then { x } else { y }
+
+#guard pick.check {} []
+
+-- A `bool` is a type like any other, so a declaration can return one and a list can hold them, and
+-- a literal is where one comes from when no parameter has one.
+lgtm def firstOf as "first-of" (b : bool) (bs : list bool) : list bool :=
+  b :: bs
+
+#guard firstOf.check {} []
+
+/-- The two literals, which is the shortest declaration that returns a `bool`. -/
+lgtm def yes : bool := true
+
+#guard yes.check {} []
+#guard !({ yes with body := [lgtm| 1] } : FuncDecl).check {} []
+#guard !({ yes with resultType := [lgtm_ty| int] } : FuncDecl).check {} []
+
+-- So a `bool` no longer has to be passed in: a conditional can be written with its condition spelled
+-- out, and a list of them needs no parameter either.
+lgtm def flags : list bool := [true, false, true : bool]
+
+#guard flags.check {} []
+
+lgtm def pickFirst as "pick-first" (x : int) (y : int) : int :=
+  if true then { x } else { y }
+
+#guard pickFirst.check {} []
+#guard !({ pickFirst with body := [lgtm| if 1 then { x } else { y }] } : FuncDecl).check {} []
+
 -- A declaration with no parameters is fine, and so is one that returns a function.
 lgtm def three : int := 3
 #guard three.check {} []
@@ -503,6 +608,8 @@ example : succ.docstring = "One more than `x`." := rfl
 -- them.
 #guard !({ three with body := [lgtm| 1 + "a"] } : FuncDecl).check {} []
 #guard !({ revCons with body := [lgtm| reverse x] } : FuncDecl).check {} []
+#guard !({ pick with body := [lgtm| if x then { x } else { y }] } : FuncDecl).check {} []
+#guard !({ pick with body := [lgtm| if b then { x } else { "a" }] } : FuncDecl).check {} []
 
 /-! ### Structs -/
 

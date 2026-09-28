@@ -13,6 +13,7 @@ mentioning `Eval`: the evaluation relation is one consumer of this layer, but th
 having a type, and of an environment describing a context, stands on its own. -/
 
 public inductive Value where
+| bool : Bool → Value
 | int : Int → Value
 | string : String → Value
 | list : List Value → Value
@@ -201,6 +202,7 @@ bundle runs through the entire relation as a parameter.
 never by position, so that an update — which rebinds fields without reordering them — and a
 `structNew` — which writes them in the declared order — are typed by the same clauses. -/
 public inductive Value.HasType (td : TypeDecls) : Value → Ty → Prop where
+| bool (b : Bool) : HasType td (.bool b) .bool
 | int (i : Int) : HasType td (.int i) .int
 | string (s : String) : HasType td (.string s) .string
 | list {vs : List Value} {t : Ty} :

@@ -39,6 +39,23 @@ extended with the parameters. -/
     ArgsHaveType td ps vs →
     Eval td (Env.extend ⟨cbindings, cglobals⟩ ps vs) body v →
     Eval td env (.app f args) v
+| EBoolLit (b : Bool) : Eval td env (.boolLit b) (.bool b)
+/-- A conditional whose condition came out `true` evaluates its first branch, and one whose condition
+came out `false` its second.
+
+Two rules rather than one over a `Bool`, so that a proof taking an `ite` apart is left with the branch
+that ran rather than with an `if` to reduce, and so that the branch not taken is not mentioned at all:
+it is never evaluated, which is the whole of what a conditional does that a two-argument function
+could not.
+
+A condition that evaluates to anything but a `bool` leaves this stuck — the only thing that can go
+wrong here, and exactly what typing rules out. -/
+| EIteTrue (c thn els : Expression) :
+    Eval td env c (.bool true) → Eval td env thn v →
+    Eval td env (.ite c thn els) v
+| EIteFalse (c thn els : Expression) :
+    Eval td env c (.bool false) → Eval td env els v →
+    Eval td env (.ite c thn els) v
 /-- Let binds a variable that shadows any existing bindings.
 
     The bound value is available in the body of the let.  This is a non-recursive let. -/
@@ -124,6 +141,11 @@ value the environment hands back.  It is also the rule that resolves a global, a
 it line up because `Env.lookup` searches the bindings before the globals exactly as the context
 `ctx ++ Globals.types env.globals` is searched left to right.
 
+The two `ite` rules are the ones that say nothing at all about the value they produce: it is whatever
+the branch that ran produced, so the induction hypothesis for that branch is the whole case.  It is
+the type checker having held *both* branches to one type that makes this work, since which of them ran
+is not something the type has heard about.
+
 `ELet` is the other rule that extends the environment, and it is the easy one: the context grows on
 the left exactly as the bindings do, so `Env.hasType_cons` — applied to the type the bound expression
 was inferred at — is the whole case.
@@ -183,6 +205,12 @@ public theorem Eval.hasType {td : TypeDecls} {env : Env} {ctx : Context} {e : Ex
       refine ihbody (Env.hasType_extend hat hcenv) ?_
       simp only [Env.globals_extend]
       exact hr ▸ hbodyty
+  | EIteTrue c thn els _ _ _ ihthn =>
+      obtain ⟨-, hthn, -⟩ := Expression.infer_ite_eq_some.mp ht
+      exact ihthn henv hthn
+  | EIteFalse c thn els _ _ _ ihels =>
+      obtain ⟨-, -, hels⟩ := Expression.infer_ite_eq_some.mp ht
+      exact ihels henv hels
   | ELet x e body _ _ ih₁ ihbody =>
       obtain ⟨t', ht', htbody⟩ := Expression.infer_let_eq_some.mp ht
       exact ihbody (Env.hasType_cons (ih₁ henv ht') henv) htbody
@@ -570,6 +598,152 @@ lgtm private def adder (n : int) : (int) -> int :=
 -- any other: what comes back is a closure, and the theorem says it is one of the declared type.
 example (v : Value) (h : FuncDecl.Apply adder {} [] [.int 3] v) : v.HasType {} (.fn [.int] .int) :=
   h.hasType Globals.wellTyped_nil (by simp [adder, List.lookup])
+
+/-! ## Booleans and conditionals
+
+`EBoolLit` is where a `bool` comes from, and `ite` is what one is for: the one form that evaluates
+only part of itself: `EIteTrue` and `EIteFalse` each mention one branch, and neither says anything
+about the other.
+
+A condition is therefore either a parameter or a literal.  The examples below use a parameter for the
+properties that hold for every `b`, since that is what quantifying over the condition needs, and the
+literals under them are the case where the branch that runs is settled by the expression alone. -/
+
+-- A literal evaluates to the value it carries, the way `EIntLit` and `EStringLit` do.
+example : Eval {} ∅ [lgtm| true] (.bool true) := .EBoolLit true
+example : Eval {} ∅ [lgtm| false] (.bool false) := .EBoolLit false
+
+-- And to nothing else, which is what makes a literal condition decide the branch outright.
+example : ¬ Eval {} ∅ [lgtm| true] (.bool false) := by
+  intro h; cases h
+
+example : ¬ Eval {} ∅ [lgtm| true] (.int 1) := by
+  intro h; cases h
+
+/-- `x` when `b`, and `y` otherwise. -/
+lgtm private def pick (b : bool) (x : int) (y : int) : int :=
+  if b then { x } else { y }
+
+#guard pick.check {} []
+
+-- Which branch runs is decided by the condition, and it is `EIteTrue` or `EIteFalse` that says so.
+example : FuncDecl.Apply pick {} [] [.bool true, .int 1, .int 2] (.int 1) :=
+  .EApply _ (.cons "b" (.bool true) (.cons "x" (.int 1) (.cons "y" (.int 2) .nil)))
+    (.EIteTrue _ _ _ (.EVarRef "b" rfl) (.EVarRef "x" rfl))
+
+example : FuncDecl.Apply pick {} [] [.bool false, .int 1, .int 2] (.int 2) :=
+  .EApply _ (.cons "b" (.bool false) (.cons "x" (.int 1) (.cons "y" (.int 2) .nil)))
+    (.EIteFalse _ _ _ (.EVarRef "b" rfl) (.EVarRef "y" rfl))
+
+-- Soundness covers the new form: the declared result type comes back from `pick` checking, with
+-- nothing said about which branch ran — which is the reason both branches were held to one type.
+example (v : Value) (b : Bool) (x y : Int)
+    (h : FuncDecl.Apply pick {} [] [.bool b, .int x, .int y] v) : v.HasType {} .int :=
+  h.hasType Globals.wellTyped_nil (by simp [pick, List.lookup])
+
+-- A condition of any other type is stuck at the call, the way an argument of the wrong type is: a
+-- `bool` is what `ite` asks for, and there is no truthiness to fall back on.
+example (v : Value) : ¬ FuncDecl.Apply pick {} [] [.int 0, .int 1, .int 2] v := by
+  rintro ⟨-, hargs, -⟩
+  cases hargs with
+  | cons _ hv _ => cases hv
+
+/-- Which branch runs is decided by the condition and nothing else: this is the property a conditional
+exists to express, for every `b` rather than for one.
+
+Inverting it is two cases rather than one because there are two rules, and each leaves the branch that
+ran — so `if b then x else y` on the Lean side is arrived at from the condition rather than assumed. -/
+private theorem pick.eq_ite {b : Bool} {x y : Int} {res : Value}
+    (h : FuncDecl.Apply pick {} [] [.bool b, .int x, .int y] res) :
+    res = .int (if b then x else y) := by
+  obtain ⟨-, -, hbody⟩ := h
+  cases hbody with
+  | EIteTrue _ _ _ hc hthn =>
+    cases hc with
+    | EVarRef _ hlb =>
+      cases hthn with
+      | EVarRef _ hlx =>
+        simp [pick, FuncDecl.callEnv, Env.extend, Globals.env, Env.lookup, List.lookup] at hlb hlx
+        grind
+  | EIteFalse _ _ _ hc hels =>
+    cases hc with
+    | EVarRef _ hlb =>
+      cases hels with
+      | EVarRef _ hly =>
+        simp [pick, FuncDecl.callEnv, Env.extend, Globals.env, Env.lookup, List.lookup] at hlb hly
+        grind
+
+-- The branch not taken is never evaluated, which is the whole of what a conditional does that a
+-- two-argument function could not: the `else` below has no value at all, and the call still has one.
+#guard !({ pick with body := [lgtm| if b then { x } else { missing() }] } : FuncDecl).check {} []
+
+example : FuncDecl.Apply { pick with body := [lgtm| if b then { x } else { missing() }] } {} []
+    [.bool true, .int 1, .int 2] (.int 1) :=
+  .EApply _ (.cons "b" (.bool true) (.cons "x" (.int 1) (.cons "y" (.int 2) .nil)))
+    (.EIteTrue _ _ _ (.EVarRef "b" rfl) (.EVarRef "x" rfl))
+
+/-- `xs` reversed when `b`, and as it came otherwise.  The branches are `list`s rather than `int`s,
+which is what the form being polymorphic comes to: a conditional produces whatever they produce. -/
+lgtm private def maybeReverse as "maybe-reverse" (b : bool) (xs : list int) : list int :=
+  if b then { reverse xs } else { xs }
+
+#guard maybeReverse.check {} []
+
+example : FuncDecl.Apply maybeReverse {} [] [.bool true, .list [.int 1, .int 2]]
+    (.list [.int 2, .int 1]) :=
+  .EApply _ (.cons "b" (.bool true) (.cons "xs" (hasType_intList (is := [1, 2])) .nil))
+    (.EIteTrue _ _ _ (.EVarRef "b" rfl)
+      (.EListReverse (vs := [.int 1, .int 2]) _ (.EVarRef "xs" rfl)))
+
+example : FuncDecl.Apply maybeReverse {} [] [.bool false, .list [.int 1, .int 2]]
+    (.list [.int 1, .int 2]) :=
+  .EApply _ (.cons "b" (.bool false) (.cons "xs" (hasType_intList (is := [1, 2])) .nil))
+    (.EIteFalse _ _ _ (.EVarRef "b" rfl) (.EVarRef "xs" rfl))
+
+example (v : Value) (b : Bool) (vs : List Value)
+    (h : FuncDecl.Apply maybeReverse {} [] [.bool b, .list vs] v) : v.HasType {} (.list .int) :=
+  h.hasType Globals.wellTyped_nil (by simp [maybeReverse, List.lookup])
+
+/-- `x` when the condition is spelled out, which is `pick` with its own condition: a declaration of no
+`bool` parameter that still runs a conditional. -/
+lgtm private def pickFirst as "pick-first" (x : int) (y : int) : int :=
+  if true then { x } else { y }
+
+#guard pickFirst.check {} []
+
+example : FuncDecl.Apply pickFirst {} [] [.int 1, .int 2] (.int 1) :=
+  .EApply _ (.cons "x" (.int 1) (.cons "y" (.int 2) .nil))
+    (.EIteTrue _ _ _ (.EBoolLit true) (.EVarRef "x" rfl))
+
+-- Which branch runs is now settled by the body rather than by the caller, so this holds for every
+-- pair of arguments and mentions only the one that comes back: `EIteFalse` would need the literal to
+-- have evaluated to `false`, and `EBoolLit` gives only `true`.
+private theorem pickFirst.eq_fst {x y : Int} {res : Value}
+    (h : FuncDecl.Apply pickFirst {} [] [.int x, .int y] res) : res = .int x := by
+  obtain ⟨-, -, hbody⟩ := h
+  cases hbody with
+  | EIteTrue _ _ _ _ hthn =>
+    cases hthn with
+    | EVarRef _ hlx =>
+      simp [pickFirst, FuncDecl.callEnv, Env.extend, Globals.env, Env.lookup] at hlx
+      grind
+  | EIteFalse _ _ _ hc _ => cases hc
+
+example (v : Value) (x y : Int) (h : FuncDecl.Apply pickFirst {} [] [.int x, .int y] v) :
+    v.HasType {} .int :=
+  h.hasType Globals.wellTyped_nil (by simp [pickFirst, List.lookup])
+
+/-- The literal on its own, which is the shortest declaration that returns a `bool`. -/
+lgtm private def yes : bool := true
+
+#guard yes.check {} []
+
+example : FuncDecl.Apply yes {} [] [] (.bool true) := .EApply _ .nil (.EBoolLit true)
+
+-- Soundness covers the new form: the declared result type comes back from `yes` checking, which is
+-- `Value.HasType.bool` reached through the catch-all case of `Eval.hasType` the other literals use.
+example (v : Value) (h : FuncDecl.Apply yes {} [] [] v) : v.HasType {} .bool :=
+  h.hasType Globals.wellTyped_nil (by simp [yes])
 
 /-! ## Globals
 

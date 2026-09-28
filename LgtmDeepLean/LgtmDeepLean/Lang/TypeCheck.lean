@@ -320,6 +320,12 @@ public def Expression.infer (td : TypeDecls) (ctx : Context) : Expression → Op
     match f.infer td ctx with
     | some (.fn ps r) => if Expression.inferList td ctx args == some ps then some r else none
     | _ => none
+  | .boolLit _ => some .bool
+  | .ite c thn els => do
+    guard (c.infer td ctx == some .bool)
+    let t ← thn.infer td ctx
+    guard (els.infer td ctx == some t)
+    some t
   | .let_ x e body => do
     let t ← e.infer td ctx
     body.infer td ((x, t) :: ctx)
@@ -440,6 +446,11 @@ decomposes into premises about `e`'s subterms automatically. -/
     (Expression.varRef x).infer td ctx = ctx.lookup x := by
   simp [Expression.infer]
 
+@[simp, grind =] public theorem Expression.infer_boolLit {td : TypeDecls} {ctx : Context}
+    {b : Bool} :
+    (Expression.boolLit b).infer td ctx = some .bool := by
+  simp [Expression.infer]
+
 @[simp, grind =] public theorem Expression.infer_intLit {td : TypeDecls} {ctx : Context} {i : Int} :
     (Expression.intLit i).infer td ctx = some .int := by
   simp [Expression.infer]
@@ -515,6 +526,21 @@ passing too few arguments is ill typed rather than partially applied. -/
       ∃ ps, f.infer td ctx = some (.fn ps t) ∧ Expression.inferList td ctx args = some ps := by
   simp only [Expression.infer]
   split <;> grind
+
+/-- An `ite` is typeable exactly when its condition is a `bool` and its two branches have one type —
+and then that is its type.
+
+The type is read off the branches rather than off the condition, which is what makes the form
+polymorphic: a conditional produces whatever its branches produce, so `list`s, functions and structs
+are chosen between exactly as `int`s are.  Requiring the two to agree is what leaves the result one
+type however the condition comes out, the same thing `Ty.common` asks of an `indMatch`'s alternatives
+— stated as one comparison here because there are exactly two of them and the first is the one the
+type is taken from. -/
+@[simp, grind =] public theorem Expression.infer_ite_eq_some {td : TypeDecls} {ctx : Context}
+    {c thn els : Expression} {t : Ty} :
+    (Expression.ite c thn els).infer td ctx = some t ↔
+      c.infer td ctx = some .bool ∧ thn.infer td ctx = some t ∧ els.infer td ctx = some t := by
+  simp [Expression.infer, Option.bind_eq_some_iff, guard]
 
 /-- A `let_` is typeable exactly when the expression it binds is and its body is under that name at
 that type, and then it has the body's type.
@@ -1158,7 +1184,7 @@ private def types : TypeDecls :=
 private def ctx : Context :=
   [("xs", .list .int), ("n", .int), ("s", .string), ("f", .fn [.int, .string] .int),
     ("p", .struct "Point"), ("b", .struct "Box"), ("c", .ind "Color"), ("sh", .ind "Shape"),
-    ("t", .ind "Tree")]
+    ("t", .ind "Tree"), ("flag", .bool)]
 
 -- Inference determines the type of every form.
 #guard (Expression.intLit 3).infer types ctx == some .int
@@ -1307,6 +1333,97 @@ private def ctx : Context :=
 #guard (Expression.lam [("y", .int)]
   (.let_ "x" (.varRef "y") (.plus (.varRef "x") (.varRef "y")))).infer types ctx
   == some (.fn [.int] .int)
+
+/-! ### Booleans and conditionals
+
+A `bool` is a type like any other — it nests under `list`, appears in a function type, and is distinct
+from everything else.  Two forms mention it: `boolLit`, which is where one comes from, and `ite`,
+which is what one is for. -/
+
+#guard Ty.bool == Ty.bool
+#guard Ty.bool != Ty.int
+#guard (Expression.varRef "flag").infer types ctx == some .bool
+#guard (Expression.lcons (.varRef "flag") (.lnil .bool)).infer types ctx == some (.list .bool)
+#guard (Expression.lcons (.varRef "flag") (.lnil .int)).infer types ctx == none
+
+-- A literal determines its own type, as `intLit` and `stringLit` do, and both of them are the same
+-- type: which `Bool` it carries is not something `Ty.bool` has heard about.
+#guard (Expression.boolLit true).infer types ctx == some .bool
+#guard (Expression.boolLit false).infer types ctx == some .bool
+#guard (Expression.boolLit true).infer {} [] == some .bool
+#guard (Expression.boolLit true).check types ctx .bool
+#guard !(Expression.boolLit true).check types ctx .int
+#guard !(Expression.boolLit false).check types ctx (.list .bool)
+
+-- So a literal goes wherever a `bool` goes: into a list of them, into a conditional's branches, and
+-- into a call expecting one.
+#guard (Expression.lcons (.boolLit true) (.lnil .bool)).infer types ctx == some (.list .bool)
+#guard (Expression.lcons (.boolLit true) (.lcons (.varRef "flag") (.lnil .bool))).infer types ctx
+  == some (.list .bool)
+#guard (Expression.lcons (.boolLit true) (.lnil .int)).infer types ctx == none
+#guard (Expression.app (.lam [("q", .bool)] (.varRef "q")) [.boolLit true]).infer types ctx
+  == some .bool
+#guard (Expression.app (.lam [("q", .int)] (.varRef "q")) [.boolLit true]).infer types ctx == none
+#guard (Expression.plus (.boolLit true) (.intLit 1)).infer types ctx == none
+
+-- A conditional takes its type from its branches, whatever type that is.
+#guard (Expression.ite (.varRef "flag") (.intLit 1) (.intLit 2)).infer types ctx == some .int
+#guard (Expression.ite (.varRef "flag") (.stringLit "a") (.varRef "s")).infer types ctx
+  == some .string
+#guard (Expression.ite (.varRef "flag") (.varRef "xs") (.lnil .int)).infer types ctx
+  == some (.list .int)
+#guard (Expression.ite (.varRef "flag") (.varRef "p") (.varRef "p")).infer types ctx
+  == some (.struct "Point")
+#guard (Expression.ite (.varRef "flag") (.varRef "c") (.indNew "Color" "Red" [])).infer types ctx
+  == some (.ind "Color")
+#guard (Expression.ite (.varRef "flag") (.varRef "f") (.varRef "f")).infer types ctx
+  == some (.fn [.int, .string] .int)
+#guard (Expression.ite (.varRef "flag") (.varRef "flag") (.varRef "flag")).infer types ctx
+  == some .bool
+
+-- The two branches have to agree, since the conditional has one type however the condition comes out.
+#guard (Expression.ite (.varRef "flag") (.intLit 1) (.stringLit "a")).infer types ctx == none
+#guard (Expression.ite (.varRef "flag") (.varRef "p") (.varRef "b")).infer types ctx == none
+#guard (Expression.ite (.varRef "flag") (.lnil .int) (.lnil .string)).infer types ctx == none
+#guard (Expression.ite (.varRef "flag") (.varRef "flag") (.intLit 1)).infer types ctx == none
+
+-- A literal is what lets a conditional be written without a `bool` in scope, so this is the first
+-- form the checker can decide on its own.  Which literal it is makes no difference: a `bool` is a
+-- `bool`, and both branches are checked either way.
+#guard (Expression.ite (.boolLit true) (.intLit 1) (.intLit 2)).infer types ctx == some .int
+#guard (Expression.ite (.boolLit false) (.intLit 1) (.intLit 2)).infer types ctx == some .int
+#guard (Expression.ite (.boolLit true) (.intLit 1) (.stringLit "a")).infer types ctx == none
+#guard (Expression.ite (.boolLit true) (.intLit 1) (.varRef "nope")).infer types ctx == none
+#guard (Expression.ite (.boolLit true) (.boolLit false) (.varRef "flag")).infer types ctx
+  == some .bool
+#guard (Expression.ite (.boolLit true) (.intLit 1) (.intLit 2)).infer {} [] == some .int
+
+-- And the condition has to be a `bool`: there is no truthiness, so nothing else will do.
+#guard (Expression.ite (.intLit 1) (.intLit 1) (.intLit 2)).infer types ctx == none
+#guard (Expression.ite (.varRef "n") (.intLit 1) (.intLit 2)).infer types ctx == none
+#guard (Expression.ite (.varRef "s") (.intLit 1) (.intLit 2)).infer types ctx == none
+#guard (Expression.ite (.varRef "xs") (.intLit 1) (.intLit 2)).infer types ctx == none
+#guard (Expression.ite (.varRef "c") (.intLit 1) (.intLit 2)).infer types ctx == none
+
+-- An ill-typed part anywhere makes the whole conditional ill typed, branch not taken included.
+#guard (Expression.ite (.varRef "nope") (.intLit 1) (.intLit 2)).infer types ctx == none
+#guard (Expression.ite (.varRef "flag") (.varRef "nope") (.intLit 2)).infer types ctx == none
+#guard (Expression.ite (.varRef "flag") (.intLit 1) (.varRef "nope")).infer types ctx == none
+
+-- A conditional is an expression like any other, in the condition and in the branches alike.
+#guard (Expression.plus (.ite (.varRef "flag") (.intLit 1) (.intLit 2)) (.intLit 1)).infer types ctx
+  == some .int
+#guard (Expression.ite (.ite (.varRef "flag") (.varRef "flag") (.varRef "flag"))
+  (.intLit 1) (.intLit 2)).infer types ctx == some .int
+#guard (Expression.ite (.varRef "flag")
+  (.ite (.varRef "flag") (.intLit 1) (.intLit 2)) (.intLit 3)).infer types ctx == some .int
+#guard (Expression.lam [("q", .bool)] (.ite (.varRef "q") (.intLit 1) (.intLit 2))).infer types ctx
+  == some (.fn [.bool] .int)
+#guard (Expression.let_ "q" (.varRef "flag")
+  (.ite (.varRef "q") (.intLit 1) (.intLit 2))).infer types ctx == some .int
+#guard (Expression.indMatch (.varRef "c")
+  [("Red", [], .ite (.varRef "flag") (.intLit 0) (.intLit 1)), ("Green", [], .intLit 1),
+    ("Blue", [], .intLit 2)]).infer types ctx == some .int
 
 -- Checking agrees with inference.
 #guard (Expression.lnil .int).check types ctx (.list .int)
