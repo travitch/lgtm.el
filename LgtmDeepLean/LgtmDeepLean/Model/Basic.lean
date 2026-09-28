@@ -11,10 +11,14 @@ lgtm struct FileRef {
   path : string
 }
 
+lgtm inductive FileVersion {
+  Base, Current
+}
 
-/- Inductive: FileVersion -/
-
-/- Inductive: ThreadLocation -/
+lgtm inductive ThreadLocation {
+  TopLevel,
+  LineNumber(int)
+}
 
 lgtm struct GitRevision {
   hash : string
@@ -26,4 +30,11 @@ lgtm struct RepositoryRef {
   baseRevision: struct GitRevision
 }
 
-/- Inductive: ModificationType -/
+lgtm inductive ModificationType {
+  Modified,
+  Added,
+  Deleted,
+  Renamed,
+  Copied,
+  TypeChange
+}
