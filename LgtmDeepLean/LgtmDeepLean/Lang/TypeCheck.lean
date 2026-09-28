@@ -190,6 +190,28 @@ public theorem List.mem_of_lookup {α β : Type} [BEq α] [LawfulBEq α] {l : Li
         exact List.mem_cons_self ..
       · exact List.mem_cons_of_mem _ (ih h)
 
+/-- With no two entries sharing a key, every entry of an association list is the one its own key
+resolves to.
+
+The converse of `List.mem_of_lookup`, and the direction that needs the keys to be distinct: a
+repeated key is resolved to its leftmost entry, so nothing further along is reachable at all.
+`List.lookup_keyed_self` below is the same fact for a list keyed by a function, which is how a table
+of declarations is built; this is for one that is already a list of pairs, which is what an
+inductive declaration's constructors are. -/
+public theorem List.lookup_of_mem {α β : Type} [BEq α] [LawfulBEq α] {l : List (α × β)}
+    (hu : (l.map Prod.fst).Nodup) {k : α} {b : β} (h : (k, b) ∈ l) : l.lookup k = some b := by
+  induction l with
+  | nil => simp at h
+  | cons p l ih =>
+      obtain ⟨k', b'⟩ := p
+      rw [List.map_cons, List.nodup_cons] at hu
+      rcases List.mem_cons.mp h with heq | hmem
+      · obtain ⟨rfl, rfl⟩ : k = k' ∧ b = b' := by grind
+        simp
+      · have hne : ¬ (k == k') = true := fun hk =>
+          hu.1 (List.mem_map.mpr ⟨(k, b), hmem, by grind⟩)
+        simpa [List.lookup_cons, hne] using ih hu.2 hmem
+
 /-- Keying a list by a function that is injective on it resolves every element to itself.
 
 `Globals.ofDecls` and `Structs.ofDecls` both build a table this way — from the declarations a program
@@ -224,10 +246,12 @@ permutation, which is one comparison the way the lockstep walk this replaces was
 no alternative and an alternative for a constructor the declaration does not have each leave a name
 on one side with nothing on the other to pair it with, and an alternative repeated leaves two.
 
-Comparing the names as a multiset rather than as a set is what keeps a declaration that repeats a
-constructor name honest: `List.lookup` reaches only the leftmost entry of such a name, so every
-alternative for it beyond the first is dead, and asking for a permutation asks for exactly as many
-alternatives as there are entries.
+The names are compared as a multiset rather than as a set because this is a condition on two lists
+and nothing else: `InductiveDecl.CtorNamesUnique` is what says a declaration names each of its
+constructors once, and the checker does not assume it.  For a declaration that has it the two come
+to the same thing — `Expression.alts_nodup_of_altsExhaustive` is that step — and for one that does
+not, asking for a permutation asks for exactly as many alternatives as there are entries, which is
+the honest count even though `List.lookup` leaves all but the leftmost of them dead.
 
 Only the names are compared here.  What an alternative does with what its constructor carries is
 `Expression.inferAlts`' business, and that is where the constructor is resolved by name — which is
@@ -260,6 +284,19 @@ public theorem Expression.lookup_isSome_of_altsExhaustive {cs : List (CtorName �
     (alts.lookup c).isSome :=
   List.lookup_isSome_iff_mem_keys.mpr
     ((Expression.altsExhaustive_eq_true.mp h).mem_iff.mpr (List.lookup_isSome_iff_mem_keys.mp hc))
+
+/-- Over a declaration that names each of its constructors once, an exhaustive match names each of
+its alternatives' constructors once too.
+
+Which is what says no alternative of such a match is dead: `Eval` finds an alternative by `lookup`,
+so a repeated name would leave every alternative for it beyond the leftmost unreachable, and this
+rules that out from the one condition `InductiveDecl.CtorNamesUnique` puts on the declaration.  The
+permutation is what carries it across: two lists with the same names as many of each are `Nodup`
+together. -/
+public theorem Expression.alts_nodup_of_altsExhaustive {cs : List (CtorName × List Ty)}
+    {alts : List (CtorName × List String × Expression)} (hu : (cs.map Prod.fst).Nodup)
+    (h : Expression.altsExhaustive cs alts = true) : (alts.map Prod.fst).Nodup :=
+  (Expression.altsExhaustive_eq_true.mp h).nodup_iff.mpr hu
 
 mutual
 
@@ -680,8 +717,8 @@ alternative by the name the value it took apart carries, and `Value.HasType` fin
 types by looking them up in the declaration.  Both lookups take the leftmost entry of a repeated
 name, and the walk resolves each alternative's constructor with the same `lookup` this hypothesis
 does, so the types the alternative was checked against are the ones the value is held to — which is
-what makes this provable for a declaration repeating a constructor name as well as for one that does
-not.
+what makes this provable without `InductiveDecl.CtorNamesUnique`, for a declaration repeating a
+constructor name as well as for one that does not.
 
 Exhaustiveness is not needed for it.  `Eval` supplies the alternative rather than looking for one, so
 what this has to say is what the checker did with an alternative that is *there*; that there is one
@@ -896,16 +933,21 @@ added here too and nowhere else. -/
 @[expose] public def Program.lookupInductive (p : Program) (name : String) : Option InductiveDecl :=
   p.inductives.lookup name
 
-/-- Check a whole program: every declaration against the signatures of all of them, its own
-included, and against the types it declares. -/
-public def Program.check (p : Program) : Bool := Globals.check p.typeDecls p.globals
+/-! ### Uniqueness
 
-/-- Every declaration in `p` checks, under `p`. -/
-@[expose] public def Program.WellTyped (p : Program) : Prop :=
-  Globals.WellTyped p.typeDecls p.globals
+Five tables a program is made of and one condition apiece: no two entries of any of them share the
+name it is keyed by.  `List.lookup` takes the leftmost entry of a repeated name, so each of these
+rules out an entry the order of writing has made dead.
 
-public theorem Program.wellTyped_of_check {p : Program} (h : p.check = true) : p.WellTyped :=
-  Globals.wellTyped_of_check h
+Three of them are across declarations — `NamesUnique`, `StructNamesUnique`, `InductiveNamesUnique`
+— and two are inside one: `StructDecl.FieldNamesUnique` and `InductiveDecl.CtorNamesUnique`.  Only
+the latter two are part of `Program.check`, and the split is what the surface syntax can do about
+each.  A repeated field or constructor is written in the one command that declares the type, so
+`lgtm struct` and `lgtm inductive` reject it outright and `Program.check` is the same rejection for
+a `Program` built by hand.  A repeated *declaration* name is two commands that cannot see each
+other, and what it costs is a program meaning less than it looks like it does rather than a
+declaration that is malformed, so those three stay conditions a proof states where it needs the
+lookup to resolve. -/
 
 /-- No two declarations share a name.
 
@@ -963,6 +1005,119 @@ resolves to. -/
 public theorem Program.lookupInductive_self {p : Program} (hu : p.InductiveNamesUnique)
     {d : InductiveDecl} (hd : d ∈ p.inductiveDecls) : p.lookupInductive d.name = some d :=
   Inductives.lookup_ofDecls_self hu hd
+
+/-- `sd` declares no field name twice.
+
+The conditions above are about one table of declarations each; this one is inside a single
+declaration, because `StructDecl.fields` is a table too — an association list `structGet` and
+`structUpdate` read with `List.lookup`, which takes the leftmost entry of a repeated name.  A field
+repeating a name already used is therefore one nothing can read and nothing can rebind, while
+`structNew` compares its keys positionally and so still makes every value of the type carry it.
+
+It is a condition on the declaration rather than on the program because that is the whole of what
+it says: unlike a type name, a field name is scoped to the structure that declares it, so two
+structs may each have an `x`. -/
+@[expose] public def StructDecl.FieldNamesUnique (sd : StructDecl) : Prop :=
+  (sd.fields.map Prod.fst).Nodup
+
+public instance (sd : StructDecl) : Decidable sd.FieldNamesUnique :=
+  inferInstanceAs (Decidable (sd.fields.map Prod.fst).Nodup)
+
+/-- With no repeated field names, every field of the declaration is the one its own name resolves
+to, at the type written for it.
+
+This is to a declaration's fields what `Program.lookupStruct_self` is to a program's structure
+declarations: it turns "`f` is one of `sd`'s fields, at type `t`" into the `lookup` every rule about
+a field is stated with. -/
+public theorem StructDecl.lookup_field_self {sd : StructDecl} (hu : sd.FieldNamesUnique)
+    {f : FieldName} {t : Ty} (hf : (f, t) ∈ sd.fields) : sd.fields.lookup f = some t :=
+  List.lookup_of_mem hu hf
+
+/-- `d` declares no constructor name twice.
+
+`StructDecl.FieldNamesUnique` for the other kind of type declaration, and it is inside the
+declaration for the same reason: `InductiveDecl.constructors` is an association list `indNew` and
+`inferAlts` both read with `List.lookup`, which takes the leftmost entry of a repeated name.  A
+constructor repeating a name already used is therefore one nothing can build a value with and no
+alternative can be checked against, while `Expression.altsExhaustive` still counts it and so makes
+every match on the type write an alternative that can never run.
+
+A constructor name is scoped to its own type in the way a field name is — `indNew` names the type
+as well — so two types may each have a `Red`, and one declaration never constrains another. -/
+@[expose] public def InductiveDecl.CtorNamesUnique (d : InductiveDecl) : Prop :=
+  (d.constructors.map Prod.fst).Nodup
+
+public instance (d : InductiveDecl) : Decidable d.CtorNamesUnique :=
+  inferInstanceAs (Decidable (d.constructors.map Prod.fst).Nodup)
+
+/-- With no repeated constructor names, every constructor of the declaration is the one its own name
+resolves to, at the data types written for it.
+
+This is to a declaration's constructors what `Program.lookupInductive_self` is to a program's
+inductive declarations: it turns "`c` is one of `d`'s constructors, carrying `ts`" into the `lookup`
+every rule about a constructor is stated with. -/
+public theorem InductiveDecl.lookup_ctor_self {d : InductiveDecl} (hu : d.CtorNamesUnique)
+    {c : CtorName} {ts : List Ty} (hc : (c, ts) ∈ d.constructors) :
+    d.constructors.lookup c = some ts :=
+  List.lookup_of_mem hu hc
+
+/-- No structure declaration in `p` declares the same field name twice.
+
+`StructDecl.FieldNamesUnique` for every declaration at once, which is the form a condition on a
+`Program` is in.  Instantiating it at a declaration — `hu sd hd` — is what hands back that
+declaration's own condition, and `StructDecl.lookup_field_self` is what that buys. -/
+@[expose] public def Program.FieldNamesUnique (p : Program) : Prop :=
+  ∀ sd ∈ p.structDecls, sd.FieldNamesUnique
+
+public instance (p : Program) : Decidable p.FieldNamesUnique :=
+  inferInstanceAs (Decidable (∀ sd ∈ p.structDecls, sd.FieldNamesUnique))
+
+/-- No inductive declaration in `p` declares the same constructor name twice.
+
+`InductiveDecl.CtorNamesUnique` for every declaration at once, the way `Program.FieldNamesUnique`
+is its condition for every structure declaration. -/
+@[expose] public def Program.CtorNamesUnique (p : Program) : Prop :=
+  ∀ d ∈ p.inductiveDecls, d.CtorNamesUnique
+
+public instance (p : Program) : Decidable p.CtorNamesUnique :=
+  inferInstanceAs (Decidable (∀ d ∈ p.inductiveDecls, d.CtorNamesUnique))
+
+/-! ### Checking -/
+
+/-- Check a whole program: the types it declares are well formed, and every declaration checks
+against the signatures of all of them, its own included, and against those types.
+
+Well formed is `Program.FieldNamesUnique` and `Program.CtorNamesUnique`: a field or a constructor
+declared twice is one the rest of the language cannot reach, so a declaration carrying one is
+rejected here rather than left to mean less than it says.  Neither is a condition on any expression,
+which is why they are checked once over the declarations instead of anywhere in `Expression.infer`.
+
+The conditions across declarations are not part of this; see the uniqueness section above. -/
+public def Program.check (p : Program) : Bool :=
+  decide p.FieldNamesUnique && decide p.CtorNamesUnique && Globals.check p.typeDecls p.globals
+
+/-- Every declaration in `p` checks, under `p`. -/
+@[expose] public def Program.WellTyped (p : Program) : Prop :=
+  Globals.WellTyped p.typeDecls p.globals
+
+/-- `Program.check` is the stronger of the two, as `Globals.check` is: it also has the type
+declarations to be well formed, which `Program.WellTyped` says nothing about. -/
+public theorem Program.wellTyped_of_check {p : Program} (h : p.check = true) : p.WellTyped := by
+  simp only [Program.check, Bool.and_eq_true, decide_eq_true_eq] at h
+  exact Globals.wellTyped_of_check h.2
+
+/-- The other half of what `Program.check` decided: no structure declaration repeats a field name.
+`Program.check`'s body is not visible outside this module, so this is how a proof gets at it. -/
+public theorem Program.fieldNamesUnique_of_check {p : Program} (h : p.check = true) :
+    p.FieldNamesUnique := by
+  simp only [Program.check, Bool.and_eq_true, decide_eq_true_eq] at h
+  exact h.1.1
+
+/-- And no inductive declaration repeats a constructor name. -/
+public theorem Program.ctorNamesUnique_of_check {p : Program} (h : p.check = true) :
+    p.CtorNamesUnique := by
+  simp only [Program.check, Bool.and_eq_true, decide_eq_true_eq] at h
+  exact h.1.2
 
 /-- Everything a well-typed program declares is well typed under it. -/
 public theorem Program.wellTyped_decl {p : Program} (hp : p.WellTyped) (hu : p.NamesUnique)
@@ -1341,6 +1496,47 @@ private def shift : FuncDecl where
 #guard shift.check types []
 #guard !shift.check {} []
 
+/-! ### Distinct field names
+
+What `StructDecl.FieldNamesUnique` asks of a declaration, and what a declaration failing it looks
+like.  `Program.check` is where it is enforced, so `Expression.infer` is still willing to work over
+`twoXs` below — which is what the guards under it are about. -/
+
+example : point.FieldNamesUnique := by decide
+example : box.FieldNamesUnique := by decide
+
+-- Which is what makes every field reachable: being one of the declaration's fields is enough to be
+-- the one its own name resolves to, at the type written for it.
+example : box.fields.lookup "items" = some (.list .int) :=
+  box.lookup_field_self (by simp [StructDecl.FieldNamesUnique, box]) (by simp [box])
+
+/-- Two fields under one name, which is what the condition rules out. -/
+private def twoXs : StructDecl where
+  name := "TwoXs"
+  fields := [("x", .int), ("x", .string)]
+
+example : ¬ twoXs.FieldNamesUnique := by decide
+
+private def twoXTypes : TypeDecls := { ss := Structs.ofDecls [twoXs] }
+
+-- `structNew` compares its own keys against the declaration's positionally, so a value of `TwoXs`
+-- can be built, and it has to initialize the name twice, at both declared types in order.
+#guard (Expression.structNew "TwoXs" [("x", .intLit 1)]).infer twoXTypes [] == none
+#guard (Expression.structNew "TwoXs" [("x", .intLit 1), ("x", .stringLit "a")]).infer twoXTypes []
+  == some (.struct "TwoXs")
+#guard (Expression.structNew "TwoXs" [("x", .intLit 1), ("x", .intLit 2)]).infer twoXTypes []
+  == none
+
+-- What is dead is the second field itself: `structGet` and `structUpdate` resolve the name with
+-- `List.lookup`, which stops at the first, so the `string` half of every `TwoXs` is written when
+-- one is built and can never be read back or rebound.
+#guard (Expression.structGet (.varRef "t") "x").infer twoXTypes [("t", .struct "TwoXs")]
+  == some .int
+#guard (Expression.structUpdate (.varRef "t") [("x", .stringLit "a")]).infer twoXTypes
+  [("t", .struct "TwoXs")] == none
+#guard (Expression.structUpdate (.varRef "t") [("x", .intLit 1)]).infer twoXTypes
+  [("t", .struct "TwoXs")] == some (.struct "TwoXs")
+
 /-! ### Inductive types
 
 `color`, `shape` and `tree` are the declarations `types` holds, and `ctx` gives `c`, `sh` and `t` one
@@ -1540,5 +1736,51 @@ private def square : FuncDecl where
 #guard square.check types []
 #guard !square.check {} []
 #guard !({ square with resultType := .ind "Color" } : FuncDecl).check types []
+
+/-! ### Distinct constructor names
+
+What `InductiveDecl.CtorNamesUnique` asks of a declaration, and what a declaration failing it looks
+like.  It is a condition on the declaration rather than something the checker enforces, exactly as
+the uniqueness conditions on a `Program` are: expressions over `twoReds` below check as they would
+over any other type, and what the repeated name costs is written out under it. -/
+
+example : color.CtorNamesUnique := by decide
+example : shape.CtorNamesUnique := by decide
+example : tree.CtorNamesUnique := by decide
+
+-- Which is what makes every constructor reachable: being one of the declaration's constructors is
+-- enough to be the one its own name resolves to, at the data types written for it.
+example : shape.constructors.lookup "Rect" = some [.int, .int] :=
+  shape.lookup_ctor_self (by simp [InductiveDecl.CtorNamesUnique, shape]) (by simp [shape])
+
+/-- Two constructors under one name, which is what the condition rules out. -/
+private def twoReds : InductiveDecl where
+  name := "TwoReds"
+  constructors := [("Red", []), ("Red", [.int])]
+
+example : ¬ twoReds.CtorNamesUnique := by decide
+
+private def twoRedTypes : TypeDecls := { is := Inductives.ofDecls [twoReds] }
+
+-- The second `Red` is unreachable: every rule about a constructor resolves it with `List.lookup`,
+-- which stops at the first, so the data types the second declares are types nothing can build a
+-- value at.
+#guard (Expression.indNew "TwoReds" "Red" []).infer twoRedTypes [] == some (.ind "TwoReds")
+#guard (Expression.indNew "TwoReds" "Red" [.intLit 1]).infer twoRedTypes [] == none
+
+-- And exhaustiveness counts it all the same, so a match has to write a second alternative for it —
+-- one checked against the first `Red`'s data types, and one `Eval` can never reach.
+#guard (Expression.indMatch (.indNew "TwoReds" "Red" [])
+  [("Red", [], .intLit 0)]).infer twoRedTypes [] == none
+#guard (Expression.indMatch (.indNew "TwoReds" "Red" [])
+  [("Red", [], .intLit 0), ("Red", [], .intLit 1)]).infer twoRedTypes [] == some .int
+#guard (Expression.indMatch (.indNew "TwoReds" "Red" [])
+  [("Red", [], .intLit 0), ("Red", ["n"], .varRef "n")]).infer twoRedTypes [] == none
+
+-- Over a declaration that does satisfy the condition, an exhaustive match names each constructor
+-- once, so there is no alternative `Eval` cannot reach.
+example {alts : List (CtorName × List String × Expression)}
+    (h : Expression.altsExhaustive shape.constructors alts = true) : (alts.map Prod.fst).Nodup :=
+  Expression.alts_nodup_of_altsExhaustive (by decide) h
 
 end Tests

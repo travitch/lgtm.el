@@ -31,7 +31,12 @@ order they were written, each with its type.
 A `Ty.struct` only carries the name, so this is the only place a field's type is recorded and every
 rule about a struct goes through the declaration the name resolves to.  What resolving a name means
 is `Structs.lookup`'s business, and `Program.StructNamesUnique` is what rules out the case where
-the order of declarations decides it. -/
+the order of declarations decides it.
+
+No two fields may share a name, which is `StructDecl.FieldNamesUnique`: the fields are an
+association list `structGet` and `structUpdate` read with `List.lookup`, so a second field of a
+name already used is one nothing can read.  `Program.check` turns down a declaration that has one,
+and a field name is scoped to its own structure, so two of them may each have an `x`. -/
 public structure StructDecl where
   name : String
   fields : List (FieldName × Ty)
@@ -50,11 +55,16 @@ division of labour `StructDecl` and `Ty.struct` are in.  What resolving a name m
 `Inductives.lookup`'s business, and `Program.InductiveNamesUnique` is what rules out the case where
 the order of declarations decides it.
 
-The order the constructors are written in is the declaration's own: an `Expression.indMatch` names the
-constructor each of its alternatives is for, so it may give them in whatever order suits it and this
-order decides nothing but which entry a repeated constructor name resolves to.  What is positional is
-a constructor's data, which has no names of its own; the names belong to the match alternative that
-takes it apart.
+No two constructors may share a name, which is `InductiveDecl.CtorNamesUnique`: the list is an
+association list read with `List.lookup`, so a second constructor of a name already used declares
+data types nothing could build a value at.  `Program.check` turns down a declaration that has one,
+the way it does a structure declaration repeating a field.  A constructor name is scoped to its own
+type, though — `indNew` names the type as well — so two declarations may each have a `Red`.
+
+The order the constructors are written in is then the declaration's own and decides nothing at all:
+an `Expression.indMatch` names the constructor each of its alternatives is for, so it may give them
+in whatever order suits it.  What is positional is a constructor's data, which has no names of its
+own; the names belong to the match alternative that takes it apart.
 
 Recursion needs no special treatment.  A constructor's data types are `Ty`s like any other, and a
 type name is resolved where it is mentioned rather than where it was declared, so `ind "Tree"` may
@@ -110,6 +120,8 @@ public instance : LawfulBEq Ty where
   rfl := (Ty.beq_iff_eq _ _).mpr rfl
 
 public instance : DecidableEq Ty := fun a b => decidable_of_iff _ (Ty.beq_iff_eq a b)
+
+-- TODO: Add ite
 
 public inductive Expression where
 /-- A function, annotated with the name and type of each of its parameters -/
@@ -186,14 +198,15 @@ file contains.  What it means for a name to resolve is then `Program.lookup`'s b
 `structDecls` is where every structure type in the program is declared: a `Ty.struct` names one of
 these and nothing else.  Declaring them at the top level rather than inside an expression is what
 lets two declarations pass the same struct to each other, and `Program.StructNamesUnique` is the
-counterpart of `Program.NamesUnique` for them.  It defaults to empty so that a program using no
-structs is written exactly as before.
+counterpart of `Program.NamesUnique` for them, with `Program.FieldNamesUnique` the condition inside
+each one.  It defaults to empty so that a program using no structs is written exactly as before.
 
 `inductiveDecls` is the same thing for inductive types, which a `Ty.ind` names the way a `Ty.struct`
-names a structure type, with `Program.InductiveNamesUnique` as its uniqueness condition.  The two
-lists are separate rather than one list of type declarations because the two kinds of type are taken
-apart by different forms, and so are resolved in different tables: `Program.typeDecls` is where they
-are bundled back together as the one thing checking and evaluation take. -/
+names a structure type, with `Program.InductiveNamesUnique` and `Program.CtorNamesUnique` as the
+two conditions answering to those.  The two lists are separate rather than one list of type
+declarations because the two kinds of type are taken apart by different forms, and so are resolved
+in different tables: `Program.typeDecls` is where they are bundled back together as the one thing
+checking and evaluation take. -/
 public structure Program where
   funcDecls : List FuncDecl
   structDecls : List StructDecl := []

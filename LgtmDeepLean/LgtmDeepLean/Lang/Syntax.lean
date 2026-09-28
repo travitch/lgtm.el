@@ -257,11 +257,36 @@ macro_rules
       | some _ => `($[$doc:docComment]? private def $n : FuncDecl := $val)
       | none => `($[$doc:docComment]? def $n : FuncDecl := $val)
 
+/-- Fail at the first of `ns` that repeats a name an earlier one already used, saying so in terms of
+`what` — "field", "constructor".
+
+`StructDecl.fields` and `InductiveDecl.constructors` are both association lists read with
+`List.lookup`, so an entry repeating a name is one nothing can reach: `StructDecl.FieldNamesUnique`
+and `InductiveDecl.CtorNamesUnique` are the conditions saying so, and `Program.check` rejects a
+declaration failing either.  Failing here as well is what keeps the surface syntax from writing one
+at all, and it is the better place to say it: the error lands on the name that repeats rather than
+on the program the declaration ends up in.
+
+`meta` because it runs while a macro expands rather than at run time, and `public` for the reason
+`lgtmVis` is: a `module` hides even the names its own macros expand to. -/
+public meta def throwOnRepeatedName (what : String) (ns : Array Lean.Ident) :
+    Lean.MacroM Unit := do
+  let mut seen : Array String := #[]
+  for n in ns do
+    let s := n.getId.toString
+    if seen.contains s then
+      Lean.Macro.throwErrorAt n s!"duplicate {what} `{s}`: a declaration names each {what} once"
+    seen := seen.push s
+
 /-- `lgtm struct Point { x : int, y : int }` declares `Point : StructDecl`.
 
 The same shape as `lgtm def`: the IR name defaults to the Lean name and `as "point"` overrides it,
 and `lgtm private struct` makes the generated Lean declaration `private`.  The fields are in the
 order they are written, which is the order a `new` has to give them in.
+
+No two fields may share a name, which `StructDecl.FieldNamesUnique` is the condition for: a second
+`x` is a field no `p.x` could read and no `{ p with x = ... }` could rebind, so it is an error here
+rather than a declaration only `Program.check` would turn down.
 
 A doc comment documents the Lean declaration only.  A `StructDecl` has no docstring field to put it
 in, unlike a `FuncDecl`. -/
@@ -271,6 +296,7 @@ syntax (docComment)? "lgtm " (lgtmVis)? &"struct" ident (&"as" str)?
 macro_rules
   | `($[$doc:docComment]? lgtm $[$vis:lgtmVis]? struct $n:ident $[as $ir:str]?
         { $[$fs:ident : $ts:lgtmTy],* }) => do
+      throwOnRepeatedName "field" fs
       let fields ← (fs.zip ts).mapM fun (f, t) =>
         `(($(Lean.quote f.getId.toString), [lgtm_ty| $t]))
       let irName := ir.getD (Lean.quote n.getId.toString)
@@ -293,6 +319,10 @@ the order they are written, which is the order a `match` has to give its alterna
 A constructor's data has types but no names — it is taken apart by position — so a constructor is
 written like a function type's parameter list rather than like a struct's fields.
 
+No two constructors may share a name, which `InductiveDecl.CtorNamesUnique` is the condition for and
+which is an error here for the reason a repeated field is: a second `Red` is one `new C.Red(...)`
+could never build and one a `match` would have to write a second alternative for and never reach.
+
 A doc comment documents the Lean declaration only.  An `InductiveDecl` has no docstring field to put
 it in, as a `StructDecl` has not. -/
 syntax (docComment)? "lgtm " (lgtmVis)? "inductive " ident (&"as" str)?
@@ -305,10 +335,12 @@ macro_rules
         match c with
         | `(lgtmCtor| $cn:ident $[($ts:lgtmTy,*)]?) => do
             let tys ← ((ts.map (·.getElems)).getD #[]).mapM fun t => `([lgtm_ty| $t])
-            `(($(Lean.quote cn.getId.toString), [$tys,*]))
+            return (cn, ← `(($(Lean.quote cn.getId.toString), [$tys,*])))
         | _ => Lean.Macro.throwUnsupported
+      throwOnRepeatedName "constructor" (ctors.map Prod.fst)
+      let cs := ctors.map Prod.snd
       let irName := ir.getD (Lean.quote n.getId.toString)
-      let val ← `({ name := $irName, constructors := [$ctors,*] : InductiveDecl })
+      let val ← `({ name := $irName, constructors := [$cs,*] : InductiveDecl })
       match vis with
       | some _ => `($[$doc:docComment]? private def $n : InductiveDecl := $val)
       | none => `($[$doc:docComment]? def $n : InductiveDecl := $val)
@@ -543,6 +575,17 @@ lgtm private struct Box { label : string, origin : struct Point, step : (int) ->
 example : Box.fields
     = [("label", .string), ("origin", .struct "Point"), ("step", .fn [.int] .int)] := rfl
 
+-- A field name may not be written twice: the second is one no read could reach, so the command
+-- says so where the name is rather than leaving `Program.check` to turn the declaration down.
+/-- error: duplicate field `x`: a declaration names each field once -/
+#guard_msgs in
+lgtm struct TwoXs { x : int, x : string }
+
+-- Two structs may of course each have an `x`: a field name is scoped to the struct that declares
+-- it, so the condition is on one declaration and never across them.
+lgtm private struct OtherX { x : string }
+example : OtherX.fields = [("x", .string)] := rfl
+
 /-- `fun (p : Point) => new Point { x = p.y, y = p.x }` -/
 lgtm def swap (p : struct Point) : struct Point :=
   new Point { x = p.y, y = p.x }
@@ -630,6 +673,17 @@ example : RenamedInd.name = "my-type" := rfl
 
 lgtm private inductive NoCtors {}
 example : NoCtors.constructors = [] := rfl
+
+-- A constructor name may not be written twice, for the reason a field name may not: the second is
+-- one nothing could build and no alternative of a match could be checked against.
+/-- error: duplicate constructor `Red`: a declaration names each constructor once -/
+#guard_msgs in
+lgtm inductive TwoReds { Red, Green, Red(int) }
+
+-- Two types may each have a `Red` all the same: a constructor name is scoped to the type that
+-- declares it, which is why `new` and `Value.ind` both name the type as well.
+lgtm private inductive Hue { Red, Green }
+example : Hue.constructors = [("Red", []), ("Green", [])] := rfl
 
 /-- The perimeter of `s`, which is what a `match` is for: one answer per constructor, computed from
 what that constructor carries. -/

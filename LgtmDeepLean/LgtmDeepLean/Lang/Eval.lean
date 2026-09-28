@@ -936,6 +936,16 @@ example : ¬ ({ pointProgram with structDecls := [Point, Point] } : Program).Str
 example : pointProgram.lookupStruct Point.name = some Point :=
   pointProgram.lookupStruct_self (by decide) (by simp [pointProgram])
 
+-- No declaration of it names a field twice either, and this one `check` is about: the extra
+-- declaration below is one no body mentions, so the three bodies check exactly as before and it is
+-- the repeated field alone that turns the program down.
+example : pointProgram.FieldNamesUnique := by decide
+#guard !({ pointProgram with
+  structDecls := [Point, { name := "Dup", fields := [("x", .int), ("x", .string)] }] }
+  : Program).check
+#guard ({ pointProgram with structDecls := [Point, { name := "Dup", fields := [("x", .int)] }] }
+  : Program).check
+
 /-- `pointProgram` checks, which is a property of the program alone. -/
 private theorem pointProgram.wellTyped : pointProgram.WellTyped := by
   refine Globals.wellTyped_of_forall fun p hp => ?_
@@ -1148,6 +1158,21 @@ example : ¬ ({ shapeProgram with inductiveDecls := [Color, Color] }
     : Program).InductiveNamesUnique := by decide
 example : shapeProgram.lookupInductive Shape.name = some Shape :=
   shapeProgram.lookupInductive_self (by decide) (by simp [shapeProgram])
+
+-- And no declaration of the program names a constructor twice, which is the condition inside a
+-- declaration rather than across them: it is what makes `Shape`'s every constructor reachable, and
+-- what keeps a match on it from having to write an alternative that can never run.
+example : shapeProgram.CtorNamesUnique := by decide
+example : ¬ ({ shapeProgram with
+    inductiveDecls := [{ name := "Shape", constructors := [("Circle", [.int]), ("Circle", [])] }] }
+    : Program).CtorNamesUnique := by decide
+
+-- `check` is where that is enforced, as it is for a repeated field: the extra type below is one no
+-- body mentions, so what turns the program down is the repeated constructor and nothing else.
+#guard !({ shapeProgram with inductiveDecls := [Color, Shape,
+  { name := "Dup", constructors := [("Red", []), ("Red", [.int])] }] } : Program).check
+#guard ({ shapeProgram with inductiveDecls := [Color, Shape,
+  { name := "Dup", constructors := [("Red", []), ("Crimson", [.int])] }] } : Program).check
 
 /-- `shapeProgram` checks, which is a property of the program alone. -/
 private theorem shapeProgram.wellTyped : shapeProgram.WellTyped := by
