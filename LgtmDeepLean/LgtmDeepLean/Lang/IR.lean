@@ -50,10 +50,11 @@ division of labour `StructDecl` and `Ty.struct` are in.  What resolving a name m
 `Inductives.lookup`'s business, and `Program.InductiveNamesUnique` is what rules out the case where
 the order of declarations decides it.
 
-The order the constructors are written in is part of the declaration: a `Expression.indMatch` has to
-give its alternatives in that order, which is what makes exhaustiveness one comparison rather than a
-search.  The data types are positional and have no names of their own; the names belong to the match
-alternative that takes them apart.
+The order the constructors are written in is the declaration's own: an `Expression.indMatch` names the
+constructor each of its alternatives is for, so it may give them in whatever order suits it and this
+order decides nothing but which entry a repeated constructor name resolves to.  What is positional is
+a constructor's data, which has no names of its own; the names belong to the match alternative that
+takes it apart.
 
 Recursion needs no special treatment.  A constructor's data types are `Ty`s like any other, and a
 type name is resolved where it is mentioned rather than where it was declared, so `ind "Tree"` may
@@ -148,10 +149,11 @@ An alternative is the constructor's name, one binding name per data type that co
 and the expression to evaluate when the value was built by it.  The names are the alternative's own —
 a constructor's data is positional — and they are in scope in that alternative's expression only.
 
-The alternatives have to be the declaration's constructors, in the declaration's order, which is what
-makes this exhaustive: there is no default alternative, and no way to leave a constructor out or to
-name one twice.  Every alternative also has to produce the same type, since the expression has one
-type however the value was built.
+The alternatives have to be the declaration's constructors, one apiece, which is what makes this
+exhaustive: there is no default alternative, and no way to leave a constructor out or to name one
+twice.  They may come in any order, the declaration's or another, since each one says which
+constructor it is for.  Every alternative also has to produce the same type, since the expression has
+one type however the value was built.
 
 Example: match c with | Red => 0 | Rgb(r, g, b) => r -/
 | indMatch : Expression → List (CtorName × List String × Expression) → Expression

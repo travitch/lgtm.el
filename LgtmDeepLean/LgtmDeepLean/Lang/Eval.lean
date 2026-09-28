@@ -89,9 +89,10 @@ out. -/
 /-- A match evaluates its scrutinee, takes the alternative for the constructor that built the value,
 binds that alternative's names to the values the constructor carries, and evaluates its expression.
 
-The alternative is found by name, so nothing here depends on the alternatives being the declaration's
-constructors in the declaration's order: a match with no alternative for the value it was handed is
-stuck, which is exactly what the exhaustiveness the type checker insists on rules out.
+The alternative is found by name, so nothing here depends on where the declaration put a constructor
+or on where the match put the alternative for it — which is how `Expression.inferAlts` reads them too,
+resolving each alternative's constructor by name.  A match with no alternative for the value it was
+handed is stuck, which is exactly what the exhaustiveness the type checker insists on rules out.
 
 The names are bound the way a call binds its parameters — in front of the environment, so they shadow
 it, and by `List.zip`, so a name repeated in one alternative takes the value of its leftmost
@@ -227,7 +228,7 @@ public theorem Eval.hasType {td : TypeDecls} {env : Env} {ctx : Context} {e : Ex
         Value.hasType_zip_of_inferList hlen hts fun p hp t' ht' => ihev p hp henv ht'
       exact .ind hd hc hvlen hall
   | EIndMatch scrut alts _ halt _ ihscrut ihbody =>
-      obtain ⟨name', d, rs, hsc, hd, halts, -, hrs⟩ := Expression.infer_indMatch_eq_some.mp ht
+      obtain ⟨name', d, rs, hsc, hd, -, halts, -, hrs⟩ := Expression.infer_indMatch_eq_some.mp ht
       obtain ⟨d', ts, hd', hc, hvlen, hvals, hname⟩ := Value.hasType_ind_iff.mp (ihscrut henv hsc)
       simp only [Ty.ind.injEq] at hname
       subst hname
@@ -998,6 +999,33 @@ lgtm private def area (s : inductive Shape) : int :=
 -- checker, and it is the same thing `Structs` adds for the other kind of type.
 #guard !area.check {} []
 
+/-- The same function with its alternatives the other way round from the declaration's constructors.
+
+An alternative says which constructor it is for, so this is the same function as `area`: it checks,
+and `EIndMatch` finds the alternative for the value's constructor wherever in the match it was
+written. -/
+lgtm private def areaSwapped as "area-swapped" (s : inductive Shape) : int :=
+  match s with | Rect(w, h) => w + h | Circle(r) => r + r
+
+#guard areaSwapped.check shapes []
+
+example : FuncDecl.Apply areaSwapped shapes [] [.ind "Shape" "Rect" [.int 3, .int 4]] (.int 7) :=
+  .EApply _ (.cons "s" hasType_rect .nil)
+    (.EIndMatch _ _ (.EVarRef "s" rfl) rfl
+      (.EPlus (n₁ := 3) (n₂ := 4) _ _ (.EVarRef "w" rfl) (.EVarRef "h" rfl)))
+
+example : FuncDecl.Apply areaSwapped shapes [] [.ind "Shape" "Circle" [.int 5]] (.int 10) :=
+  .EApply _ (.cons "s" (.ind rfl rfl rfl (by rintro p hp; simp at hp; subst hp; exact .int _)) .nil)
+    (.EIndMatch _ _ (.EVarRef "s" rfl) rfl
+      (.EPlus (n₁ := 5) (n₂ := 5) _ _ (.EVarRef "r" rfl) (.EVarRef "r" rfl)))
+
+-- Reordering is all the alternatives are free to do: a constructor left out is still not exhaustive,
+-- and neither is one named twice in place of the one that is missing.
+#guard !({ areaSwapped with body := [lgtm| match s with | Rect(w, h) => w + h] }
+  : FuncDecl).check shapes []
+#guard !({ areaSwapped with
+  body := [lgtm| match s with | Rect(w, h) => w + h | Rect(w, h) => w] } : FuncDecl).check shapes []
+
 /-- `EIndMatch` takes the alternative for the constructor the value carries and binds that
 alternative's names to what the constructor holds, so a call comes down to the arithmetic in one
 alternative and nothing at all in the others. -/
@@ -1017,7 +1045,8 @@ example : FuncDecl.Apply area shapes [] [.ind "Shape" "Circle" [.int 5]] (.int 1
 -- `area` checks against `shapes` — nothing about this particular shape.
 example (v : Value) (h : FuncDecl.Apply area shapes [] [.ind "Shape" "Rect" [.int 3, .int 4]] v) :
     v.HasType shapes .int :=
-  h.hasType Globals.wellTyped_nil (by simp [area, Color, Shape, shapes, List.lookup])
+  h.hasType Globals.wellTyped_nil
+    (by simp [area, Color, Shape, shapes, List.lookup, Expression.altsExhaustive, List.isPerm])
 
 /-- Which alternative runs is decided by the constructor and nothing else, and what it computes with
 is what that constructor carries: this is the property a match exists to express, for every `Rect`
@@ -1128,7 +1157,7 @@ private theorem shapeProgram.wellTyped : shapeProgram.WellTyped := by
   rcases hp with rfl | rfl <;>
     simp [area, square, Color, Shape, Program.globals, Program.typeDecls, Program.structs,
       Program.inductives, shapeProgram, Globals.ofDecls, Structs.ofDecls, Inductives.ofDecls,
-      FuncDecl.ty, List.lookup]
+      FuncDecl.ty, List.lookup, Expression.altsExhaustive, List.isPerm]
 
 -- Running it is calling one of its names, and soundness at the top covers an inductive result type
 -- like any other.

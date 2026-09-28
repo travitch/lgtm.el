@@ -138,6 +138,17 @@ public theorem List.lookup_isSome_congr {α β γ : Type} [BEq α] {as : List (�
           obtain ⟨rfl, h⟩ := h
           by_cases hk : k == ka <;> simp [List.lookup_cons, hk, ih h]
 
+/-- A lookup succeeds exactly for the names the list carries.
+
+`List.lookup_isSome_congr` compares two association lists with each other; this compares one with its
+own keys, which is what a fact stated over `List.Perm` — as `Expression.altsExhaustive` is — has to
+be read through: a permutation says which names are there, and this is what that means for looking
+one up. -/
+public theorem List.lookup_isSome_iff_mem_keys {α β : Type} [BEq α] [LawfulBEq α]
+    {l : List (α × β)} {k : α} : (l.lookup k).isSome ↔ k ∈ l.map Prod.fst := by
+  simp only [List.lookup_isSome_iff, List.mem_map]
+  grind
+
 /-- Where two such lists both resolve a name, the entries they resolve it to are paired in the zip.
 
 This is what turns a premise stated over `List.zip` — as `Eval`'s rules for the struct forms are,
@@ -198,6 +209,58 @@ public theorem List.lookup_keyed_self {α β : Type} [BEq α] [LawfulBEq α] {f 
           hu.1 (List.mem_map.mpr ⟨b, hb', by grind⟩)
         simpa [hne] using ih hu.2 hb'
 
+/-! ## Exhaustiveness
+
+What a match's alternatives have to be, as a condition on the two lists rather than on any one
+alternative.  It is separate from `Expression.inferAlts` because it is not something the walk along
+the alternatives can see: each alternative resolves its own constructor by name, and no alternative
+knows whether the others between them covered the rest. -/
+
+/-- The alternatives `alts` are one apiece for the constructors `cs`, in whatever order.
+
+Alternatives are keyed by constructor name rather than positional, so what exhaustiveness asks for is
+that the names they give and the names `cs` declares are the same names, as many of each — a
+permutation, which is one comparison the way the lockstep walk this replaces was.  A constructor with
+no alternative and an alternative for a constructor the declaration does not have each leave a name
+on one side with nothing on the other to pair it with, and an alternative repeated leaves two.
+
+Comparing the names as a multiset rather than as a set is what keeps a declaration that repeats a
+constructor name honest: `List.lookup` reaches only the leftmost entry of such a name, so every
+alternative for it beyond the first is dead, and asking for a permutation asks for exactly as many
+alternatives as there are entries.
+
+Only the names are compared here.  What an alternative does with what its constructor carries is
+`Expression.inferAlts`' business, and that is where the constructor is resolved by name — which is
+what lets the two lists disagree on order at all.
+
+Exposed, unlike `Expression.infer` and the rest of the checker: it is one comparison on two lists a
+concrete program writes out, so a proof that a declaration checks is left with this on a pair of
+literals and has to be able to see through it. -/
+@[expose] public def Expression.altsExhaustive (cs : List (CtorName × List Ty))
+    (alts : List (CtorName × List String × Expression)) : Bool :=
+  (alts.map Prod.fst).isPerm (cs.map Prod.fst)
+
+/-- `Expression.altsExhaustive` is what it says it is: the alternatives' constructor names are the
+declaration's constructor names, as many of each. -/
+public theorem Expression.altsExhaustive_eq_true {cs : List (CtorName × List Ty)}
+    {alts : List (CtorName × List String × Expression)} :
+    Expression.altsExhaustive cs alts = true ↔ (alts.map Prod.fst).Perm (cs.map Prod.fst) := by
+  simp [Expression.altsExhaustive, List.isPerm_iff]
+
+/-- Every constructor of the declaration has an alternative, which is the fact exhaustiveness exists
+to supply.
+
+Stated over `lookup` because that is how both lists are read where it matters: `Eval`'s `EIndMatch`
+finds its alternative by the constructor the value carries, and `Value.HasType` finds that
+constructor in the declaration, so this is what says a match cannot be handed a value of its
+scrutinee's type that it has no alternative for. -/
+public theorem Expression.lookup_isSome_of_altsExhaustive {cs : List (CtorName × List Ty)}
+    {alts : List (CtorName × List String × Expression)}
+    (h : Expression.altsExhaustive cs alts = true) {c : CtorName} (hc : (cs.lookup c).isSome) :
+    (alts.lookup c).isSome :=
+  List.lookup_isSome_iff_mem_keys.mpr
+    ((Expression.altsExhaustive_eq_true.mp h).mem_iff.mpr (List.lookup_isSome_iff_mem_keys.mp hc))
+
 mutual
 
 /-- Infer the type of `e` under `ctx`, or `none` if `e` is ill typed.
@@ -255,6 +318,7 @@ public def Expression.infer (td : TypeDecls) (ctx : Context) : Expression → Op
     match scrut.infer td ctx with
     | some (.ind name) => do
       let d ← td.is.lookup name
+      guard (Expression.altsExhaustive d.constructors alts)
       let rs ← Expression.inferAlts td ctx d.constructors alts
       Ty.common rs
     | _ => none
@@ -298,29 +362,33 @@ public def Expression.inferFields (td : TypeDecls) (ctx : Context) :
     let fts ← Expression.inferFields td ctx fes
     some ((f, t) :: fts)
 
-/-- Infer the type of each alternative's expression, in order, or `none` if the alternatives are not
-the constructors `cs` in the order `cs` gives them, or if any one of them is ill typed.
+/-- Infer the type of each alternative's expression, in the order the alternatives were written, or
+`none` if one of them is for a constructor `cs` does not declare, binds the wrong number of names, or
+has an ill-typed expression.
 
-The two lists are walked together, which is what makes a match exhaustive: an alternative is checked
-against the constructor at the same position, so a missing constructor, an extra alternative, a
-repeated one and one out of order all make the walk fail.  A constructor's data types are then the
-types of the names its alternative binds — positionally, since that is what a constructor carries —
-so the expression is inferred under `xs.zip ts` in front of the enclosing context, and the bindings
-shadow it the way a `lam`'s parameters do.
+The alternatives are walked and the constructor each one names is looked up in `cs`, so where the
+declaration put that constructor has nothing to do with where the match put its alternative: an
+alternative is checked against *its own* constructor, and the alternatives may therefore be written
+in any order.  What the two lists still have to agree on — that there is one alternative per
+constructor — is `Expression.altsExhaustive`'s business, since no single step of this walk can see
+it.
+
+A constructor's data types are the types of the names its alternative binds — positionally, since
+that is what a constructor carries — so the expression is inferred under `xs.zip ts` in front of the
+enclosing context, and the bindings shadow it the way a `lam`'s parameters do.
 
 What comes back is one type per alternative rather than one type for the match: they all have to
 agree, and comparing them is `Expression.infer`'s business, where the non-empty case is also ruled
 on. -/
-public def Expression.inferAlts (td : TypeDecls) (ctx : Context) :
-    List (CtorName × List Ty) → List (CtorName × List String × Expression) → Option (List Ty)
-  | [], [] => some []
-  | (c, ts) :: cs, (c', xs, body) :: alts =>
-    if c == c' && xs.length == ts.length then do
-      let t ← body.infer td (xs.zip ts ++ ctx)
-      let rs ← Expression.inferAlts td ctx cs alts
-      some (t :: rs)
-    else none
-  | _, _ => none
+public def Expression.inferAlts (td : TypeDecls) (ctx : Context) (cs : List (CtorName × List Ty)) :
+    List (CtorName × List String × Expression) → Option (List Ty)
+  | [] => some []
+  | (c, xs, body) :: alts => do
+    let ts ← cs.lookup c
+    guard (xs.length == ts.length)
+    let t ← body.infer td (xs.zip ts ++ ctx)
+    let rs ← Expression.inferAlts td ctx cs alts
+    some (t :: rs)
 
 end
 
@@ -493,14 +561,15 @@ whole point of an inductive type — which is what makes `indMatch` the only way
   simp [Expression.infer, Option.bind_eq_some_iff, guard]
   grind
 
-/-- An `indMatch` is typeable exactly when its scrutinee is a declared inductive type, its
-alternatives are that declaration's constructors in order and all check, and they all have one type —
-and then that is its type.
+/-- An `indMatch` is typeable exactly when its scrutinee is a declared inductive type, it has one
+alternative per constructor of that declaration, those alternatives all check, and they all have one
+type — and then that is its type.
 
-`Expression.inferAlts` is what covers the first two of those: it walks the constructors and the
-alternatives together, so exhaustiveness is not a separate condition.  What is left here is that the
-alternatives agree on a type, which they must because the match has one type however the value was
-built.
+Exhaustiveness and checking are two conditions rather than one because the alternatives may be
+written in any order: `Expression.altsExhaustive` says the alternatives are for the declaration's
+constructors, one apiece, and `Expression.inferAlts` checks each one against whichever constructor it
+names.  What is left here is that the alternatives agree on a type, which they must because the match
+has one type however the value was built.
 
 The list of types being non-empty is what rules out a match on a type with no constructors: there
 would be no alternative to read a type off, and nothing an expected type could be inferred from.  An
@@ -510,10 +579,11 @@ can build a value of it either. -/
     {scrut : Expression} {alts : List (CtorName × List String × Expression)} {t : Ty} :
     (Expression.indMatch scrut alts).infer td ctx = some t ↔
       ∃ name d rs, scrut.infer td ctx = some (.ind name) ∧ td.is.lookup name = some d
+        ∧ Expression.altsExhaustive d.constructors alts = true
         ∧ Expression.inferAlts td ctx d.constructors alts = some rs ∧ rs ≠ []
         ∧ ∀ t' ∈ rs, t' = t := by
   simp only [Expression.infer]
-  split <;> simp_all [Option.bind_eq_some_iff]
+  split <;> simp_all [Option.bind_eq_some_iff, guard]
 
 /-! Inversion principles for `inferList`.  Together these say what it computes: the argument types
 in order, and `none` as soon as one argument has no type. -/
@@ -580,34 +650,26 @@ public theorem Expression.lookup_of_inferFields {td : TypeDecls} {ctx : Context}
       · exact ⟨t, by simp_all, by grind⟩
       · exact ih hfts hf
 
-/-! Inversion principles for `inferAlts`.  The three degenerate cases say that the two lists have to
-run out together — which is exhaustiveness — and the fourth says what one step of the walk asks for.
--/
+/-! Inversion principles for `inferAlts`.  There is one alternative list to run out, and the second
+says what one step along it asks for.  Neither mentions exhaustiveness: running out of alternatives
+with constructors left over is not something the walk is in a position to notice, which is why
+`Expression.altsExhaustive` is a separate condition. -/
 
-@[simp, grind =] public theorem Expression.inferAlts_nil {td : TypeDecls} {ctx : Context} :
-    Expression.inferAlts td ctx [] [] = some [] := by
+@[simp, grind =] public theorem Expression.inferAlts_nil {td : TypeDecls} {ctx : Context}
+    {cs : List (CtorName × List Ty)} : Expression.inferAlts td ctx cs [] = some [] := by
   simp [Expression.inferAlts]
 
-@[simp, grind =] public theorem Expression.inferAlts_nil_cons {td : TypeDecls} {ctx : Context}
-    {a : CtorName × List String × Expression} {alts : List (CtorName × List String × Expression)} :
-    Expression.inferAlts td ctx [] (a :: alts) = none := by
-  simp [Expression.inferAlts]
-
-@[simp, grind =] public theorem Expression.inferAlts_cons_nil {td : TypeDecls} {ctx : Context}
-    {p : CtorName × List Ty} {cs : List (CtorName × List Ty)} :
-    Expression.inferAlts td ctx (p :: cs) [] = none := by
-  simp [Expression.inferAlts]
-
-/-- One step of the walk: the alternative is for the constructor at this position, it binds one name
-per data type that constructor carries, and its expression is typeable under those names at those
-types. -/
+/-- One step of the walk: the alternative is for a constructor the declaration has, it binds one
+name per data type that constructor carries, and its expression is typeable under those names at
+those types. -/
 @[simp, grind =] public theorem Expression.inferAlts_cons_eq_some {td : TypeDecls} {ctx : Context}
-    {c c' : CtorName} {ts : List Ty} {cs : List (CtorName × List Ty)} {xs : List String}
-    {body : Expression} {alts : List (CtorName × List String × Expression)} {rs : List Ty} :
-    Expression.inferAlts td ctx ((c, ts) :: cs) ((c', xs, body) :: alts) = some rs ↔
-      ∃ t rs', c = c' ∧ xs.length = ts.length ∧ body.infer td (xs.zip ts ++ ctx) = some t
+    {cs : List (CtorName × List Ty)} {c : CtorName} {xs : List String} {body : Expression}
+    {alts : List (CtorName × List String × Expression)} {rs : List Ty} :
+    Expression.inferAlts td ctx cs ((c, xs, body) :: alts) = some rs ↔
+      ∃ ts t rs', cs.lookup c = some ts ∧ xs.length = ts.length
+        ∧ body.infer td (xs.zip ts ++ ctx) = some t
         ∧ Expression.inferAlts td ctx cs alts = some rs' ∧ rs = t :: rs' := by
-  simp [Expression.inferAlts, Option.bind_eq_some_iff]
+  simp [Expression.inferAlts, Option.bind_eq_some_iff, guard]
   grind
 
 /-- The alternative a constructor's name resolves to is the one checked against that constructor's
@@ -616,33 +678,35 @@ data types, and the type inferred for its expression is one of the types `inferA
 This is what carries the result of the walk over to a *particular* constructor: `Eval` finds an
 alternative by the name the value it took apart carries, and `Value.HasType` finds that name's data
 types by looking them up in the declaration.  Both lookups take the leftmost entry of a repeated
-name, and the walk has already made the two lists agree name for name, so the two find the same
-position — which is what makes this provable for a declaration repeating a constructor name as well
-as for one that does not. -/
+name, and the walk resolves each alternative's constructor with the same `lookup` this hypothesis
+does, so the types the alternative was checked against are the ones the value is held to — which is
+what makes this provable for a declaration repeating a constructor name as well as for one that does
+not.
+
+Exhaustiveness is not needed for it.  `Eval` supplies the alternative rather than looking for one, so
+what this has to say is what the checker did with an alternative that is *there*; that there is one
+for every constructor is `Expression.lookup_isSome_of_altsExhaustive`'s business. -/
 public theorem Expression.lookup_of_inferAlts {td : TypeDecls} {ctx : Context}
     {cs : List (CtorName × List Ty)} {alts : List (CtorName × List String × Expression)}
     {rs : List Ty} (h : Expression.inferAlts td ctx cs alts = some rs) {c : CtorName}
     {ts : List Ty} {xs : List String} {body : Expression} (hc : cs.lookup c = some ts)
     (ha : alts.lookup c = some (xs, body)) :
     ∃ t, t ∈ rs ∧ xs.length = ts.length ∧ body.infer td (xs.zip ts ++ ctx) = some t := by
-  induction cs generalizing alts rs with
-  | nil => simp at hc
-  | cons p cs ih =>
-      obtain ⟨c₀, ts₀⟩ := p
-      cases alts with
-      | nil => simp at h
-      | cons q alts =>
-          obtain ⟨c₁, xs₀, body₀⟩ := q
-          obtain ⟨t₀, rs', rfl, hlen, hbody, halts, rfl⟩ := Expression.inferAlts_cons_eq_some.mp h
-          rw [List.lookup_cons] at hc ha
-          by_cases hcc : c == c₀
-          · simp only [hcc] at hc ha
-            obtain rfl : ts = ts₀ := by grind
-            obtain ⟨rfl, rfl⟩ : xs = xs₀ ∧ body = body₀ := by grind
-            exact ⟨t₀, by simp, hlen, hbody⟩
-          · simp only [hcc] at hc ha
-            obtain ⟨t, htmem, htlen, htbody⟩ := ih halts hc ha
-            exact ⟨t, List.mem_cons_of_mem _ htmem, htlen, htbody⟩
+  induction alts generalizing rs with
+  | nil => simp at ha
+  | cons q alts ih =>
+      obtain ⟨c₀, xs₀, body₀⟩ := q
+      obtain ⟨ts₀, t₀, rs', hc₀, hlen, hbody, halts, rfl⟩ := Expression.inferAlts_cons_eq_some.mp h
+      rw [List.lookup_cons] at ha
+      by_cases hcc : c == c₀
+      · obtain rfl : c = c₀ := by grind
+        simp only [hcc] at ha
+        obtain ⟨rfl, rfl⟩ : xs = xs₀ ∧ body = body₀ := by grind
+        obtain rfl : ts = ts₀ := by grind
+        exact ⟨t₀, by simp, hlen, hbody⟩
+      · simp only [hcc] at ha
+        obtain ⟨t, htmem, htlen, htbody⟩ := ih halts ha
+        exact ⟨t, List.mem_cons_of_mem _ htmem, htlen, htbody⟩
 
 /-- Check `e` against the expected type `ty` under `ctx`. -/
 public def Expression.check (td : TypeDecls) (ctx : Context) (e : Expression) (ty : Ty) : Bool :=
@@ -1338,14 +1402,41 @@ private def hue : InductiveDecl where
   [("Red", [], .stringLit "r"), ("Green", [], .stringLit "g"),
     ("Blue", [], .stringLit "b")]).infer types ctx == some .string
 
--- Exhaustive, in the declaration's order, and no alternative twice or for a constructor the
--- declaration does not have.
-#guard (Expression.indMatch (.varRef "c") [("Red", [], .intLit 0)]).infer types ctx == none
+-- The alternatives may be in any order at all: each one is checked against the constructor it names
+-- rather than against the one at its position, so every arrangement of them has the same type.
 #guard (Expression.indMatch (.varRef "c")
   [("Red", [], .intLit 0), ("Blue", [], .intLit 2), ("Green", [], .intLit 1)]).infer types ctx
-  == none
+  == some .int
+#guard (Expression.indMatch (.varRef "c")
+  [("Blue", [], .intLit 2), ("Green", [], .intLit 1), ("Red", [], .intLit 0)]).infer types ctx
+  == some .int
+#guard (Expression.indMatch (.varRef "c")
+  [("Green", [], .stringLit "g"), ("Blue", [], .stringLit "b"),
+    ("Red", [], .stringLit "r")]).infer types ctx == some .string
+
+-- An alternative out of order binds the names its own constructor declares, at that constructor's
+-- data types, rather than those of whichever constructor its position would have paired it with.
+#guard (Expression.indMatch (.varRef "sh")
+  [("Rect", ["w", "h"], .plus (.varRef "w") (.varRef "h")),
+    ("At", ["q"], .structGet (.varRef "q") "x"),
+    ("Circle", ["r"], .varRef "r")]).infer types ctx == some .int
+#guard (Expression.indMatch (.varRef "sh")
+  [("Rect", ["w", "h"], .varRef "w"), ("At", ["q"], .intLit 0),
+    ("Circle", ["r", "r'"], .varRef "r")]).infer types ctx == none
+#guard (Expression.indMatch (.varRef "sh")
+  [("At", ["q"], .structGet (.varRef "q") "z"), ("Circle", ["r"], .intLit 0),
+    ("Rect", ["w", "h"], .intLit 0)]).infer types ctx == none
+
+-- Exhaustive all the same, and no alternative twice or for a constructor the declaration does not
+-- have: reordering is all that is permitted.
+#guard (Expression.indMatch (.varRef "c") [("Red", [], .intLit 0)]).infer types ctx == none
+#guard (Expression.indMatch (.varRef "c")
+  [("Blue", [], .intLit 2), ("Green", [], .intLit 1)]).infer types ctx == none
 #guard (Expression.indMatch (.varRef "c")
   [("Red", [], .intLit 0), ("Red", [], .intLit 1), ("Blue", [], .intLit 2)]).infer types ctx == none
+#guard (Expression.indMatch (.varRef "c")
+  [("Red", [], .intLit 0), ("Green", [], .intLit 1), ("Blue", [], .intLit 2),
+    ("Blue", [], .intLit 3)]).infer types ctx == none
 #guard (Expression.indMatch (.varRef "c")
   [("Red", [], .intLit 0), ("Green", [], .intLit 1), ("Blue", [], .intLit 2),
     ("Purple", [], .intLit 3)]).infer types ctx == none
@@ -1427,6 +1518,16 @@ private def size : FuncDecl where
 #guard !size.check {} []
 #guard !size.check { is := Inductives.ofDecls [color, shape, tree] } []
 #guard !({ size with resultType := .string } : FuncDecl).check types []
+
+-- The same declaration with its alternatives written in another order is the same declaration as far
+-- as checking is concerned, and one of them left out is still not.
+#guard ({ size with body := (Expression.indMatch (.varRef "s")
+  [("At", ["q"], .structGet (.varRef "q") "x"),
+    ("Rect", ["w", "h"], .plus (.varRef "w") (.varRef "h")),
+    ("Circle", ["r"], .plus (.varRef "r") (.varRef "r"))]) } : FuncDecl).check types []
+#guard !({ size with body := (Expression.indMatch (.varRef "s")
+  [("At", ["q"], .structGet (.varRef "q") "x"),
+    ("Circle", ["r"], .plus (.varRef "r") (.varRef "r"))]) } : FuncDecl).check types []
 
 /-- `fun (n : int) => Shape.Rect(n, n)` -/
 private def square : FuncDecl where
