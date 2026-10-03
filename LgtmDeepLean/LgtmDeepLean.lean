@@ -3,6 +3,7 @@ module
 -- Import modules here that should be built as part of the library.
 public import LgtmDeepLean.Basic
 public import LgtmDeepLean.Lang.Eval
+import LgtmDeepLean.Lang.Eval.Tests
 public import LgtmDeepLean.Lang.IR
 public import LgtmDeepLean.Lang.Syntax
 public import LgtmDeepLean.Lang.TypeCheck
