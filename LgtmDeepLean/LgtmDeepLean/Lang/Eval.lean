@@ -56,6 +56,23 @@ wrong here, and exactly what typing rules out. -/
 | EIteFalse (c thn els : Expression) :
     Eval td env c (.bool false) → Eval td env els v →
     Eval td env (.ite c thn els) v
+/-- A comparison evaluates both of its operands and hands back what comparing the two values said.
+
+The comparison itself is `Value.beq?`, which is a function on values and mentions nothing about
+evaluation; the premise is what makes a pair it has no answer for stuck.  That is a closure on either
+side, or two values that disagree about the type they carry — the only things that can go wrong here,
+and exactly what `Ty.comparable` and the two operands sharing a type rule out between them.
+
+Both operands are always evaluated, unlike a conditional's branches: a comparison is a comparison of
+two values, so neither is in a position to make the other unnecessary even where the answer would be
+the same.
+
+One rule rather than the two `ite` has, because what a proof is left with here is not a choice
+between branches but the two values and what `Value.beq?` said about them — which
+`Value.eq_of_beq?` and `Value.ne_of_beq?` turn into Lean's own equality. -/
+| EEquals (l r : Expression) :
+    Eval td env l v₁ → Eval td env r v₂ → Value.beq? v₁ v₂ = some b →
+    Eval td env (.equals l r) (.bool b)
 /-- Let binds a variable that shadows any existing bindings.
 
     The bound value is available in the body of the let.  This is a non-recursive let. -/
@@ -155,6 +172,11 @@ closure's body was checked against a context of its own, recovered from the clos
 nothing to do with the one the call was made in.  The argument-evaluation premise contributes
 nothing here — `ArgsHaveType` already says what the argument values are, so the types the arguments
 were *inferred* to have are only needed to line that up with the closure's parameters.
+
+`EEquals` is the one rule whose value is computed from the values its operands produced rather than
+copied out of one of them, and it is also the one rule whose result type has nothing to do with its
+operands': a comparison is a `bool`, so the catch-all case covers it the way it covers a literal, and
+what the operands shared is the type checker's business alone.
 
 The three struct rules are where the argument-evaluation premise finally does the work `EApp`'s does
 not.  A struct value carries no types, so nothing but the induction hypothesis says what its fields
@@ -1305,6 +1327,19 @@ private theorem hasType_leaf : Value.HasType trees (.ind "Tree" "Leaf" []) (.ind
 example : FuncDecl.Apply total trees forest [.ind "Tree" "Leaf" []] (.int 0) :=
   .EApply _ (.cons "t" hasType_leaf .nil) (.EIndMatch _ _ (.EVarRef "t" rfl) rfl (.EIntLit 0))
 
+/-- A `Node` has the type `Tree` declares when its label is an `int` and its two subtrees have it
+too, which is the recursive case of the same walk `hasType_leaf` ends. -/
+private theorem hasType_node {l r : Value} {n : Int} (hl : Value.HasType trees l (.ind "Tree"))
+    (hr : Value.HasType trees r (.ind "Tree")) :
+    Value.HasType trees (.ind "Tree" "Node" [l, .int n, r]) (.ind "Tree") :=
+  .ind rfl rfl rfl (by
+    rintro p hp
+    simp at hp
+    rcases hp with rfl | rfl | rfl
+    · exact hl
+    · exact .int _
+    · exact hr)
+
 /-! ### A program with inductive types
 
 The same declarations again, read as a source file: a `Program` carries its inductive types beside
@@ -1366,5 +1401,223 @@ example : shapeProgram.Apply "area" [.ind "Shape" "Rect" [.int 3, .int 4]] (.int
 example (v : Value) (args : List Value) (h : shapeProgram.Apply "square" args v) :
     v.HasType shapeProgram.typeDecls (.ind "Shape") :=
   h.hasType shapeProgram.wellTyped rfl
+
+/-! ## Equality
+
+`EEquals` evaluates both operands and hands back what `Value.beq?` made of the two values.  What is
+new here is a rule whose result is computed from the values rather than copied out of one of them, so
+these examples come in two kinds: the `rfl` that says what a particular comparison came to, and the
+theorems that say what a comparison coming out `true` or `false` *means* — which is
+`Value.eq_of_beq?` and `Value.ne_of_beq?`, and which is the whole reason the form is worth having in
+a proof. -/
+
+-- A comparison of literals is decided by the values they evaluate to, and nothing about the type
+-- compared survives into the result: a `bool` comes back from `int`s, `string`s and `bool`s alike.
+example : Eval {} ∅ [lgtm| 1 == 1] (.bool true) := .EEquals _ _ (.EIntLit 1) (.EIntLit 1) rfl
+example : Eval {} ∅ [lgtm| 1 == 2] (.bool false) := .EEquals _ _ (.EIntLit 1) (.EIntLit 2) rfl
+example : Eval {} ∅ [lgtm| "a" == "a"] (.bool true) :=
+  .EEquals _ _ (.EStringLit "a") (.EStringLit "a") rfl
+example : Eval {} ∅ [lgtm| "a" == "b"] (.bool false) :=
+  .EEquals _ _ (.EStringLit "a") (.EStringLit "b") rfl
+example : Eval {} ∅ [lgtm| true == false] (.bool false) :=
+  .EEquals _ _ (.EBoolLit true) (.EBoolLit false) rfl
+
+-- A comparison is decided by the values and not by the expressions: these two sides are different
+-- expressions that compute the same `int`.
+example : Eval {} ∅ [lgtm| 1 + 2 == 5 - 2] (.bool true) :=
+  .EEquals _ _ (.EPlus (n₁ := 1) (n₂ := 2) _ _ (.EIntLit 1) (.EIntLit 2))
+    (.EMinus (n₁ := 5) (n₂ := 2) _ _ (.EIntLit 5) (.EIntLit 2)) rfl
+
+-- Lists are compared element by element, and two of different lengths are different without the
+-- elements coming into it.
+example : Eval {} ∅ [lgtm| [1, 2 : int] == [1, 2 : int]] (.bool true) :=
+  .EEquals _ _ (.ECons _ _ (.EIntLit 1) (.ECons _ _ (.EIntLit 2) (.ENil .int)))
+    (.ECons _ _ (.EIntLit 1) (.ECons _ _ (.EIntLit 2) (.ENil .int))) rfl
+example : Eval {} ∅ [lgtm| [1, 2 : int] == [1, 3 : int]] (.bool false) :=
+  .EEquals _ _ (.ECons _ _ (.EIntLit 1) (.ECons _ _ (.EIntLit 2) (.ENil .int)))
+    (.ECons _ _ (.EIntLit 1) (.ECons _ _ (.EIntLit 3) (.ENil .int))) rfl
+example : Eval {} ∅ [lgtm| [1 : int] == [: int]] (.bool false) :=
+  .EEquals _ _ (.ECons _ _ (.EIntLit 1) (.ENil .int)) (.ENil .int) rfl
+
+/-- Whether `x` and `y` are the same. -/
+lgtm private def same (x : int) (y : int) : bool :=
+  x == y
+
+#guard same.check {} []
+
+example : FuncDecl.Apply same {} [] [.int 1, .int 1] (.bool true) :=
+  .EApply _ (.cons "x" (.int 1) (.cons "y" (.int 1) .nil))
+    (.EEquals _ _ (.EVarRef "x" rfl) (.EVarRef "y" rfl) rfl)
+
+example : FuncDecl.Apply same {} [] [.int 1, .int 2] (.bool false) :=
+  .EApply _ (.cons "x" (.int 1) (.cons "y" (.int 2) .nil))
+    (.EEquals _ _ (.EVarRef "x" rfl) (.EVarRef "y" rfl) rfl)
+
+-- Soundness covers the new form: a `bool` comes back because the body is a comparison, which is the
+-- one thing its type says — the type the operands shared is not part of it.
+example (v : Value) (x y : Int) (h : FuncDecl.Apply same {} [] [.int x, .int y] v) :
+    v.HasType {} .bool :=
+  h.hasType Globals.wellTyped_nil (by simp [same, List.lookup])
+
+/-- What a comparison computes, for every pair of `int`s rather than for one: inverting `EEquals`
+down to the two `EVarRef`s leaves `Value.beq?` on the values the parameters were bound to, which on
+`int`s is their own equality. -/
+private theorem same.eq_beq {x y : Int} {res : Value}
+    (h : FuncDecl.Apply same {} [] [.int x, .int y] res) : res = .bool (x == y) := by
+  obtain ⟨-, -, hbody⟩ := h
+  cases hbody with
+  | EEquals _ _ h₁ h₂ hb =>
+    cases h₁ with
+    | EVarRef _ hlx =>
+      cases h₂ with
+      | EVarRef _ hly =>
+        simp [same, FuncDecl.callEnv, Env.extend, Globals.env, Env.lookup, List.lookup] at hlx hly
+        subst hlx
+        subst hly
+        simp [Value.beq?] at hb
+        grind
+
+/-! ### What a comparison means
+
+The examples above are about particular values.  These are the general facts: a comparison that came
+out `true` is the two values being *equal*, and one that came out `false` is them being unequal.
+Neither is about the type compared, which is what makes one proof of each cover every comparison a
+declaration performs. -/
+
+/-- Whether two trees are the same tree.  A recursive type is comparable — each value of one is
+finite, however deep the type is — so this is a declaration about a type a comparison has to walk all
+the way down. -/
+lgtm private def sameTree as "same-tree" (a : inductive Tree) (b : inductive Tree) : bool :=
+  a == b
+
+#guard sameTree.check trees []
+
+-- The same constructors all the way down, carrying the same data, is what `true` comes from.
+example : FuncDecl.Apply sameTree trees [] [.ind "Tree" "Leaf" [], .ind "Tree" "Leaf" []]
+    (.bool true) :=
+  .EApply _ (.cons "a" hasType_leaf (.cons "b" hasType_leaf .nil))
+    (.EEquals _ _ (.EVarRef "a" rfl) (.EVarRef "b" rfl) rfl)
+
+-- A difference in the constructor is a difference in the value, and it is decided without the data
+-- either of them carries being compared at all.
+example : FuncDecl.Apply sameTree trees []
+    [.ind "Tree" "Node" [.ind "Tree" "Leaf" [], .int 1, .ind "Tree" "Leaf" []],
+      .ind "Tree" "Leaf" []] (.bool false) :=
+  .EApply _ (.cons "a" (hasType_node hasType_leaf hasType_leaf) (.cons "b" hasType_leaf .nil))
+    (.EEquals _ _ (.EVarRef "a" rfl) (.EVarRef "b" rfl) rfl)
+
+-- A recursive type is comparable, so soundness covers `sameTree` too: the walk `Ty.comparable` does
+-- over `Tree`'s own constructors is what `decide` settles here.
+example (a b v : Value) (h : FuncDecl.Apply sameTree trees [] [a, b] v) : v.HasType trees .bool :=
+  h.hasType Globals.wellTyped_nil (by simp [sameTree, List.lookup]; decide)
+
+/-- A comparison that came out `true` is the two values being equal — for any two of them, and
+whatever `Tree`s they were.
+
+This is what the form is for.  `EEquals` hands back what `Value.beq?` said, and
+`Value.beq?_eq_some_iff` is what says that answer was the right one, so a `true` reached through a
+comparison is Lean's own `=` for the rest of the proof to work with. -/
+private theorem sameTree.eq_of_true {a b : Value}
+    (h : FuncDecl.Apply sameTree trees [] [a, b] (.bool true)) : a = b := by
+  obtain ⟨-, -, hbody⟩ := h
+  cases hbody with
+  | EEquals _ _ h₁ h₂ hb =>
+    cases h₁ with
+    | EVarRef _ hla =>
+      cases h₂ with
+      | EVarRef _ hlb =>
+        simp [sameTree, FuncDecl.callEnv, Env.extend, Globals.env, Env.lookup,
+          List.lookup] at hla hlb
+        subst hla
+        subst hlb
+        exact Value.eq_of_beq? hb
+
+/-- And one that came out `false` is them being unequal, which is the other half of the same fact. -/
+private theorem sameTree.ne_of_false {a b : Value}
+    (h : FuncDecl.Apply sameTree trees [] [a, b] (.bool false)) : a ≠ b := by
+  obtain ⟨-, -, hbody⟩ := h
+  cases hbody with
+  | EEquals _ _ h₁ h₂ hb =>
+    cases h₁ with
+    | EVarRef _ hla =>
+      cases h₂ with
+      | EVarRef _ hlb =>
+        simp [sameTree, FuncDecl.callEnv, Env.extend, Globals.env, Env.lookup,
+          List.lookup] at hla hlb
+        subst hla
+        subst hlb
+        exact Value.ne_of_beq? hb
+
+/-! ### Structs
+
+A struct value is a name and an association list, so comparing two of them is comparing what their
+fields hold, name for name and in the order the declaration wrote them — which every value of one
+struct type carries them in. -/
+
+/-- Whether two points are the same point. -/
+lgtm private def samePoint as "same-point" (p : struct Point) (q : struct Point) : bool :=
+  p == q
+
+#guard samePoint.check points []
+
+example : FuncDecl.Apply samePoint points []
+    [.struct "Point" [("x", .int 1), ("y", .int 2)],
+      .struct "Point" [("x", .int 1), ("y", .int 2)]] (.bool true) :=
+  .EApply _ (.cons "p" hasType_point (.cons "q" hasType_point .nil))
+    (.EEquals _ _ (.EVarRef "p" rfl) (.EVarRef "q" rfl) rfl)
+
+example : FuncDecl.Apply samePoint points []
+    [.struct "Point" [("x", .int 1), ("y", .int 2)],
+      .struct "Point" [("x", .int 1), ("y", .int 3)]] (.bool false) :=
+  .EApply _ (.cons "p" hasType_point (.cons "q" hasType_point .nil))
+    (.EEquals _ _ (.EVarRef "p" rfl) (.EVarRef "q" rfl) rfl)
+
+-- Soundness covers a comparison of structs like any other: what comes back is a `bool`, and the
+-- part of `samePoint` checking that the other declarations do not have is `Ty.comparable` on
+-- `Point` — one comparison on the table this program wrote out, which is what `decide` is for.
+example (vp vq v : Value) (h : FuncDecl.Apply samePoint points [] [vp, vq] v) :
+    v.HasType points .bool :=
+  h.hasType Globals.wellTyped_nil (by simp [samePoint, List.lookup]; decide)
+
+-- An update is what makes two points of one declaration differ, so this is the comparison deciding
+-- something about a value that was computed rather than passed in.
+example : FuncDecl.Apply { samePoint with body := [lgtm| p == { q with x = 1 } ] } points []
+    [.struct "Point" [("x", .int 1), ("y", .int 2)],
+      .struct "Point" [("x", .int 9), ("y", .int 2)]] (.bool true) :=
+  .EApply _ (.cons "p" hasType_point (.cons "q" hasType_point .nil))
+    (.EEquals _ _ (.EVarRef "p" rfl)
+      (.EStructUpdate (us := [("x", .int 1)]) _ _ (.EVarRef "q" rfl) rfl (by
+        rintro ⟨e, v⟩ hp
+        simp at hp
+        obtain ⟨rfl, rfl⟩ := hp
+        exact .EIntLit 1)) rfl)
+
+/-! ### What cannot be compared
+
+A closure is the one value `Value.beq?` has no answer for, so a comparison of two of them is stuck:
+it has no value at all, rather than a wrong one.  `Ty.comparable` is the type checker's side of this,
+and it is why the declarations above never meet the case. -/
+
+-- The comparison of two functions has no value, and it makes no difference that these two closures
+-- came from the same `lam`: two functions are the same function when they agree on every argument,
+-- which is not something either value carries.
+example (v : Value) : ¬ Eval {} ∅ [lgtm| (fun (x : int) => x) == (fun (x : int) => x)] v := by
+  intro h
+  cases h with
+  | EEquals _ _ h₁ h₂ hb =>
+      cases h₁
+      cases h₂
+      simp [Env.closure, Value.beq?] at hb
+
+/-- `same` with both of its parameters of function type, which is the declaration the type checker
+has to turn down. -/
+private def sameFns : FuncDecl :=
+  { same with
+    parameters := [("g", .fn [.int] .int), ("h", .fn [.int] .int)]
+    body := [lgtm| g == h] }
+
+-- And it does turn it down, so the stuck case is one a well-typed program never reaches: it is
+-- `Ty.comparable` that rules it out, on the type the two operands share.
+#guard !sameFns.check {} []
 
 end Tests

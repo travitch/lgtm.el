@@ -103,6 +103,191 @@ otherwise, and introduces nothing. -/
         simp
       · simpa [h] using ih
 
+/-! ## Structural equality
+
+What `Expression.equals` compares two values with, and where a value of function type stops it.
+
+It is a function rather than a rule of `Eval` because there is nothing about *evaluation* in it: two
+values are the same value or they are not, and this says which, given that it can be said at all.
+`Ty.comparable` is the type-level counterpart — the types from which no function type is reachable,
+which are exactly the types whose values hold no closure anywhere — so an `equals` that type checks is
+one this never has to give up on. -/
+
+mutual
+
+/-- Whether `a` and `b` are the same value, or `none` where they cannot be compared at all.
+
+Deep and structural: two lists are equal when they hold the same values in the same order, two struct
+values when they are of the same struct and every field holds the same value, and two values of an
+inductive type when they are of the same type, were built by the same constructor, and that
+constructor's data is the same value for value.
+
+A closure is what `none` is for.  Two functions are the same function when they agree on every
+argument, which is a question about what they *do*: no value carries enough to settle it, and a
+comparison of the bindings two closures captured would be answering something else — so a comparison
+involving one has no answer here rather than a misleading one.
+
+`none` also covers the pairs that disagree about which *type* they carry, an `int` against a `string`
+or two struct values of different structs among them.  Those are pairs typing rules out as surely as
+a closure is, and there is no equality between values of different types for them to be an answer
+about.
+
+What decides `false` without looking further is a difference in shape *within* one type: two lists of
+different lengths, and two values of an inductive type built by different constructors.  Both are
+genuinely different values, and neither needs anything underneath it compared to say so. -/
+@[expose] public def Value.beq? : Value → Value → Option Bool
+  | .bool a, .bool b => some (a == b)
+  | .int a, .int b => some (a == b)
+  | .string a, .string b => some (a == b)
+  | .list as, .list bs => Value.beqList? as bs
+  | .struct n fas, .struct m fbs => if n == m then Value.beqFields? fas fbs else none
+  | .ind n c as, .ind m d bs =>
+    if n == m then (if c == d then Value.beqList? as bs else some false) else none
+  | _, _ => none
+
+/-- Whether `as` and `bs` are the same values in the same order: the element type of a list and the
+data of a constructor are both compared position by position, and this is the walk both take.
+
+Lists of different lengths are different, which is the one answer reached without comparing anything.
+Lists of the same length are compared throughout — the result is `none` if any pair of elements is
+incomparable, rather than `false` as soon as one pair differs — so that a comparison succeeds exactly
+when it could look everywhere it would have had to. -/
+@[expose] public def Value.beqList? : List Value → List Value → Option Bool
+  | [], [] => some true
+  | a :: as, b :: bs =>
+    match Value.beq? a b, Value.beqList? as bs with
+    | some x, some y => some (x && y)
+    | _, _ => none
+  | _, _ => some false
+
+/-- Whether two struct values' fields hold the same values: the same fields, in the same order, each
+with equal values.
+
+Positional, because two values of one struct type carry that declaration's fields in that
+declaration's order — `structNew` builds them so and `FieldValues.update` rebinds without reordering
+— so there is no case here where the names agree and the order does not.  Fields that disagree on a
+name, or lists of different lengths, are therefore not two values of one struct type at all, and get
+`none` for the reason mismatched value constructors do.
+
+The field names are spelled `String` rather than `FieldName` for the reason `Value.struct` spells
+them that way. -/
+@[expose] public def Value.beqFields? : List (String × Value) → List (String × Value) →
+    Option Bool
+  | [], [] => some true
+  | (f, a) :: fas, (g, b) :: fbs =>
+    if f == g then
+      match Value.beq? a b, Value.beqFields? fas fbs with
+      | some x, some y => some (x && y)
+      | _, _ => none
+    else none
+  | _, _ => none
+
+end
+
+mutual
+
+/-- A comparison that has an answer gives the right one: `true` exactly when the two values are the
+same value.
+
+This is what makes the form usable in a proof.  `Eval`'s rule hands back whatever `Value.beq?` said,
+so without this a `bool` that came from an `equals` would be a `bool` and nothing more; with it, the
+`true` an evaluation produced *is* the two values being equal, and Lean's own `=` is what the rest of
+the proof carries on with.
+
+It is an `iff` under one hypothesis rather than two implications because both directions are the same
+induction: that a comparison never reports `true` of values that differ, and that it never reports
+`false` of values that do not.  Nothing is claimed where the comparison had no answer — there is no
+closure in a value of a comparable type, which is the type checker's side of it.
+
+`Value.eq_of_beq?` and `Value.ne_of_beq?` are the two halves in the form a proof applies. -/
+public theorem Value.beq?_eq_some_iff : ∀ (a b : Value) (r : Bool),
+    Value.beq? a b = some r → (r = true ↔ a = b)
+  | .bool x, b, r => by cases b <;> simp_all [Value.beq?] <;> grind
+  | .int x, b, r => by cases b <;> simp_all [Value.beq?] <;> grind
+  | .string x, b, r => by cases b <;> simp_all [Value.beq?] <;> grind
+  | .list as, b, r => by
+    cases b with
+    | list bs =>
+      intro h
+      simpa using Value.beqList?_eq_some_iff as bs r (by simpa [Value.beq?] using h)
+    | _ => simp [Value.beq?]
+  | .closure cb cg ps body, b, r => by cases b <;> simp [Value.beq?]
+  | .struct n fas, b, r => by
+    cases b with
+    | struct m fbs =>
+      intro h
+      by_cases hn : n == m
+      · obtain rfl : n = m := by grind
+        simpa using Value.beqFields?_eq_some_iff fas fbs r (by simpa [Value.beq?] using h)
+      · simp [Value.beq?, hn] at h
+    | _ => simp [Value.beq?]
+  | .ind n c as, b, r => by
+    cases b with
+    | ind m d bs =>
+      intro h
+      by_cases hn : n == m
+      · obtain rfl : n = m := by grind
+        by_cases hc : c == d
+        · obtain rfl : c = d := by grind
+          simpa using Value.beqList?_eq_some_iff as bs r (by simpa [Value.beq?] using h)
+        · obtain rfl : r = false := by simpa [Value.beq?, hc] using h.symm
+          simp only [Value.ind.injEq]
+          grind
+      · simp [Value.beq?, hn] at h
+    | _ => simp [Value.beq?]
+
+/-- The positional version of `Value.beq?_eq_some_iff`: the comparison of two lists that has an
+answer is `true` exactly when they are the same list. -/
+public theorem Value.beqList?_eq_some_iff : ∀ (as bs : List Value) (r : Bool),
+    Value.beqList? as bs = some r → (r = true ↔ as = bs)
+  | [], bs, r => by cases bs <;> simp [Value.beqList?]
+  | a :: as, bs, r => by
+    cases bs with
+    | nil => simp [Value.beqList?]
+    | cons b bs =>
+      intro h
+      rw [Value.beqList?] at h
+      split at h
+      · next x y hx hy =>
+        obtain rfl : r = (x && y) := by grind
+        rw [Bool.and_eq_true, Value.beq?_eq_some_iff a b x hx, Value.beqList?_eq_some_iff as bs y hy]
+        simp
+      · simp at h
+
+/-- The by-name version of `Value.beq?_eq_some_iff`, for the field lists two struct values carry. -/
+public theorem Value.beqFields?_eq_some_iff : ∀ (fas fbs : List (String × Value)) (r : Bool),
+    Value.beqFields? fas fbs = some r → (r = true ↔ fas = fbs)
+  | [], fbs, r => by cases fbs <;> simp [Value.beqFields?]
+  | (f, a) :: fas, fbs, r => by
+    cases fbs with
+    | nil => simp [Value.beqFields?]
+    | cons q fbs =>
+      obtain ⟨g, b⟩ := q
+      intro h
+      rw [Value.beqFields?] at h
+      split at h
+      · next hfg =>
+        obtain rfl : f = g := by grind
+        split at h
+        · next x y hx hy =>
+          obtain rfl : r = (x && y) := by grind
+          rw [Bool.and_eq_true, Value.beq?_eq_some_iff a b x hx,
+            Value.beqFields?_eq_some_iff fas fbs y hy]
+          simp
+        · simp at h
+      · simp at h
+
+end
+
+/-- Two values a comparison called equal are equal. -/
+public theorem Value.eq_of_beq? {a b : Value} (h : Value.beq? a b = some true) : a = b :=
+  (Value.beq?_eq_some_iff a b true h).mp rfl
+
+/-- And two it called unequal are unequal. -/
+public theorem Value.ne_of_beq? {a b : Value} (h : Value.beq? a b = some false) : a ≠ b := by
+  intro heq
+  simpa using (Value.beq?_eq_some_iff a b false h).mpr heq
+
 /-- What a name is bound to while an expression runs: the local bindings, innermost first, over the
 globals every expression can see.
 

@@ -8,12 +8,7 @@ public inductive Ty where
 | list : Ty → Ty
 /-- A function from the types of its parameters to the type of its result. -/
 | fn : List Ty → Ty → Ty
-/-- A declared structure type, named rather than spelled out: the fields live in the `StructDecl`
-the name resolves to.
-
-Structs are therefore *nominal*.  Two of these are the same type exactly when their names agree, so
-two declarations with the same fields under different names are unrelated, and a struct type says
-nothing at all until there is a table to resolve the name in. -/
+/-- A declared structure type (matched nominally). -/
 | struct : String → Ty
 /-- A declared inductive type, named rather than spelled out: the constructors live in the
 `InductiveDecl` the name resolves to.
@@ -137,6 +132,16 @@ public inductive Expression where
     The condition expression must be a boolean.  The two body expressions can be any type, as long
     as it is the same for both. -/
 | ite : Expression → Expression → Expression → Expression
+/-- Test if two values are equal via deep structural comparison.
+
+The two operands must be of the same type.
+
+Two structure values are equal if they are the same type and all of their fields are pointwise equal.
+
+Two inductive values are equal if they are the same type, they were constructed with the same constructor tags, and their values are pointwise equal.
+
+Values of function type cannot be compared. -/
+| equals : Expression → Expression → Expression
 /-- Introduce a let binding.  Binds the first expression to the given name, which
     becomes available in the second expression. -/
 | let_ : String → Expression → Expression → Expression

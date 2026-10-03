@@ -93,8 +93,9 @@ macro_rules
 
 /-! ## Expressions
 
-Precedence runs `::` looser than `+`/`-`, which are looser than application and `reverse`, so
-`1 + 2 :: xs` is `(1 + 2) :: xs` and `f(x) + 1` is `(f(x)) + 1`.
+Precedence runs `==` looser than `::`, which is looser than `+`/`-`, which are looser than
+application and `reverse`, so `1 + 2 :: xs` is `(1 + 2) :: xs`, `f(x) + 1` is `(f(x)) + 1`, and
+`x :: xs == ys` compares two lists rather than consing onto a comparison.
 
 A list literal carries its element type, because `lnil` does: `[1, 2 : int]` is
 `.lcons (.intLit 1) (.lcons (.intLit 2) (.lnil .int))`, and the empty list is `[: int]`.
@@ -161,6 +162,16 @@ syntax:max "if " lgtmExpr " then " "{" lgtmExpr "}" " else " "{" lgtmExpr "}" : 
 syntax:65 lgtmExpr:65 " + " lgtmExpr:66 : lgtmExpr
 syntax:65 lgtmExpr:65 " - " lgtmExpr:66 : lgtmExpr
 syntax:55 lgtmExpr:56 " :: " lgtmExpr:55 : lgtmExpr
+/-- `a == b` compares two values structurally, however deep they are.
+
+It is the loosest of the operators, so `x + 1 == y` and `x :: xs == ys` need no parentheses, and it
+is non-associative: `a == b == c` is a parse error rather than one of the two comparisons it could
+have meant.  A comparison *of* comparisons is written with the parentheses that say which, since what
+one produces is an ordinary `bool`.
+
+The operands must have the same type, and it must be a type a comparison can reach the bottom of —
+which is the type checker's business rather than the parser's. -/
+syntax:50 lgtmExpr:51 " == " lgtmExpr:51 : lgtmExpr
 syntax:10 "fun" ("(" ident " : " lgtmTy ")")* " => " lgtmExpr:10 : lgtmExpr
 /-- `let x = e in body`.  The bound expression carries no annotation, because `let_` does not: the
 type checker infers it.  The body extends as far right as it can, so `let`s chain without
@@ -191,6 +202,7 @@ macro_rules
   | `([lgtm| $a + $b]) => `(Expression.plus [lgtm| $a] [lgtm| $b])
   | `([lgtm| $a - $b]) => `(Expression.minus [lgtm| $a] [lgtm| $b])
   | `([lgtm| $a :: $b]) => `(Expression.lcons [lgtm| $a] [lgtm| $b])
+  | `([lgtm| $a == $b]) => `(Expression.equals [lgtm| $a] [lgtm| $b])
   | `([lgtm| reverse $e]) => `(Expression.listReverse [lgtm| $e])
   | `([lgtm| [$es,* : $t]]) => do
       let mut acc ← `(Expression.lnil [lgtm_ty| $t])
@@ -419,6 +431,35 @@ example : [lgtm| x :: xs] = Expression.lcons (.varRef "x") (.varRef "xs") := rfl
 example : [lgtm| x + 1 :: xs]
     = Expression.lcons (.plus (.varRef "x") (.intLit 1)) (.varRef "xs") := rfl
 
+-- `==` is looser than both, so each of its operands is as much as can be read before it.
+example : [lgtm| x == y] = Expression.equals (.varRef "x") (.varRef "y") := rfl
+example : [lgtm| x + 1 == y]
+    = Expression.equals (.plus (.varRef "x") (.intLit 1)) (.varRef "y") := rfl
+example : [lgtm| x :: xs == ys]
+    = Expression.equals (.lcons (.varRef "x") (.varRef "xs")) (.varRef "ys") := rfl
+example : [lgtm| reverse xs == ys]
+    = Expression.equals (.listReverse (.varRef "xs")) (.varRef "ys") := rfl
+example : [lgtm| f(1) == g(2)]
+    = Expression.equals (.app (.varRef "f") [.intLit 1]) (.app (.varRef "g") [.intLit 2]) := rfl
+example : [lgtm| p.x == q.x]
+    = Expression.equals (.structGet (.varRef "p") "x") (.structGet (.varRef "q") "x") := rfl
+
+-- Parentheses are what chain comparisons, since `==` is non-associative; and a comparison is an
+-- operand anywhere a `bool` is one.
+example : [lgtm| (x == y) == b]
+    = Expression.equals (.equals (.varRef "x") (.varRef "y")) (.varRef "b") := rfl
+example : [lgtm| if x == y then { 1 } else { 2 }]
+    = Expression.ite (.equals (.varRef "x") (.varRef "y")) (.intLit 1) (.intLit 2) := rfl
+example : [lgtm| let e = x == y in e]
+    = Expression.let_ "e" (.equals (.varRef "x") (.varRef "y")) (.varRef "e") := rfl
+example : [lgtm| fun (q : int) => q == n]
+    = Expression.lam [("q", .int)] (.equals (.varRef "q") (.varRef "n")) := rfl
+example : [lgtm| f(x == y)]
+    = Expression.app (.varRef "f") [.equals (.varRef "x") (.varRef "y")] := rfl
+example : [lgtm| [x == y, true : bool]]
+    = Expression.lcons (.equals (.varRef "x") (.varRef "y"))
+        (.lcons (.boolLit true) (.lnil .bool)) := rfl
+
 -- A list literal is right-nested `lcons` onto the `lnil` its annotation gives.
 example : [lgtm| [: int]] = Expression.lnil .int := rfl
 example : [lgtm| [1 : int]] = Expression.lcons (.intLit 1) (.lnil .int) := rfl
@@ -593,6 +634,38 @@ lgtm def pickFirst as "pick-first" (x : int) (y : int) : int :=
 #guard pickFirst.check {} []
 #guard !({ pickFirst with body := [lgtm| if 1 then { x } else { y }] } : FuncDecl).check {} []
 
+/-- Whether `x` and `y` are the same, which is the other way a declaration returns a `bool`. -/
+lgtm def same (x : int) (y : int) : bool :=
+  x == y
+
+#guard same.check {} []
+
+-- The operands have to share a type, the result is a `bool` and not the type compared, and a
+-- function is the one thing there is no comparing: a parameter of function type cannot be an operand
+-- and neither can a list of them.
+#guard !({ same with body := [lgtm| x == "a"] } : FuncDecl).check {} []
+#guard !({ same with resultType := [lgtm_ty| int] } : FuncDecl).check {} []
+
+private def fnTy : Ty := [lgtm_ty| (int) -> int]
+
+/-- `same` comparing two functions, which is the one thing a comparison cannot reach the bottom of. -/
+private def sameFns : FuncDecl :=
+  { same with parameters := [("g", fnTy), ("h", fnTy)], body := [lgtm| g == h] }
+
+/-- And comparing two lists of them, which is no more comparable than its elements are. -/
+private def sameFnLists : FuncDecl :=
+  { sameFns with parameters := [("g", .list fnTy), ("h", .list fnTy)] }
+
+#guard !sameFns.check {} []
+#guard !sameFnLists.check {} []
+
+-- Every other type is comparable, declared ones included, and a comparison goes where a `bool` goes.
+#guard ({ same with parameters := [("x", [lgtm_ty| list string]), ("y", [lgtm_ty| list string])] }
+  : FuncDecl).check {} []
+#guard ({ same with parameters := [("x", [lgtm_ty| bool]), ("y", [lgtm_ty| bool])] }
+  : FuncDecl).check {} []
+#guard ({ pick with body := [lgtm| if x == y then { x } else { y }] } : FuncDecl).check {} []
+
 -- A declaration with no parameters is fine, and so is one that returns a function.
 lgtm def three : int := 3
 #guard three.check {} []
@@ -706,6 +779,21 @@ lgtm def shift (p : struct Point) (d : int) : struct Point :=
 
 #guard shift.check { ss := Structs.ofDecls [Point] } []
 
+/-- Whether two points are the same point, which is field for field. -/
+lgtm def samePoint as "same-point" (p : struct Point) (q : struct Point) : bool :=
+  p == q
+
+#guard samePoint.check { ss := Structs.ofDecls [Point] } []
+#guard !samePoint.check {} []
+
+/-- The same comparison on `Box`es, which carry a `step` of function type. -/
+private def sameBox : FuncDecl :=
+  { samePoint with parameters := [("p", .struct "Box"), ("q", .struct "Box")] }
+
+-- A struct is comparable when everything it carries is, so a `Box` is not — however ordinary its
+-- other two fields are, and although every struct form other than `==` still works on one.
+#guard !sameBox.check { ss := Structs.ofDecls [Point, Box] } []
+
 /-! ### Inductive types -/
 
 -- An inductive type is written with its name, and is a type like any other.
@@ -806,5 +894,20 @@ lgtm def square (n : int) : inductive Shape :=
   new Shape.Rect(n, n)
 
 #guard square.check { is := Inductives.ofDecls [Shape] } []
+
+/-- Whether two trees are the same tree: the same constructors all the way down, carrying the same
+data.  A type being recursive is no obstacle to comparing two values of it — each value is finite —
+which is what makes this check. -/
+lgtm def sameTree as "same-tree" (a : inductive Tree) (b : inductive Tree) : bool :=
+  a == b
+
+#guard sameTree.check { is := Inductives.ofDecls [Tree] } []
+#guard !sameTree.check {} []
+
+/-- The same comparison on `Wrapped`, whose one constructor carries a function among its data. -/
+private def sameWrapped : FuncDecl :=
+  { sameTree with parameters := [("a", .ind "Wrapped"), ("b", .ind "Wrapped")] }
+
+#guard !sameWrapped.check { ss := Structs.ofDecls [Point], is := Inductives.ofDecls [Wrapped] } []
 
 end Tests

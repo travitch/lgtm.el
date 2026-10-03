@@ -116,6 +116,124 @@ public structure TypeDecls where
   is : Inductives := []
   deriving Repr
 
+/-! ## Comparable types
+
+What `Expression.equals` may be used at.  A deep structural comparison has to reach every value the
+values it is given are made of, and a closure is the one thing it can say nothing about: two
+functions are the same function when they agree on every argument, which is not something either
+value carries.  So `equals` is restricted to the types no function type is reachable from, and this
+is where that is decided.
+
+*Reachable* rather than mentioned, because a struct and an inductive type are only names: a `Point`
+says nothing about its fields until `td.ss` resolves it, so deciding this means walking the
+declarations a type leads to, and that walk has to be made finite.  A recursive type is why: `Tree
+{ Leaf, Node(Tree, Tree) }` leads to itself, so a walk that followed every name it met would never
+be done.  What bounds it is a budget of name steps, spent one per declaration opened and generous
+enough that running out means a name has been met twice — a cycle, which contributes no type the walk
+has not already seen, so `true` is the answer there.  `TypeDecls.budget` is where the size of it is
+argued.
+
+The definitions are exposed, for the reason `Expression.altsExhaustive` is: a proof that a
+declaration checks is left with one of these on a type and a table a program wrote out, and has to be
+able to see through it. -/
+
+/-- The names of every type `td` declares.  There are as many names a walk can meet as there are
+entries here, which is what `TypeDecls.budget` is counted from. -/
+@[expose] public def TypeDecls.names (td : TypeDecls) : List String :=
+  td.ss.map Prod.fst ++ td.is.map Prod.fst
+
+/-- How many declarations a comparability walk may open before it gives up and says `true`.
+
+One per name `td` declares, and one more.  That is enough to be sure that giving up is only ever a
+cycle: a function type reachable from a type is reachable by following *distinct* names — a path that
+repeats one can have the loop cut out of it and still arrive — so it is reachable within one step per
+declared name.  The extra step is for the name at the end of such a path being one `td` does not
+declare, which is a reason to say `false` and so has to be reached rather than assumed.
+
+A walk that still has budget when it meets a name it has already met is doing the same work twice and
+answering the same thing, so it costs nothing but time; a walk that runs out has gone deeper than any
+path of distinct names could, and the shorter path it is the loopy version of was walked as well. -/
+@[expose] public def TypeDecls.budget (td : TypeDecls) : Nat := td.names.length + 1
+
+/-- Is no function type reachable from `t`, with `sOk` and `iOk` deciding that for the structure and
+inductive names `t` mentions?
+
+The whole of the type side of comparability: the three leaves are comparable, a function type is not,
+a list is comparable exactly when its elements are, and a named type is whatever the oracle for its
+kind says.  Two oracles rather than one because `td` has two tables: a name may be both a structure
+type and an inductive type, and `Ty.struct` and `Ty.ind` resolve in different places.
+
+Leaving the names to an oracle is what keeps this recursion on `t` alone, which is what makes it
+compute: `TypeDecls.structComparable` is the oracle, and it spends the budget. -/
+@[expose] public def Ty.comparableWith (sOk iOk : String → Bool) : Ty → Bool
+  | .bool | .int | .string => true
+  | .fn _ _ => false
+  | .list t => Ty.comparableWith sOk iOk t
+  | .struct name => sOk name
+  | .ind name => iOk name
+
+mutual
+
+/-- Is no function type reachable from the structure type `name`, within `n` further declarations?
+
+The declaration has to be there — an undeclared name is a type nothing has a value of, so there is
+nothing to compare at it — and every type it gives a field has to be comparable, with the names *they*
+mention decided one step further down.
+
+`n = 0` is the budget running out, and the answer there is `true`: by then the walk is deeper than any
+path of distinct names, so it is going round a cycle, and a cycle adds nothing a shallower walk did
+not already see.  `TypeDecls.budget` is what makes that the only way to reach it. -/
+@[expose] public def TypeDecls.structComparable (td : TypeDecls) : Nat → String → Bool
+  | 0, _ => true
+  | n + 1, name =>
+    match td.ss.lookup name with
+    | some sd =>
+      sd.fields.all fun p =>
+        Ty.comparableWith (td.structComparable n) (td.indComparable n) p.2
+    | none => false
+
+/-- The same question for an inductive type, which carries lists of data types rather than named
+fields and is otherwise answered the same way. -/
+@[expose] public def TypeDecls.indComparable (td : TypeDecls) : Nat → String → Bool
+  | 0, _ => true
+  | n + 1, name =>
+    match td.is.lookup name with
+    | some d =>
+      d.constructors.all fun p =>
+        p.2.all fun t => Ty.comparableWith (td.structComparable n) (td.indComparable n) t
+    | none => false
+
+end
+
+/-- Can two values of type `t` be compared?  Which is to say: is no function type reachable from `t`
+among the types `td` declares. -/
+@[expose] public def Ty.comparable (td : TypeDecls) (t : Ty) : Bool :=
+  Ty.comparableWith (td.structComparable td.budget) (td.indComparable td.budget) t
+
+/-! What `Ty.comparable` comes to at each type former, which is what a proof that a declaration
+checks is left with.  The three leaves, a function type and a list need nothing of the tables and so
+are settled here once; a named type is the walk itself, and a proof meeting one of those computes
+`Ty.comparable` on the table its program wrote out — which `decide` is enough for. -/
+
+@[simp, grind =] public theorem Ty.comparable_bool {td : TypeDecls} :
+    Ty.comparable td .bool = true := rfl
+
+@[simp, grind =] public theorem Ty.comparable_int {td : TypeDecls} :
+    Ty.comparable td .int = true := rfl
+
+@[simp, grind =] public theorem Ty.comparable_string {td : TypeDecls} :
+    Ty.comparable td .string = true := rfl
+
+/-- A function type is the one thing a structural comparison cannot reach the bottom of, which is the
+whole reason this condition exists. -/
+@[simp, grind =] public theorem Ty.comparable_fn {td : TypeDecls} {ps : List Ty} {r : Ty} :
+    Ty.comparable td (.fn ps r) = false := rfl
+
+/-- A list is comparable exactly when its elements are: comparing two of them compares the elements,
+so a list of functions is no more comparable than a function is. -/
+@[simp, grind =] public theorem Ty.comparable_list {td : TypeDecls} {t : Ty} :
+    Ty.comparable td (.list t) = Ty.comparable td t := rfl
+
 /-! Two facts about `List.lookup` over a pair of association lists carrying the same keys in the
 same order.  Every rule about a struct is stated with `lookup`, and these are what carry a fact
 about one such list over to another: the field types a declaration gives, the expressions a
@@ -311,7 +429,9 @@ each of the three struct forms has to resolve it in `td.ss`: `structNew` to find
 initialize, `structGet` to find the type of the field it reads, and `structUpdate` to find the types
 of the fields it rebinds.  An inductive type is a name in the same way: `indNew` resolves it in
 `td.is` to find the data types its constructor takes, and `indMatch` to find the constructors it has
-to have an alternative for and the types those alternatives bind. -/
+to have an alternative for and the types those alternatives bind.  An `equals` needs it for a reason
+of its own: the type its operands share has to be one a comparison can reach the bottom of, which is
+`Ty.comparable`, and that is a question about the declarations the type leads to. -/
 public def Expression.infer (td : TypeDecls) (ctx : Context) : Expression → Option Ty
   | .lam ps body => do
     let r ← body.infer td (ps ++ ctx)
@@ -326,6 +446,11 @@ public def Expression.infer (td : TypeDecls) (ctx : Context) : Expression → Op
     let t ← thn.infer td ctx
     guard (els.infer td ctx == some t)
     some t
+  | .equals l r => do
+    let t ← l.infer td ctx
+    guard (r.infer td ctx == some t)
+    guard (Ty.comparable td t)
+    some .bool
   | .let_ x e body => do
     let t ← e.infer td ctx
     body.infer td ((x, t) :: ctx)
@@ -541,6 +666,27 @@ type is taken from. -/
     (Expression.ite c thn els).infer td ctx = some t ↔
       c.infer td ctx = some .bool ∧ thn.infer td ctx = some t ∧ els.infer td ctx = some t := by
   simp [Expression.infer, Option.bind_eq_some_iff, guard]
+
+/-- An `equals` is typeable exactly when its two operands have one type between them and that type is
+one a comparison can reach the bottom of — and then it is a `bool`, whatever that type was.
+
+The type is read off the left operand and then *required* of the right, the way `lcons` reads its
+element type off its head: there is nothing to compare two values of different types for, so one
+comparison covers the whole of what the form asks about its operands.
+
+`Ty.comparable` is the other half, and it is what "values of function type cannot be compared" comes
+to.  It is about the type rather than about either expression, and it rules out more than a function
+type itself: a struct with a field of function type is no more comparable than the field is, since
+comparing two of them would come down to comparing those.  The result type says none of this — a
+comparison is a `bool` however elaborate the values behind it were — which is why the operand type is
+existential here. -/
+@[simp, grind =] public theorem Expression.infer_equals_eq_some {td : TypeDecls} {ctx : Context}
+    {l r : Expression} {t : Ty} :
+    (Expression.equals l r).infer td ctx = some t ↔
+      ∃ t', l.infer td ctx = some t' ∧ r.infer td ctx = some t' ∧ Ty.comparable td t' = true
+        ∧ t = .bool := by
+  simp [Expression.infer, Option.bind_eq_some_iff, guard]
+  grind
 
 /-- A `let_` is typeable exactly when the expression it binds is and its body is under that name at
 that type, and then it has the body's type.
@@ -1178,13 +1324,27 @@ private def tree : InductiveDecl where
   name := "Tree"
   constructors := [("Leaf", [.int]), ("Node", [.ind "Tree", .ind "Tree"])]
 
+/-- A struct with a field of function type, which is the one thing a structural comparison cannot
+reach the bottom of. -/
+private def withFn : StructDecl where
+  name := "WithFn"
+  fields := [("label", .string), ("step", .fn [.int] .int)]
+
+/-- An inductive type that reaches a function type through a struct rather than carrying one, which
+is what makes `Ty.comparable` a question about the declarations a type leads to rather than about the
+type as written. -/
+private def holder : InductiveDecl where
+  name := "Holder"
+  constructors := [("Empty", []), ("Held", [.struct "WithFn"])]
+
 private def types : TypeDecls :=
-  { ss := Structs.ofDecls [point, box], is := Inductives.ofDecls [color, shape, tree] }
+  { ss := Structs.ofDecls [point, box, withFn],
+    is := Inductives.ofDecls [color, shape, tree, holder] }
 
 private def ctx : Context :=
   [("xs", .list .int), ("n", .int), ("s", .string), ("f", .fn [.int, .string] .int),
     ("p", .struct "Point"), ("b", .struct "Box"), ("c", .ind "Color"), ("sh", .ind "Shape"),
-    ("t", .ind "Tree"), ("flag", .bool)]
+    ("t", .ind "Tree"), ("flag", .bool), ("wf", .struct "WithFn"), ("hd", .ind "Holder")]
 
 -- Inference determines the type of every form.
 #guard (Expression.intLit 3).infer types ctx == some .int
@@ -1424,6 +1584,143 @@ which is what one is for. -/
 #guard (Expression.indMatch (.varRef "c")
   [("Red", [], .ite (.varRef "flag") (.intLit 0) (.intLit 1)), ("Green", [], .intLit 1),
     ("Blue", [], .intLit 2)]).infer types ctx == some .int
+
+/-! ### Equality
+
+Which types a comparison may be used at, which is `Ty.comparable`, and then what `equals` does with
+it: one type between the two operands, and a `bool` out of it whatever that type was. -/
+
+-- A function type is reachable from itself and from nothing else among the leaves, so those are
+-- comparable and it is not.
+#guard Ty.comparable types .int
+#guard Ty.comparable types .bool
+#guard Ty.comparable types .string
+#guard !Ty.comparable types (.fn [.int] .int)
+#guard !Ty.comparable types (.fn [] .int)
+
+-- A list is comparable exactly when its elements are, however deeply nested.
+#guard Ty.comparable types (.list .int)
+#guard Ty.comparable types (.list (.list .string))
+#guard !Ty.comparable types (.list (.fn [.int] .int))
+#guard !Ty.comparable types (.list (.list (.fn [.int] .int)))
+
+-- A named type is comparable when every type its declaration leads to is, which is why the
+-- declarations have to be walked: `Box` carries a `Point`, and `Holder` reaches a function type
+-- through a struct that carries one.
+#guard Ty.comparable types (.struct "Point")
+#guard Ty.comparable types (.struct "Box")
+#guard Ty.comparable types (.ind "Color")
+#guard Ty.comparable types (.ind "Shape")
+#guard !Ty.comparable types (.struct "WithFn")
+#guard !Ty.comparable types (.ind "Holder")
+#guard !Ty.comparable types (.list (.struct "WithFn"))
+
+-- A recursive type is comparable all the same: the cycle contributes no field type the walk has not
+-- already seen, and a value of one is finite however deep the type is.
+#guard Ty.comparable types (.ind "Tree")
+#guard Ty.comparable types (.list (.ind "Tree"))
+
+-- An undeclared name is a type nothing has a value of, so there is nothing to compare at it.
+#guard !Ty.comparable types (.struct "Nope")
+#guard !Ty.comparable types (.ind "Nope")
+#guard !Ty.comparable ({} : TypeDecls) (.struct "Point")
+
+/-! `TypeDecls.budget` at its boundary.  The tables below are the shapes the count has to be right
+for: a chain of distinct names as long as the table itself, and a cycle, which is what the walk gives
+up on rather than follows. -/
+
+/-- Four structure types in a chain, the last of them carrying a function: the longest path of
+distinct names a table of four can have. -/
+private def chain : TypeDecls :=
+  { ss := Structs.ofDecls
+      [{ name := "C1", fields := [("n", .struct "C2")] },
+        { name := "C2", fields := [("n", .struct "C3")] },
+        { name := "C3", fields := [("n", .struct "C4")] },
+        { name := "C4", fields := [("step", .fn [.int] .int)] }] }
+
+#guard !Ty.comparable chain (.struct "C1")
+#guard !Ty.comparable chain (.struct "C4")
+
+/-- The same chain ending in a name the table does not declare, which takes one step more than the
+one ending in a function type: the name has to be *reached* for its lookup to fail. -/
+private def chainMissing : TypeDecls :=
+  { ss := Structs.ofDecls
+      [{ name := "C1", fields := [("n", .struct "C2")] },
+        { name := "C2", fields := [("n", .struct "C3")] },
+        { name := "C3", fields := [("n", .struct "C4")] },
+        { name := "C4", fields := [("n", .struct "Missing")] }] }
+
+#guard !Ty.comparable chainMissing (.struct "C1")
+
+/-- Two structure types that carry each other, and one that carries itself alongside a function.
+
+Mutual recursion is a cycle the way direct recursion is, so the first two are comparable; the third
+is not, and it is not the cycle that decides it — a function type in the same declaration is found
+before the walk has anywhere to go round to. -/
+private def cycles : TypeDecls :=
+  { ss := Structs.ofDecls
+      [{ name := "A", fields := [("b", .struct "B")] },
+        { name := "B", fields := [("a", .struct "A"), ("n", .int)] },
+        { name := "R", fields := [("r", .struct "R"), ("step", .fn [] .int)] }] }
+
+#guard Ty.comparable cycles (.struct "A")
+#guard Ty.comparable cycles (.struct "B")
+#guard !Ty.comparable cycles (.struct "R")
+
+-- Two operands of one comparable type make a `bool`, whatever that type was.
+#guard (Expression.equals (.intLit 1) (.intLit 2)).infer types ctx == some .bool
+#guard (Expression.equals (.stringLit "a") (.varRef "s")).infer types ctx == some .bool
+#guard (Expression.equals (.boolLit true) (.varRef "flag")).infer types ctx == some .bool
+#guard (Expression.equals (.varRef "xs") (.lnil .int)).infer types ctx == some .bool
+#guard (Expression.equals (.varRef "p") (.varRef "p")).infer types ctx == some .bool
+#guard (Expression.equals (.varRef "b") (.varRef "b")).infer types ctx == some .bool
+#guard (Expression.equals (.varRef "c") (.varRef "c")).infer types ctx == some .bool
+#guard (Expression.equals (.varRef "t") (.varRef "t")).infer types ctx == some .bool
+#guard (Expression.equals (.intLit 1) (.intLit 2)).infer {} [] == some .bool
+
+-- The type is read off the left operand and then required of the right, so operands of different
+-- types have nothing to compare.
+#guard (Expression.equals (.intLit 1) (.stringLit "a")).infer types ctx == none
+#guard (Expression.equals (.varRef "n") (.varRef "flag")).infer types ctx == none
+#guard (Expression.equals (.varRef "xs") (.varRef "n")).infer types ctx == none
+#guard (Expression.equals (.lnil .int) (.lnil .string)).infer types ctx == none
+#guard (Expression.equals (.varRef "p") (.varRef "b")).infer types ctx == none
+#guard (Expression.equals (.varRef "c") (.varRef "sh")).infer types ctx == none
+
+-- An ill-typed operand on either side makes the comparison ill typed.
+#guard (Expression.equals (.varRef "nope") (.intLit 1)).infer types ctx == none
+#guard (Expression.equals (.intLit 1) (.varRef "nope")).infer types ctx == none
+#guard (Expression.equals (.plus (.intLit 1) (.stringLit "a")) (.intLit 1)).infer types ctx == none
+
+-- And operands of a type a comparison cannot reach the bottom of are rejected, however the function
+-- type is arrived at: directly, under a list, or through a declaration.
+#guard (Expression.equals (.varRef "f") (.varRef "f")).infer types ctx == none
+#guard (Expression.equals (.lam [("x", .int)] (.varRef "x"))
+  (.lam [("x", .int)] (.varRef "x"))).infer types ctx == none
+#guard (Expression.equals (.lnil (.fn [.int] .int)) (.lnil (.fn [.int] .int))).infer types ctx
+  == none
+#guard (Expression.equals (.varRef "wf") (.varRef "wf")).infer types ctx == none
+#guard (Expression.equals (.varRef "hd") (.varRef "hd")).infer types ctx == none
+
+-- A struct type whose declaration the table does not have is no more comparable than the comparison
+-- is typeable without it.
+#guard (Expression.equals (.varRef "p") (.varRef "p")).infer {} ctx == none
+
+-- A comparison is an expression like any other: it goes where a `bool` goes, and its operands are
+-- whatever has the type they share.
+#guard (Expression.ite (.equals (.varRef "n") (.intLit 1)) (.intLit 1) (.intLit 2)).infer types ctx
+  == some .int
+#guard (Expression.equals (.equals (.varRef "n") (.intLit 1)) (.varRef "flag")).infer types ctx
+  == some .bool
+#guard (Expression.equals (.plus (.varRef "n") (.intLit 1)) (.varRef "n")).infer types ctx
+  == some .bool
+#guard (Expression.equals (.structGet (.varRef "p") "x") (.intLit 0)).infer types ctx == some .bool
+#guard (Expression.equals (.lcons (.intLit 1) (.varRef "xs")) (.varRef "xs")).infer types ctx
+  == some .bool
+#guard (Expression.lam [("q", .ind "Tree")] (.equals (.varRef "q") (.varRef "t"))).infer types ctx
+  == some (.fn [.ind "Tree"] .bool)
+#guard (Expression.let_ "e" (.equals (.varRef "n") (.intLit 1)) (.varRef "e")).infer types ctx
+  == some .bool
 
 -- Checking agrees with inference.
 #guard (Expression.lnil .int).check types ctx (.list .int)
