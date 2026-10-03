@@ -1178,7 +1178,7 @@ public theorem Program.lookupInductive_self {p : Program} (hu : p.InductiveNames
     {d : InductiveDecl} (hd : d ∈ p.inductiveDecls) : p.lookupInductive d.name = some d :=
   Inductives.lookup_ofDecls_self hu hd
 
-/-- `sd` declares no field name twice.
+/-- `sd` has unique field names. [tag:struct_field_names_unique]
 
 The conditions above are about one table of declarations each; this one is inside a single
 declaration, because `StructDecl.fields` is a table too — an association list `structGet` and

@@ -10,29 +10,15 @@ public inductive Ty where
 | fn : List Ty → Ty → Ty
 /-- A declared structure type (matched nominally). -/
 | struct : String → Ty
-/-- A declared inductive type, named rather than spelled out: the constructors live in the
-`InductiveDecl` the name resolves to.
-
-Nominal in exactly the way `struct` is, and for the same reason: the name is the whole type, so two
-declarations listing the same constructors are unrelated types and neither says anything until there
-is a table to resolve its name in. -/
+/-- A declared inductive type (matched nominally). -/
 | ind : String → Ty
   deriving Repr
 
 public abbrev FieldName := String
 
-/-- A structure type declaration: the name the type is referred to by, and the fields it has, in the
-order they were written, each with its type.
+/-- A structure type declaration with named and typed fields.
 
-A `Ty.struct` only carries the name, so this is the only place a field's type is recorded and every
-rule about a struct goes through the declaration the name resolves to.  What resolving a name means
-is `Structs.lookup`'s business, and `Program.StructNamesUnique` is what rules out the case where
-the order of declarations decides it.
-
-No two fields may share a name, which is `StructDecl.FieldNamesUnique`: the fields are an
-association list `structGet` and `structUpdate` read with `List.lookup`, so a second field of a
-name already used is one nothing can read.  `Program.check` turns down a declaration that has one,
-and a field name is scoped to its own structure, so two of them may each have an `x`. -/
+Field names must be unique (see `StructDecl.FieldNamesUnique` [ref:struct_field_names_unique]). -/
 public structure StructDecl where
   name : String
   fields : List (FieldName × Ty)
