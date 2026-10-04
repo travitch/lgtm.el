@@ -80,6 +80,10 @@ lgtm inductive CommentLocation {
   FileLocation(struct CommentFileLocation)
 }
 
+lgtm struct ServerId {
+  id : string
+}
+
 /-! ## What this module contributes to the model
 
 `lgtm` builds one Lean declaration per IR declaration and nothing that collects them, so the lists
@@ -92,7 +96,7 @@ declaration nothing type checks, which is what `Model.Tests` has a check against
 
 /-- The structure types this module declares, in the order they are declared above. -/
 def Model.Basic.structDecls : List StructDecl :=
-  [CommentRef, FileRef, GitRevision, RepositoryRef, ModifiedFileRef, CommentFileLocation]
+  [CommentRef, FileRef, GitRevision, RepositoryRef, ModifiedFileRef, CommentFileLocation, ServerId]
 
 /-- The inductive types this module declares, in the order they are declared above. -/
 def Model.Basic.inductiveDecls : List InductiveDecl :=
