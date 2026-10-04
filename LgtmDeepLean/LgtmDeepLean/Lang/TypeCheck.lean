@@ -18,20 +18,7 @@ public theorem Context.lookup_append {ctx₁ ctx₂ : Context} {x : String} :
       obtain ⟨k, t⟩ := p
       by_cases h : x == k <;> simp [List.lookup_cons, h, ih]
 
-/-! ## Structure declarations
-
-The types a `Ty.struct` can name.  A `Structs` is to structure types what `Globals` is to
-declarations: one table, keyed by the name each entry declares, that the whole program is checked
-against.
-
-Unlike `Globals` it never turns into a `Context`, and so it has to be threaded through
-`Expression.infer` explicitly — as the `ss` field of the `TypeDecls` below, which is the parameter
-inference actually takes.  A global can be folded into the context before inference starts —
-its name is a variable, and `Globals.types` is the bindings it contributes — where a struct name is
-not a variable at all.  Nothing mentions a struct type without also mentioning one of the three
-struct forms, and each of those resolves its name here. -/
-
-/-- The structure types in scope everywhere, each under the name it declares. -/
+/-- The structure types in scope everywhere, keyed by the names they declare. -/
 public abbrev Structs := List (String × StructDecl)
 
 /-- Key each structure declaration by the name it declares. -/
@@ -43,14 +30,7 @@ public abbrev Structs := List (String × StructDecl)
 @[simp] public theorem Structs.ofDecls_cons (s : StructDecl) (sds : List StructDecl) :
     Structs.ofDecls (s :: sds) = (s.name, s) :: Structs.ofDecls sds := by simp [Structs.ofDecls]
 
-/-! ## Inductive type declarations
-
-The types a `Ty.ind` can name.  An `Inductives` is to inductive types exactly what `Structs` is to
-structure types — one table, keyed by the name each entry declares — and it is threaded through
-inference for the same reason: an inductive type's name is not a variable, so there is nothing for a
-`Context` to say about it. -/
-
-/-- The inductive types in scope everywhere, each under the name it declares. -/
+/-- The inductive types in scope everywhere, keyed by the names they declare. -/
 public abbrev Inductives := List (String × InductiveDecl)
 
 /-- Key each inductive declaration by the name it declares. -/
@@ -64,16 +44,15 @@ public abbrev Inductives := List (String × InductiveDecl)
     Inductives.ofDecls (d :: ids) = (d.name, d) :: Inductives.ofDecls ids := by
   simp [Inductives.ofDecls]
 
-/-- The one type every entry of `ts` is, or `none` if they differ or there are none of them.
+/-- If all of the given types are the same, return that type.  Otherwise `none`.
 
-This is what an `indMatch` has to be able to do with the types of its alternatives: the match has one
-type, so they all have to be that one.  There is no expected type to fall back on for an empty list,
-so `none` it is — which is what makes a match over a type with no constructors ill typed. -/
+This is used to validate that all of the branches of an `indMatch` have the same type.  If the list
+is empty, also return `none`. -/
 public def Ty.common : List Ty → Option Ty
   | [] => none
   | t :: ts => if ts.all (· == t) then some t else none
 
-/-- `Ty.common` is what it says it is: a type they all are, and there is at least one of them. -/
+/-- `Ty.common` satisfies its documented behavior. -/
 @[simp, grind =] public theorem Ty.common_eq_some {ts : List Ty} {t : Ty} :
     Ty.common ts = some t ↔ ts ≠ [] ∧ ∀ t' ∈ ts, t' = t := by
   cases ts with
@@ -96,23 +75,10 @@ public def Ty.common : List Ty → Option Ty
           List.all_eq_true.mpr fun t' ht' => by simp [hall t' (List.mem_cons_of_mem _ ht')]
         simp [Ty.common, hcond]
 
-/-! ## Type declarations
-
-Every table a type name resolves in, bundled into one parameter.  There are two of them —
-`Structs` and `Inductives` — and the bundle is what keeps them from being two parameters threaded
-through `Expression.infer`, `Value.HasType`, `Eval`, and every rule stated over them: a further kind
-of declaration adds a field here and nothing else changes shape.
-
-Every field defaults to empty, so `{}` is the bundle that declares no types at all — the one a
-program using none of them is checked against. -/
-
-/-- The type declarations in scope everywhere: one bundle, threaded through everything that has a
-type name to resolve. -/
+/-- The type declarations in scope everywhere in a given program. -/
 public structure TypeDecls where
-  /-- The structure types, each under the name it declares. -/
-  ss : Structs := []
-  /-- The inductive types, each under the name it declares. -/
-  is : Inductives := []
+  ss : Structs
+  is : Inductives
   deriving Repr
 
 /-! ## Comparable types
