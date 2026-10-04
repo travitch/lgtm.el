@@ -4,23 +4,16 @@ public import LgtmDeepLean.Lang.TypeCheck.TypeDecls
 
 /-! # Uniqueness
 
-Five tables a program is made of and one condition apiece: no two entries of any of them share the
-name it is keyed by.  `List.lookup` takes the leftmost entry of a repeated name, so each of these
-rules out an entry the order of writing has made dead.
+This module defines infrastructure for stating and checking the required uniqueness properties
+for well-formed programs:
 
-Three of them are across declarations — `NamesUnique`, `StructNamesUnique`, `InductiveNamesUnique`
-— and two are inside one: `StructDecl.FieldNamesUnique` and `InductiveDecl.CtorNamesUnique`.  Only
-the latter two are part of `Program.check`, and the split is what the surface syntax can do about
-each.  A repeated field or constructor is written in the one command that declares the type, so
-`lgtm struct` and `lgtm inductive` reject it outright and `Program.check` is the same rejection for
-a `Program` built by hand.  A repeated *declaration* name is two commands that cannot see each
-other, and what it costs is a program meaning less than it looks like it does rather than a
-declaration that is malformed, so those three stay conditions a proof states where it needs the
-lookup to resolve.
+- Functions/globals must have unique names
+- Structure fields must have unique names within a single structure
+- Inductive constructors must have unique names within a single inductive
+- Structures must have unique names within a program
+- Inductives must have unique names within a program.
 
-Each condition is here with what it buys: a `lookup` that resolves every entry of the table to
-itself.  The two facts about `List.lookup` under a `Nodup` that all five rest on are here too, as
-nothing else needs them. -/
+-/
 
 /-- With no two entries sharing a key, every entry of an association list is the one its own key
 resolves to.
@@ -30,7 +23,7 @@ repeated key is resolved to its leftmost entry, so nothing further along is reac
 `List.lookup_keyed_self` is the same fact for a list keyed by a function, which is how a table
 of declarations is built; this is for one that is already a list of pairs, which is what an
 inductive declaration's constructors are. -/
-public theorem List.lookup_of_mem {α β : Type} [BEq α] [LawfulBEq α] {l : List (α × β)}
+private theorem List.lookup_of_mem {α β : Type} [BEq α] [LawfulBEq α] {l : List (α × β)}
     (hu : (l.map Prod.fst).Nodup) {k : α} {b : β} (h : (k, b) ∈ l) : l.lookup k = some b := by
   induction l with
   | nil => simp at h
@@ -49,7 +42,7 @@ public theorem List.lookup_of_mem {α β : Type} [BEq α] [LawfulBEq α] {l : Li
 `Globals.ofDecls` and `Structs.ofDecls` both build a table this way — from the declarations a program
 is written as, keyed by the name each one declares — so this is the one fact both need: with no two
 entries sharing a key, none of them is shadowed. -/
-public theorem List.lookup_keyed_self {α β : Type} [BEq α] [LawfulBEq α] {f : β → α} {bs : List β}
+private theorem List.lookup_keyed_self {α β : Type} [BEq α] [LawfulBEq α] {f : β → α} {bs : List β}
     (hu : (bs.map f).Nodup) {b : β} (hb : b ∈ bs) :
     (bs.map fun x => (f x, x)).lookup (f b) = some b := by
   induction bs with
@@ -64,21 +57,21 @@ public theorem List.lookup_keyed_self {α β : Type} [BEq α] [LawfulBEq α] {f 
         simpa [hne] using ih hu.2 hb'
 
 /-- With no repeated names, `Globals.ofDecls` resolves every declaration to itself. -/
-public theorem Globals.lookup_ofDecls_self {ds : List FuncDecl} (hu : (ds.map FuncDecl.name).Nodup)
+private theorem Globals.lookup_ofDecls_self {ds : List FuncDecl} (hu : (ds.map FuncDecl.name).Nodup)
     {d : FuncDecl} (hd : d ∈ ds) : (Globals.ofDecls ds).lookup d.name = some d := by
   simpa [Globals.ofDecls] using List.lookup_keyed_self hu hd
 
 /-- With no repeated names, `Structs.ofDecls` resolves every structure declaration to itself.  This
 is what `Program.StructNamesUnique` buys, exactly as `Globals.lookup_ofDecls_self` is what
 `Program.NamesUnique` buys. -/
-public theorem Structs.lookup_ofDecls_self {sds : List StructDecl}
+private theorem Structs.lookup_ofDecls_self {sds : List StructDecl}
     (hu : (sds.map StructDecl.name).Nodup) {sd : StructDecl} (hd : sd ∈ sds) :
     (Structs.ofDecls sds).lookup sd.name = some sd := by
   simpa [Structs.ofDecls] using List.lookup_keyed_self hu hd
 
 /-- With no repeated names, `Inductives.ofDecls` resolves every inductive declaration to itself: the
 same fact again, for the other table `Program.InductiveNamesUnique` is about. -/
-public theorem Inductives.lookup_ofDecls_self {ids : List InductiveDecl}
+private theorem Inductives.lookup_ofDecls_self {ids : List InductiveDecl}
     (hu : (ids.map InductiveDecl.name).Nodup) {d : InductiveDecl} (hd : d ∈ ids) :
     (Inductives.ofDecls ids).lookup d.name = some d := by
   simpa [Inductives.ofDecls] using List.lookup_keyed_self hu hd
