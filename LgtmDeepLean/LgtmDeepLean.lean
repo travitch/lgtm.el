@@ -8,8 +8,10 @@ public import LgtmDeepLean.Lang.IR
 public import LgtmDeepLean.Lang.Syntax
 public import LgtmDeepLean.Lang.TypeCheck
 public import LgtmDeepLean.Lang.TypeCheck.Comparable
+public import LgtmDeepLean.Lang.TypeCheck.Infer
 import LgtmDeepLean.Lang.TypeCheck.Tests
 public import LgtmDeepLean.Lang.TypeCheck.TypeDecls
+public import LgtmDeepLean.Lang.TypeCheck.Uniqueness
 public import LgtmDeepLean.Lang.Value
 
 public import LgtmDeepLean.Model.Basic
