@@ -1,28 +1,19 @@
 module
 
-public import LgtmDeepLean.Model.Basic
-meta import LgtmDeepLean.Lang.Syntax
-meta import LgtmDeepLean.Model.Basic
+public import LgtmDeepLean.Model.Location.Operations
+meta import LgtmDeepLean.Model.Location.Operations
 
-/-! # Comment locations and thread locations
+/-! # What the location functions return
 
-Where a comment sits, where a thread sits, and the conversion from the first to the second: the two
-declarations of the model that read `CommentLocation`, and what the relational semantics says they
-return for a top-level location.
+The facts about the declarations in `LgtmDeepLean.Model.Location.Operations`: what the relational
+semantics says each of them returns for a top-level location, and the values those answers are
+stated in terms of.
 
-The declarations and the facts about them are both for callers elsewhere to read, so, as in
+Apart from the declarations themselves because the two are read for different reasons — the
+declarations are the model, which `modelProgram` collects and extraction reads, and these are facts
+a proof elsewhere needs about it.  The facts are for callers elsewhere to read too, so, as in
 `Model.Basic`, this module hands out and exposes everything it declares. -/
 @[expose] public section
-
-lgtm def CommentLocation.isTopLevel (loc : inductive CommentLocation) : bool :=
-  match loc with
-  | TopLevel => true
-  | FileLocation(_loc) => false
-
-lgtm def CommentLocation.asThreadLocation (loc : inductive CommentLocation) : inductive ThreadLocation :=
-  match loc with
-  | TopLevel => new ThreadLocation.TopLevel()
-  | FileLocation(floc) => new ThreadLocation.LineNumber(floc.startLine)
 
 /-- The value `CommentLocation`'s `TopLevel` builds, which is what the shallow model writes as
 `CommentLocation.topLevel`.  A constructor that carries nothing carries an empty list. -/
@@ -133,15 +124,5 @@ theorem exists_topLevel_asThreadLocation_isTopLevel :
     ∃ tl, CommentLocation.asThreadLocation.Apply locationTypes [] [CommentLocation.topLevelValue] tl
       ∧ ThreadLocation.isTopLevel.Apply locationTypes [] [tl] (.bool true) :=
   ⟨_, eval_asThreadLocation_topLevel, eval_isTopLevel_topLevel⟩
-
-/-! ## What this module contributes to the model
-
-As in `Model.Basic`: what this module hands to `modelProgram`.  The types the two functions mention
-are declared there, so there is no list of types here — a module that declares none of a kind leaves
-that list out rather than writing it empty, and `Model.Program` reads only the lists that exist. -/
-
-/-- The functions this module declares, in the order they are declared above. -/
-def Model.Location.funcDecls : List FuncDecl :=
-  [CommentLocation.isTopLevel, CommentLocation.asThreadLocation]
 
 end

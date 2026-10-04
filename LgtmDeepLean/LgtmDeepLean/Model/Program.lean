@@ -1,7 +1,7 @@
 module
 
 public import LgtmDeepLean.Model.Basic
-public import LgtmDeepLean.Model.Location
+public import LgtmDeepLean.Model.Location.Operations
 
 /-! # The model as one program
 
