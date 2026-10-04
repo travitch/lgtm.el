@@ -76,12 +76,7 @@ private theorem Inductives.lookup_ofDecls_self {ids : List InductiveDecl}
     (Inductives.ofDecls ids).lookup d.name = some d := by
   simpa [Inductives.ofDecls] using List.lookup_keyed_self hu hd
 
-/-- No two declarations share a name.
-
-`Program.lookup` takes the leftmost of a repeated name, so without this a second declaration of a
-name already used is dead: `Program.check` still checks it, but nothing can call it.  Soundness does
-not need this — a lookup is deterministic either way — but `Program.lookup_self` does, and so does
-reading a program as "these declarations" rather than "these declarations, some of them shadowed". -/
+/-- No two declarations share a name. -/
 @[expose] public def Program.NamesUnique (p : Program) : Prop :=
   (p.funcDecls.map FuncDecl.name).Nodup
 
@@ -96,13 +91,7 @@ public theorem Program.lookup_self {p : Program} (hu : p.NamesUnique) {d : FuncD
     (hd : d ∈ p.funcDecls) : p.lookup d.name = some d :=
   Globals.lookup_ofDecls_self hu hd
 
-/-- No two structure declarations share a name.
-
-The counterpart of `Program.NamesUnique`, and it matters for the same reason: `Structs.lookup` takes
-the leftmost of a repeated name, so a second declaration of a name already used declares a type
-nothing can mention.  It matters *more* than `NamesUnique` does, though, because a struct name is
-what a `Ty.struct` is: two declarations under one name would make one type with two sets of fields,
-and which set a program meant would come down to the order they were written in. -/
+/-- No two structure declarations share a name. -/
 @[expose] public def Program.StructNamesUnique (p : Program) : Prop :=
   (p.structDecls.map StructDecl.name).Nodup
 
@@ -115,12 +104,7 @@ public theorem Program.lookupStruct_self {p : Program} (hu : p.StructNamesUnique
     {sd : StructDecl} (hd : sd ∈ p.structDecls) : p.lookupStruct sd.name = some sd :=
   Structs.lookup_ofDecls_self hu hd
 
-/-- No two inductive declarations share a name.
-
-`Program.StructNamesUnique` for the other kind of type declaration, and it matters for the same
-reason: a `Ty.ind` is a name, so two declarations under one name would make one type with two sets of
-constructors and leave the order they were written in to decide which one a match has to be
-exhaustive over. -/
+/-- No two inductive declarations share a name. -/
 @[expose] public def Program.InductiveNamesUnique (p : Program) : Prop :=
   (p.inductiveDecls.map InductiveDecl.name).Nodup
 
@@ -133,17 +117,7 @@ public theorem Program.lookupInductive_self {p : Program} (hu : p.InductiveNames
     {d : InductiveDecl} (hd : d ∈ p.inductiveDecls) : p.lookupInductive d.name = some d :=
   Inductives.lookup_ofDecls_self hu hd
 
-/-- `sd` has unique field names. [tag:struct_field_names_unique]
-
-The conditions above are about one table of declarations each; this one is inside a single
-declaration, because `StructDecl.fields` is a table too — an association list `structGet` and
-`structUpdate` read with `List.lookup`, which takes the leftmost entry of a repeated name.  A field
-repeating a name already used is therefore one nothing can read and nothing can rebind, while
-`structNew` compares its keys positionally and so still makes every value of the type carry it.
-
-It is a condition on the declaration rather than on the program because that is the whole of what
-it says: unlike a type name, a field name is scoped to the structure that declares it, so two
-structs may each have an `x`. -/
+/-- `sd` has unique field names. [tag:struct_field_names_unique] -/
 @[expose] public def StructDecl.FieldNamesUnique (sd : StructDecl) : Prop :=
   (sd.fields.map Prod.fst).Nodup
 
