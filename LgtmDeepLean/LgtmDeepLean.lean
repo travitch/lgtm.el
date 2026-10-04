@@ -7,6 +7,7 @@ import LgtmDeepLean.Lang.Eval.Tests
 public import LgtmDeepLean.Lang.IR
 public import LgtmDeepLean.Lang.Syntax
 public import LgtmDeepLean.Lang.TypeCheck
+import LgtmDeepLean.Lang.TypeCheck.Tests
 public import LgtmDeepLean.Lang.Value
 
 public import LgtmDeepLean.Model.Basic
