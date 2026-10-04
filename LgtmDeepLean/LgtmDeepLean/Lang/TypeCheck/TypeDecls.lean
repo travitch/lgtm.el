@@ -2,17 +2,6 @@ module
 
 public import LgtmDeepLean.Lang.IR
 
-/-! # The type declarations in scope
-
-What a program's struct and inductive declarations look like once they are something to be looked up
-in rather than a list to be read through, which is how everything downstream of `IR` takes them: the
-type checker, the comparability walk, `Value.HasType` and `Eval` all resolve a type's name against
-the same two tables.
-
-Only the tables are here.  What is asked of them — that no two entries share a name, that a lookup
-finds what a declaration put there — belongs to whoever asks, and is in
-`LgtmDeepLean.Lang.TypeCheck` with the other uniqueness conditions. -/
-
 /-- The structure types in scope everywhere, keyed by the names they declare. -/
 public abbrev Structs := List (String × StructDecl)
 
