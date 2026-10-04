@@ -15,3 +15,4 @@ public import LgtmDeepLean.Lang.TypeCheck.Uniqueness
 public import LgtmDeepLean.Lang.Value
 
 public import LgtmDeepLean.Model.Basic
+public import LgtmDeepLean.Model.Location
