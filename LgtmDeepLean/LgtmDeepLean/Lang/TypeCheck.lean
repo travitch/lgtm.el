@@ -1204,17 +1204,7 @@ public theorem StructDecl.lookup_field_self {sd : StructDecl} (hu : sd.FieldName
     {f : FieldName} {t : Ty} (hf : (f, t) ∈ sd.fields) : sd.fields.lookup f = some t :=
   List.lookup_of_mem hu hf
 
-/-- `d` declares no constructor name twice.
-
-`StructDecl.FieldNamesUnique` for the other kind of type declaration, and it is inside the
-declaration for the same reason: `InductiveDecl.constructors` is an association list `indNew` and
-`inferAlts` both read with `List.lookup`, which takes the leftmost entry of a repeated name.  A
-constructor repeating a name already used is therefore one nothing can build a value with and no
-alternative can be checked against, while `Expression.altsExhaustive` still counts it and so makes
-every match on the type write an alternative that can never run.
-
-A constructor name is scoped to its own type in the way a field name is — `indNew` names the type
-as well — so two types may each have a `Red`, and one declaration never constrains another. -/
+/-- `d` has unique constructor names [tag:inductive_constructor_names_unique]. -/
 @[expose] public def InductiveDecl.CtorNamesUnique (d : InductiveDecl) : Prop :=
   (d.constructors.map Prod.fst).Nodup
 
