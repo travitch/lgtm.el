@@ -80,4 +80,26 @@ lgtm inductive CommentLocation {
   FileLocation(struct CommentFileLocation)
 }
 
+/-! ## What this module contributes to the model
+
+`lgtm` builds one Lean declaration per IR declaration and nothing that collects them, so the lists
+below are what says which declarations this module hands to `modelProgram` — the `Program` the model
+as a whole is read as, assembled in `LgtmDeepLean.Model.Program` and type checked by
+`LgtmDeepLean.Model.Tests`.
+
+A declaration added above goes in the list for its kind.  One left out is not a Lean error; it is a
+declaration nothing type checks, which is what `Model.Tests` has a check against. -/
+
+/-- The structure types this module declares, in the order they are declared above. -/
+def Model.Basic.structDecls : List StructDecl :=
+  [CommentRef, FileRef, GitRevision, RepositoryRef, ModifiedFileRef, CommentFileLocation]
+
+/-- The inductive types this module declares, in the order they are declared above. -/
+def Model.Basic.inductiveDecls : List InductiveDecl :=
+  [FileVersion, ThreadLocation, ModificationType, CommentLocation]
+
+/-- The functions this module declares, in the order they are declared above. -/
+def Model.Basic.funcDecls : List FuncDecl :=
+  [ThreadLocation.isTopLevel, pathOfFileAtVersion]
+
 end

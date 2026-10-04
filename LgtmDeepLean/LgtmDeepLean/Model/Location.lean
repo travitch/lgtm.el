@@ -134,4 +134,14 @@ theorem exists_topLevel_asThreadLocation_isTopLevel :
       ∧ ThreadLocation.isTopLevel.Apply locationTypes [] [tl] (.bool true) :=
   ⟨_, eval_asThreadLocation_topLevel, eval_isTopLevel_topLevel⟩
 
+/-! ## What this module contributes to the model
+
+As in `Model.Basic`: what this module hands to `modelProgram`.  The types the two functions mention
+are declared there, so there is no list of types here — a module that declares none of a kind leaves
+that list out rather than writing it empty, and `Model.Program` reads only the lists that exist. -/
+
+/-- The functions this module declares, in the order they are declared above. -/
+def Model.Location.funcDecls : List FuncDecl :=
+  [CommentLocation.isTopLevel, CommentLocation.asThreadLocation]
+
 end
