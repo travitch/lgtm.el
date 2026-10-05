@@ -118,7 +118,7 @@ declaration nothing type checks, which is what `Model.Tests` has a check against
 
 /-- The structure types this module declares, in the order they are declared above. -/
 def Model.Basic.structDecls : List StructDecl :=
-  [CommentRef, FileRef, GitRevision, RepositoryRef, ModifiedFileRef, CommentFileLocation, ServerId, Comment]
+  [CommentRef, FileRef, GitRevision, RepositoryRef, ModifiedFileRef, CommentFileLocation, ServerId, Comment, CommentThread]
 
 /-- The inductive types this module declares, in the order they are declared above. -/
 def Model.Basic.inductiveDecls : List InductiveDecl :=

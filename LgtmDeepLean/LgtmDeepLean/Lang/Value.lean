@@ -25,6 +25,24 @@ exactly as `list` is, and it holds no type: an empty option is empty whatever it
 same way an empty list is, so it is `Value.HasType` that says at which type. -/
 | option : Option Value → Value
 | list : List Value → Value
+/-- A hashmap, as the bindings it carries: one pair per key it binds, each key beside the value it
+is bound to.
+
+An association list rather than anything cleverer, for the reason `Value.struct` carries one: what
+a hashmap *is* here is a finite map, and a list of pairs is the shape in which `Eval` can both read
+one and rebind one with no declaration and no ordering to hand.  `KeyValues.erase?` is what keeps a
+key from appearing twice, so a put removes the binding it replaces rather than shadowing it.
+
+The *order* of the bindings is the order they were put in, and nothing canonicalizes it: two maps
+binding the same keys to the same values are different `Value`s whenever they were built in
+different orders.  That is why `Ty.comparable` turns a hashmap type down — a structural comparison
+would answer something other than whether the two are the same map — and it is the one thing a
+canonical form would change.
+
+It holds no types, as `list` holds none: at which types its keys and values stand is what
+`Value.HasType` says, and an empty hashmap has every hashmap type the way an empty list has every
+list type. -/
+| hashmap : List (Value × Value) → Value
 /-- A function together with the environment it was written in: the bindings it captured and the
 globals it was reached among, then the parameters and body of the `lam` itself.
 
@@ -76,6 +94,17 @@ The `Value`-level counterpart of a `StructDecl`'s `fields`, and, like `Bindings`
 that cannot be used in the constructor it describes: it mentions `Value`, so it has to come after
 it. -/
 public abbrev FieldValues := List (FieldName × Value)
+
+/-- What a hashmap binds: one pair per key, each key beside its value.
+
+The `Value`-level counterpart of nothing at all — a hashmap type relates two types and names no
+declaration — and, like `FieldValues`, an abbreviation that cannot be used in the constructor it
+describes.
+
+Both halves are `Value`s, so this is read by `Value.beq?` rather than by `List.lookup`: a key is
+found by comparing it with the keys the map carries, which is a comparison that may have no answer.
+`KeyValues.lookup?` and `KeyValues.erase?` are where that happens. -/
+public abbrev KeyValues := List (Value × Value)
 
 /-- `fvs` with every field `us` names rebound to the value `us` gives it: the fields `structUpdate`
 produces.
@@ -236,6 +265,7 @@ public theorem Value.beq?_eq_some_iff : ∀ (a b : Value) (r : Bool),
       intro h
       simpa using Value.beqList?_eq_some_iff as bs r (by simpa [Value.beq?] using h)
     | _ => simp [Value.beq?]
+  | .hashmap kvs, b, r => by cases b <;> simp [Value.beq?]
   | .closure cb cg ps body, b, r => by cases b <;> simp [Value.beq?]
   | .struct n fas, b, r => by
     cases b with
@@ -312,6 +342,107 @@ public theorem Value.eq_of_beq? {a b : Value} (h : Value.beq? a b = some true) :
 public theorem Value.ne_of_beq? {a b : Value} (h : Value.beq? a b = some false) : a ≠ b := by
   intro heq
   simpa using (Value.beq?_eq_some_iff a b false h).mpr heq
+
+/-! ## Reading and rebinding a hashmap
+
+The two walks along a hashmap's bindings, and what each of them finds.  Both are `Value.beq?` run
+along the keys, so both are partial for the reason it is: a key the given one cannot be compared
+with is one no answer about that key could be given over, and that is the `none` of the outer
+option.  `Ty.comparable` on the key type is what the three typing rules rule it out with, exactly as
+`equals` rules out an incomparable operand — a well-typed hashmap form is one neither of these ever
+gives up on.
+
+They are functions rather than rules of `Eval` for the reason `Value.beq?` is one: there is nothing
+about *evaluation* in either.  A key is bound to a value or it is not, and these say which, given
+that it can be said at all. -/
+
+/-- The value `k` is bound to in `kvs`, or `none` where a key cannot be compared with `k`.
+
+The two options are not the same question.  The outer one is whether the lookup has an answer; the
+inner one is the answer, and `some none` — a map that does not bind `k` — is as ordinary a result as
+a value is.  That is why `hashmapGet` has an option type: a key the map does not bind is not an
+error, and `optionMatch` is what reads the two cases.
+
+The first match wins and the keys after it go uncompared, the way `List.lookup` stops at the first
+binding.  Nothing is lost by that: `KeyValues.erase?` is what a put rebinds with, so no key is bound
+twice for a later binding to be the one meant. -/
+@[expose] public def KeyValues.lookup? : KeyValues → Value → Option (Option Value)
+  | [], _ => some none
+  | (k', v') :: kvs, k =>
+    match Value.beq? k' k with
+    | some true => some (some v')
+    | some false => KeyValues.lookup? kvs k
+    | none => none
+
+/-- `kvs` with any binding for `k` dropped, or `none` where a key cannot be compared with `k`.
+
+This is what a put rebinds with: the new binding goes on the front of this, so the previous binding
+for that key is gone rather than shadowed and a key is never bound twice.  Rebinding this way rather
+than in place — which is what `FieldValues.update` does for a struct — is the difference between a
+map, whose keys arrive as values and may be new, and a struct, whose fields are its declaration's
+and are all of them there already.
+
+Every key is compared, including those after the one that matched: a map carrying a key that cannot
+be compared with `k` has no answer here even where an earlier key already matched, so an erase
+succeeds exactly when it could look everywhere it would have had to.  `Value.beqList?` is partial in
+the same way and for the same reason. -/
+@[expose] public def KeyValues.erase? : KeyValues → Value → Option KeyValues
+  | [], _ => some []
+  | (k', v') :: kvs, k =>
+    match Value.beq? k' k, KeyValues.erase? kvs k with
+    | some true, some rest => some rest
+    | some false, some rest => some ((k', v') :: rest)
+    | _, _ => none
+
+/-- Erasing introduces nothing: every binding the result carries is one the map already carried.
+
+This is the whole of what typing a put needs about it.  A put's value is the new binding on the
+front of an erase, so the new binding is typed by the induction hypotheses for the key and the value
+expressions, and every other binding is one the map had — which the map's own `Value.HasType`
+already speaks for. -/
+public theorem KeyValues.mem_of_erase? {kvs kvs' : KeyValues} {k : Value}
+    (h : KeyValues.erase? kvs k = some kvs') {p : Value × Value} (hp : p ∈ kvs') : p ∈ kvs := by
+  induction kvs generalizing kvs' with
+  | nil =>
+      obtain rfl : kvs' = [] := by simpa [KeyValues.erase?] using h.symm
+      simp at hp
+  | cons q kvs ih =>
+      obtain ⟨k', v'⟩ := q
+      rw [KeyValues.erase?] at h
+      cases hb : Value.beq? k' k with
+      | none => simp [hb] at h
+      | some b =>
+          cases hrest : KeyValues.erase? kvs k with
+          | none => cases b <;> simp [hb, hrest] at h
+          | some rest =>
+              cases b with
+              | true =>
+                  obtain rfl : kvs' = rest := by simpa [hb, hrest] using h.symm
+                  exact List.mem_cons_of_mem _ (ih hrest hp)
+              | false =>
+                  obtain rfl : kvs' = (k', v') :: rest := by simpa [hb, hrest] using h.symm
+                  rcases List.mem_cons.mp hp with rfl | hp'
+                  · exact List.mem_cons_self ..
+                  · exact List.mem_cons_of_mem _ (ih hrest hp')
+
+/-- A lookup that found a value found one the map binds, under whichever key it was bound to.
+
+The key is existential because the type of a get's value has nothing to do with which key produced
+it: every value a hashmap carries is at the one type its hashmap type gives, so finding the binding
+at all is what types the result. -/
+public theorem KeyValues.mem_of_lookup? {kvs : KeyValues} {k v : Value}
+    (h : KeyValues.lookup? kvs k = some (some v)) : ∃ k', (k', v) ∈ kvs := by
+  induction kvs with
+  | nil => simp [KeyValues.lookup?] at h
+  | cons q kvs ih =>
+      obtain ⟨k', v'⟩ := q
+      rw [KeyValues.lookup?] at h
+      split at h
+      · obtain rfl : v' = v := by grind
+        exact ⟨k', List.mem_cons_self ..⟩
+      · obtain ⟨k'', hk''⟩ := ih h
+        exact ⟨k'', List.mem_cons_of_mem _ hk''⟩
+      · simp at h
 
 /-- What a name is bound to while an expression runs: the local bindings, innermost first, over the
 globals every expression can see.
@@ -420,6 +551,16 @@ public inductive Value.HasType (td : TypeDecls) : Value → Ty → Prop where
 | string (s : String) : HasType td (.string s) .string
 | list {vs : List Value} {t : Ty} :
     (∀ v ∈ vs, HasType td v t) → HasType td (.list vs) (.list t)
+/-- A hashmap is homogeneous twice over: every key it binds is of the key type and every value it
+binds is of the value type.
+
+Two clauses rather than one over the pair, because they are two unrelated conditions: nothing here
+relates a key to the value beside it, and the one hashmap type gives both halves separately.  An
+empty hashmap therefore has every hashmap type, the way an empty list has every list type and for
+the same reason — there is nothing in it for either type to be required of. -/
+| hashmap {kvs : List (Value × Value)} {kt vt : Ty} :
+    (∀ p ∈ kvs, HasType td p.1 kt) → (∀ p ∈ kvs, HasType td p.2 vt) →
+    HasType td (.hashmap kvs) (.hashmap kt vt)
 /-- An empty option has every option type, the way an empty list has every list type: there is no
 value in it for a type to be required of.  Which one it has in a given place is what the annotation
 on `Expression.optionNone` settles. -/
@@ -533,6 +674,24 @@ exactly why `Expression.optionNone` carries an annotation. -/
     | optionSome hv => exact ⟨_, hv, rfl⟩
   · rintro ⟨t', hv, rfl⟩
     exact .optionSome hv
+
+/-- What it takes for a hashmap value to have a type: the type is a hashmap type, and the two halves
+of it are what the keys and the values are held to.
+
+Both are existential, and both stay that way for an empty map — nothing in the value constrains
+either — which is exactly why `Expression.hashmapEmpty` carries two annotations where
+`Expression.optionNone` carries one. -/
+@[simp] public theorem Value.hasType_hashmap_iff {td : TypeDecls} {kvs : List (Value × Value)}
+    {t : Ty} :
+    Value.HasType td (.hashmap kvs) t ↔
+      ∃ kt vt, (∀ p ∈ kvs, Value.HasType td p.1 kt) ∧ (∀ p ∈ kvs, Value.HasType td p.2 vt)
+        ∧ t = .hashmap kt vt := by
+  constructor
+  · intro h
+    cases h with
+    | hashmap hkeys hvals => exact ⟨_, _, hkeys, hvals, rfl⟩
+  · rintro ⟨kt, vt, hkeys, hvals, rfl⟩
+    exact .hashmap hkeys hvals
 
 /-- What it takes for a struct value to have a type, as one existential over the declaration its name
 resolves to.

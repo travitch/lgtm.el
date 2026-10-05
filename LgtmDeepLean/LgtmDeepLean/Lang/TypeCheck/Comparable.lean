@@ -6,7 +6,8 @@ public import LgtmDeepLean.Lang.TypeCheck.TypeDecls
 /-! # Comparable types
 
 This module defines what types polymorphic equality (`Expression.equals`) can be applied to.
-Any type that is not or does not contain a function type can be compared for equality.
+Any type that is not and does not contain a function type or a hashmap type can be compared for
+equality.
 
 The general strategy is to use depth-first search over all types transitively referenced by
 the type under consideration.  Lean requires that recursion is bounded.  We use the number of
@@ -24,15 +25,25 @@ One per name `td` declares, and one more.  That is enough to be sure that the se
 forcibly terminated in the presence of a cycle, which remains sound. -/
 @[expose] public def TypeDecls.budget (td : TypeDecls) : Nat := td.names.length + 1
 
-/-- Is no function type reachable from `t`, with `sOk` and `iOk` deciding that for the structure and
-inductive names `t` mentions?
+/-- Is neither a function type nor a hashmap type reachable from `t`, with `sOk` and `iOk` deciding
+that for the structure and inductive names `t` mentions?
 
 Leaving the decision on structure and inductive types to the `sOk` and `iOk` oracles instead of
 directly computing them from `TypeDecls` is helpful to avoid sinking this into the mutual block and
-to keep the termination checking simple. -/
+to keep the termination checking simple.
+
+A hashmap stops the walk the way a function type does, and for a reason of the same kind: a `Value`
+of hashmap type is an association list, so two of them carry the bindings they were put in in the
+order they were put in, and two maps binding the same keys to the same values are different lists
+whenever they were built in different orders.  A structural comparison would therefore answer
+something other than whether the two are the same map, which is the one thing `Expression.equals`
+means — so a hashmap has no comparison rather than a misleading one.  Unlike a function type this
+is a property of the representation rather than of the type, and it is the one thing here that a
+canonical form for hashmap values would lift. -/
 @[expose] public def Ty.comparableWith (sOk iOk : String → Bool) : Ty → Bool
   | .bool | .int | .string => true
   | .fn _ _ => false
+  | .hashmap _ _ => false
   | .option t => Ty.comparableWith sOk iOk t
   | .list t => Ty.comparableWith sOk iOk t
   | .struct name => sOk name
@@ -81,9 +92,14 @@ the context of how types referenced in `t` are defined. -/
 @[simp, grind =] public theorem Ty.comparable_string {td : TypeDecls} :
     Ty.comparable td .string = true := rfl
 
-/-- Function types are the only thing that is currently not comparable. -/
+/-- Function types and hashmap types are the two things that are currently not comparable. -/
 @[simp, grind =] public theorem Ty.comparable_fn {td : TypeDecls} {ps : List Ty} {r : Ty} :
     Ty.comparable td (.fn ps r) = false := rfl
+
+/-- A hashmap is not comparable whatever it holds, where a list of the same elements would be: it is
+the association list a hashmap value is that has no canonical form, not the types it relates. -/
+@[simp, grind =] public theorem Ty.comparable_hashmap {td : TypeDecls} {kt vt : Ty} :
+    Ty.comparable td (.hashmap kt vt) = false := rfl
 
 /-- A list is comparable exactly when its elements are. -/
 @[simp, grind =] public theorem Ty.comparable_list {td : TypeDecls} {t : Ty} :

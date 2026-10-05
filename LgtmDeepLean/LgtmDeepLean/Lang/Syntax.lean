@@ -29,14 +29,14 @@ Scoping is the IR's, not Lean's: an identifier always becomes a `varRef` of its 
 `x` in `[lgtm| fun (x : int) => x]` refers to the DSL binder and never to a Lean variable called
 `x`.  To reach a Lean term of type `Expression` or `Ty`, splice it with `~(...)`.
 
-The keywords inside a DSL term — `bool`, `int`, `string`, `list`, `option`, `true`, `false`, `some`,
-`none`, `reverse`, `var`, `struct`, `new`, and `as` — are declared with `&`, Lean's non-reserved
-symbol form, so importing this module does not stop `int` or `some` from being used as ordinary Lean
-identifiers.  What it does cost is those names as *DSL variables*: the categories below are
-declared `behavior := symbol`, so an identifier matching one of them is that keyword and never a
-`varRef`, and `var "true"` is how a variable of such a name is reached.  `lgtm` is the one exception
-and *is* a reserved token: a command's leading keyword has to be reserved for the command parser to
-find it at all, so a file importing this module cannot also name something `lgtm`.
+The keywords inside a DSL term — `bool`, `int`, `string`, `list`, `option`, `hashmap`, `true`,
+`false`, `some`, `none`, `reverse`, `var`, `struct`, `new`, and `as` — are declared with `&`, Lean's
+non-reserved symbol form, so importing this module does not stop `int` or `some` from being used as
+ordinary Lean identifiers.  What it does cost is those names as *DSL variables*: the categories
+below are declared `behavior := symbol`, so an identifier matching one of them is that keyword and
+never a `varRef`, and `var "true"` is how a variable of such a name is reached.  `lgtm` is the one
+exception and *is* a reserved token: a command's leading keyword has to be reserved for the command
+parser to find it at all, so a file importing this module cannot also name something `lgtm`.
 
 `let`, `in`, `with`, `match`, `inductive`, `if`, `then` and `else` are written as plain symbols rather
 than with `&`, because Lean reserves all of them already: declaring them here takes nothing away that
@@ -65,6 +65,16 @@ syntax:max &"list" lgtmTy:max : lgtmTy
 Like `list` and unlike `struct` and `inductive`, it carries the type it holds rather than naming a
 declaration, so there is no `lgtm` command declaring one and no `TypeDecls` entry to resolve. -/
 syntax:max &"option" lgtmTy:max : lgtmTy
+/-- `hashmap string int` is a finite map from `string` keys to `int` values.
+
+Like `list` and `option` and unlike `struct` and `inductive`, it carries the types it relates rather
+than naming a declaration, so there is no `lgtm` command declaring one and no `TypeDecls` entry to
+resolve.
+
+Both halves are at `max` and are read in order, so `hashmap string list int` is a map to lists and
+`hashmap list string int` a map from them, while a function type on either side takes parentheses:
+`hashmap string ((int) -> int)`. -/
+syntax:max &"hashmap" lgtmTy:max lgtmTy:max : lgtmTy
 /-- `struct Point` is the type the `lgtm struct` named `Point` declares.  The string form,
 `struct "my-struct"`, is for struct names that are not Lean identifiers — the same escape hatch
 `var` is for variables. -/
@@ -87,6 +97,7 @@ macro_rules
   | `([lgtm_ty| string]) => `(Ty.string)
   | `([lgtm_ty| list $t]) => `(Ty.list [lgtm_ty| $t])
   | `([lgtm_ty| option $t]) => `(Ty.option [lgtm_ty| $t])
+  | `([lgtm_ty| hashmap $k $v]) => `(Ty.hashmap [lgtm_ty| $k] [lgtm_ty| $v])
   | `([lgtm_ty| struct $n:ident]) => `(Ty.struct $(Lean.quote n.getId.toString))
   | `([lgtm_ty| struct $n:str]) => `(Ty.struct $n)
   | `([lgtm_ty| inductive $n:ident]) => `(Ty.ind $(Lean.quote n.getId.toString))
@@ -110,6 +121,10 @@ The two option values are written `some(1)` and `none : int`, and a `match` whos
 named `none` and `some` takes one apart.  The empty one carries a type for the reason an empty list
 literal does — it holds nothing to read one off — while `some` needs none, since what it holds says
 it.
+
+The three hashmap forms are `hashmap(string, int)`, `m[k]`, and `{ m with [k] = v }`.  The last is
+the shape a struct update is written in, and the brackets are what tell the two apart: a key is an
+expression where a field is a name.
 
 The three struct forms are `new Point { x = 1, y = 2 }`, `p.x`, and `{ p with x = 1 }`.  A field read
 is written two ways for one reason: `p.x` is a single identifier token as far as Lean's tokenizer is
@@ -168,6 +183,39 @@ annotation of its own, the option takes parentheses to say which `:` is which:
 `none` is a keyword, so neither it nor `some` is available as a variable name inside a DSL term;
 `var "none"` is the escape hatch, the same one `true` and `new` leave. -/
 syntax:max &"none" " : " lgtmTy:max : lgtmExpr
+/-- `hashmap(string, int)` is the empty map from `string` to `int`.
+
+Annotated for the reason `[: int]` and `none : int` are: it binds nothing, so there is no key and no
+value in it for either type to be read off.  The two are written together and in parentheses, where
+a list literal writes its one type after a `:`, because the order is what says which of them is
+which.
+
+`hashmap` is a keyword, so it is not available as a variable name inside a DSL term; `var "hashmap"`
+is the escape hatch, the same one `true`, `none` and `new` leave. -/
+syntax:max &"hashmap" "(" lgtmTy ", " lgtmTy ")" : lgtmExpr
+/-- `m[k]` is what `k` is bound to in `m`.
+
+An `option` of the map's value type, so a key the map does not bind is an ordinary value rather than
+an error, and `match m[k] with | none => ... | some(x) => ...` is how both cases are read.
+
+Written with no space before the `[`, which is what tells it from a list literal: `m [1 : int]` is
+two expressions and no parse, while `m[1]` is a lookup.  It binds as tightly as a field read and
+nests the same way — `p.m[k]`, `f(1)[k]`, `m[k1][k2]` — since what a lookup produces is an operand
+like any other. -/
+syntax:max lgtmExpr:max noWs "[" lgtmExpr "]" : lgtmExpr
+/-- One binding of a hashmap update: the key, in brackets, and what to bind it to. -/
+public syntax lgtmKeyBinding := "[" lgtmExpr "]" " = " lgtmExpr
+/-- `{ m with [k] = v }` is `m` with `k` bound to `v`, and any previous binding for `k` dropped.
+
+The shape a struct update is written in, because it is the same thing of a map: `{ p with x = 1 }`
+rebinds a field the declaration named, and this rebinds a key the map need never have seen.  Which
+of the two a `{ ... with ... }` is comes from the brackets — a key is an expression and a field is a
+name, so there is no term both could be read as, and no update may mix them.
+
+Several bindings are one `hashmapPut` apiece, applied left to right, so
+`{ m with [a] = 1, [b] = 2 }` is `{ { m with [a] = 1 } with [b] = 2 }`.  At least one is required:
+`{ m with }` is the struct update it has always been. -/
+syntax:max "{" lgtmExpr " with " lgtmKeyBinding,+ "}" : lgtmExpr
 /-- One alternative of a `match`: the constructor's name, the names to bind the values it carries to,
 and the expression to evaluate when the value was built by it.  A constructor that carries nothing
 takes no parentheses. -/
@@ -313,6 +361,16 @@ macro_rules
   | `([lgtm| new $ty:str $c:str($args,*)]) => do
       let as ← args.getElems.mapM fun a => `([lgtm| $a])
       `(Expression.indNew $ty $c [$as,*])
+  | `([lgtm| hashmap($k, $v)]) => `(Expression.hashmapEmpty [lgtm_ty| $k] [lgtm_ty| $v])
+  | `([lgtm| $m[$k]]) => `(Expression.hashmapGet [lgtm| $m] [lgtm| $k])
+  | `([lgtm| { $m with $bs:lgtmKeyBinding,* }]) => do
+      let mut acc ← `([lgtm| $m])
+      for b in bs.getElems do
+        match b with
+        | `(lgtmKeyBinding| [$k] = $v) =>
+            acc ← `(Expression.hashmapPut $acc [lgtm| $k] [lgtm| $v])
+        | _ => Lean.Macro.throwUnsupported
+      return acc
   | `([lgtm| some($e)]) => `(Expression.optionSome [lgtm| $e])
   | `([lgtm| none : $t]) => `(Expression.optionNone [lgtm_ty| $t])
   | `([lgtm| match $e with $alts:lgtmAlt*]) => do

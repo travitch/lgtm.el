@@ -1514,3 +1514,192 @@ example (v : Value) : ¬ Eval {} ∅ (Expression.equals
 
 #guard !({ sameOpt with parameters := [("a", .option (.fn [.int] .int)),
   ("b", .option (.fn [.int] .int))] } : FuncDecl).check {} []
+
+/-! ## Hashmaps
+
+A hashmap value is the bindings it carries, as an association list: one pair per key, each key
+beside the value it is bound to.  There is no table here, the way there is none in the option
+section: a hashmap type relates two types rather than naming a declaration, so nothing about one is
+resolved anywhere.
+
+What is new is that reading and rebinding a map both *compare* values.  `KeyValues.lookup?` and
+`KeyValues.erase?` run `Value.beq?` along the keys, so both are partial exactly where a comparison
+is, and both appear as a premise the way `EEquals`'s comparison does — discharged by `rfl` below,
+since the keys are literals. -/
+
+-- An empty map binds nothing, and its two annotations go nowhere: a value carries no type, so the
+-- two below produce the same value and it is only the type checker that tells them apart.
+example : Eval {} ∅ [lgtm| hashmap(string, int)] (.hashmap []) := .EHashmapEmpty .string .int
+example : Eval {} ∅ [lgtm| hashmap(int, string)] (.hashmap []) := .EHashmapEmpty .int .string
+
+-- And to nothing else, so an empty map is not an empty list.
+example : ¬ Eval {} ∅ [lgtm| hashmap(string, int)] (.list []) := by
+  intro h; cases h
+
+-- A put evaluates all three of its operands and puts the new binding on the front of what is left
+-- of the map.
+example : Eval {} ∅ [lgtm| { hashmap(string, int) with ["a"] = 1 }]
+    (.hashmap [(.string "a", .int 1)]) :=
+  .EHashmapPut _ _ _ (.EHashmapEmpty _ _) (.EStringLit "a") (.EIntLit 1) rfl
+
+-- All three are evaluated, whatever it took to arrive at them: none of them is in a position to
+-- make another unnecessary, the way a comparison's two operands are not.
+example : Eval {} ∅ [lgtm| { hashmap(string, int) with ["a"] = 1 + 2 }]
+    (.hashmap [(.string "a", .int 3)]) :=
+  .EHashmapPut _ _ _ (.EHashmapEmpty _ _) (.EStringLit "a")
+    (.EPlus (n₁ := 1) (n₂ := 2) _ _ (.EIntLit 1) (.EIntLit 2)) rfl
+
+-- Two keys are two bindings, the later one in front.
+example : Eval {} ∅ [lgtm| { hashmap(string, int) with ["a"] = 1, ["b"] = 2 }]
+    (.hashmap [(.string "b", .int 2), (.string "a", .int 1)]) :=
+  .EHashmapPut _ _ _
+    (.EHashmapPut _ _ _ (.EHashmapEmpty _ _) (.EStringLit "a") (.EIntLit 1) rfl)
+    (.EStringLit "b") (.EIntLit 2) rfl
+
+-- Putting a key the map already binds drops the previous binding rather than shadowing it, which
+-- is what `KeyValues.erase?` is in the rule for: a key is bound once, so the value below carries
+-- one pair and not two.
+example : Eval {} ∅ [lgtm| { hashmap(string, int) with ["a"] = 1, ["a"] = 2 }]
+    (.hashmap [(.string "a", .int 2)]) :=
+  .EHashmapPut _ _ _
+    (.EHashmapPut _ _ _ (.EHashmapEmpty _ _) (.EStringLit "a") (.EIntLit 1) rfl)
+    (.EStringLit "a") (.EIntLit 2) rfl
+
+-- A get hands back the option of what the key is bound to.
+example : Eval {} ∅ [lgtm| { hashmap(string, int) with ["a"] = 1 }["a"]]
+    (.option (some (.int 1))) :=
+  .EHashmapGet _ _
+    (.EHashmapPut _ _ _ (.EHashmapEmpty _ _) (.EStringLit "a") (.EIntLit 1) rfl)
+    (.EStringLit "a") rfl
+
+-- A key the map does not bind is the empty option, which is a value like any other rather than
+-- anything going wrong: this is the whole of why a get has an option type.
+example : Eval {} ∅ [lgtm| { hashmap(string, int) with ["a"] = 1 }["b"]] (.option none) :=
+  .EHashmapGet _ _
+    (.EHashmapPut _ _ _ (.EHashmapEmpty _ _) (.EStringLit "a") (.EIntLit 1) rfl)
+    (.EStringLit "b") rfl
+
+-- An empty map binds nothing, so every key reads as empty out of one.
+example : Eval {} ∅ [lgtm| hashmap(string, int)["a"]] (.option none) :=
+  .EHashmapGet _ _ (.EHashmapEmpty _ _) (.EStringLit "a") rfl
+
+-- And a put is what a later get sees, which is the property the two forms exist to have between
+-- them.
+example : Eval {} ∅ [lgtm| { { hashmap(string, int) with ["a"] = 1 } with ["a"] = 2 }["a"]]
+    (.option (some (.int 2))) :=
+  .EHashmapGet _ _
+    (.EHashmapPut _ _ _
+      (.EHashmapPut _ _ _ (.EHashmapEmpty _ _) (.EStringLit "a") (.EIntLit 1) rfl)
+      (.EStringLit "a") (.EIntLit 2) rfl)
+    (.EStringLit "a") rfl
+
+/-- A map binding one `string` to one `int` has the type `hashmap string int`, which is the whole of
+what `Value.HasType` asks of one: every key at the key type and every value at the value type. -/
+private theorem hasType_mapA {td : TypeDecls} :
+    Value.HasType td (.hashmap [(.string "a", .int 1)]) (.hashmap .string .int) :=
+  .hashmap
+    (fun p hp => by obtain rfl : p = (.string "a", .int 1) := by simpa using hp
+                    exact .string "a")
+    (fun p hp => by obtain rfl : p = (.string "a", .int 1) := by simpa using hp
+                    exact .int 1)
+
+/-- An empty one has that type too, and it has every other hashmap type as well — there is nothing
+in it for either half to be required of, the way there is nothing in an empty list. -/
+private theorem hasType_mapEmpty {td : TypeDecls} {kt vt : Ty} :
+    Value.HasType td (.hashmap []) (.hashmap kt vt) :=
+  .hashmap (by simp) (by simp)
+
+/-- What `k` is bound to in `m`, and zero when it is bound to nothing. -/
+lgtm private def getOr as "get-or" (m : hashmap string int) (k : string) : int :=
+  match m[k] with | none => 0 | some(x) => x
+
+#guard getOr.check {} []
+
+-- Which case of the match runs is decided by what the lookup produced, so a key the map binds and
+-- a key it does not are the two option rules, exactly as for any other option.
+example : FuncDecl.Apply getOr {} [] [.hashmap [(.string "a", .int 1)], .string "a"] (.int 1) :=
+  .EApply _ (.cons "m" hasType_mapA (.cons "k" (.string "a") .nil))
+    (.EOptionMatchSome _ _ _ _
+      (.EHashmapGet _ _ (.EVarRef "m" rfl) (.EVarRef "k" rfl) rfl)
+      (.EVarRef "x" rfl))
+
+example : FuncDecl.Apply getOr {} [] [.hashmap [(.string "a", .int 1)], .string "b"] (.int 0) :=
+  .EApply _ (.cons "m" hasType_mapA (.cons "k" (.string "b") .nil))
+    (.EOptionMatchNone _ _ _ _
+      (.EHashmapGet _ _ (.EVarRef "m" rfl) (.EVarRef "k" rfl) rfl)
+      (.EIntLit 0))
+
+example : FuncDecl.Apply getOr {} [] [.hashmap [], .string "a"] (.int 0) :=
+  .EApply _ (.cons "m" hasType_mapEmpty (.cons "k" (.string "a") .nil))
+    (.EOptionMatchNone _ _ _ _
+      (.EHashmapGet _ _ (.EVarRef "m" rfl) (.EVarRef "k" rfl) rfl)
+      (.EIntLit 0))
+
+-- Soundness covers the new forms: the declared result type comes back whatever the map held and
+-- whether or not the key was bound, which is what holding both cases of the match to one type was
+-- for.
+example (kvs : KeyValues) (k : String) (v : Value)
+    (h : FuncDecl.Apply getOr {} [] [.hashmap kvs, .string k] v) : v.HasType {} .int :=
+  h.hasType Globals.wellTyped_nil (by simp [getOr, List.lookup]; grind)
+
+-- An argument of the wrong type is stuck at the call, as it is for any other parameter: a map from
+-- `string` to `int` is what the declaration asks for, and a list is not one.
+example (v : Value) : ¬ FuncDecl.Apply getOr {} [] [.list [], .string "a"] v := by
+  rintro ⟨-, hargs, -⟩
+  cases hargs with
+  | cons _ hv _ => cases hv
+
+/-- `m` with `k` bound to `v`, which is the other half: a binding put into a map rather than read
+out of one. -/
+lgtm private def bind (m : hashmap string int) (k : string) (v : int) : hashmap string int :=
+  { m with [k] = v }
+
+#guard bind.check {} []
+
+example : FuncDecl.Apply bind {} [] [.hashmap [], .string "a", .int 1]
+    (.hashmap [(.string "a", .int 1)]) :=
+  .EApply _ (.cons "m" hasType_mapEmpty (.cons "k" (.string "a") (.cons "v" (.int 1) .nil)))
+    (.EHashmapPut _ _ _ (.EVarRef "m" rfl) (.EVarRef "k" rfl) (.EVarRef "v" rfl) rfl)
+
+-- A put over a key the map already binds replaces it, which is what the result carrying one pair
+-- rather than two says.
+example : FuncDecl.Apply bind {} [] [.hashmap [(.string "a", .int 1)], .string "a", .int 2]
+    (.hashmap [(.string "a", .int 2)]) :=
+  .EApply _ (.cons "m" hasType_mapA (.cons "k" (.string "a") (.cons "v" (.int 2) .nil)))
+    (.EHashmapPut _ _ _ (.EVarRef "m" rfl) (.EVarRef "k" rfl) (.EVarRef "v" rfl) rfl)
+
+/-- What a get means, for every map and key rather than for one: a lookup that produced a value
+produced one the map binds.
+
+This is the fact a proof about a hashmap carries on with, the way `Value.eq_of_beq?` is for a
+comparison.  Inverting the rule leaves `KeyValues.lookup?` saying so, and `KeyValues.mem_of_lookup?`
+is what turns that into membership. -/
+private theorem getOr.mem_of_eval {kvs : KeyValues} {k w : Value}
+    (h : Eval {} ⟨[("m", .hashmap kvs), ("k", k)], []⟩ [lgtm| m[k]] (.option (some w))) :
+    ∃ k', (k', w) ∈ kvs := by
+  cases h with
+  | EHashmapGet _ _ hm hk hlookup =>
+      cases hm with
+      | EVarRef _ hlm =>
+          cases hk with
+          | EVarRef _ hlk =>
+              simp only [Env.lookup, List.lookup] at hlm hlk
+              simp_all
+              exact KeyValues.mem_of_lookup? hlookup
+
+-- A key that cannot be compared with the keys the map carries leaves both forms stuck, which is the
+-- only thing that can go wrong here and is exactly what `Ty.comparable` on the key type rules out.
+-- A closure is the thing with no comparison, so a map keyed by one has no lookup at all.
+example (body : Expression) (w : Value) :
+    ¬ Eval {} ⟨[("m", .hashmap [(.closure [] [] [] body, .int 1)])], []⟩
+      [lgtm| m[~(Expression.lam [] body)]] (.option w) := by
+  intro h
+  cases h with
+  | EHashmapGet _ _ hm hk hlookup =>
+      cases hm with
+      | EVarRef _ hlm =>
+          cases hk with
+          | ELam _ _ =>
+              simp [Env.lookup, List.lookup] at hlm
+              subst hlm
+              simp [KeyValues.lookup?, Value.beq?] at hlookup

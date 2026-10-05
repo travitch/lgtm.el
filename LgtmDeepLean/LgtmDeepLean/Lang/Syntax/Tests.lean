@@ -674,3 +674,130 @@ lgtm def sameOpt as "same-opt" (a : option int) (b : option int) : bool :=
 /-- error: `none` holds nothing, so its alternative binds no names -/
 #guard_msgs(error) in
 #check [lgtm| match o with | none(x) => 0 | some(y) => y]
+
+/-! ### Hashmaps -/
+
+-- A hashmap type is written with the two types it relates, in that order, and is a type like any
+-- other: it nests both ways and needs no declaration to be written.
+example : [lgtm_ty| hashmap string int] = Ty.hashmap .string .int := rfl
+example : [lgtm_ty| hashmap int string] = Ty.hashmap .int .string := rfl
+example : [lgtm_ty| hashmap string list int] = Ty.hashmap .string (.list .int) := rfl
+example : [lgtm_ty| hashmap list string int] = Ty.hashmap (.list .string) .int := rfl
+example : [lgtm_ty| hashmap string option int] = Ty.hashmap .string (.option .int) := rfl
+example : [lgtm_ty| hashmap string struct Point] = Ty.hashmap .string (.struct "Point") := rfl
+example : [lgtm_ty| hashmap string ((int) -> int)] = Ty.hashmap .string (.fn [.int] .int) := rfl
+example : [lgtm_ty| hashmap string hashmap string int]
+    = Ty.hashmap .string (.hashmap .string .int) := rfl
+example : [lgtm_ty| list hashmap string int] = Ty.list (.hashmap .string .int) := rfl
+example : [lgtm_ty| option hashmap string int] = Ty.option (.hashmap .string .int) := rfl
+example : [lgtm_ty| (hashmap string int) -> int] = Ty.fn [.hashmap .string .int] .int := rfl
+
+-- The empty map carries both of its types, for the reason an empty list carries its one: it binds
+-- nothing, so there is neither a key nor a value to read either off.
+example : [lgtm| hashmap(string, int)] = Expression.hashmapEmpty .string .int := rfl
+example : [lgtm| hashmap(int, list string)] = Expression.hashmapEmpty .int (.list .string) := rfl
+example : [lgtm| hashmap(string, hashmap string int)]
+    = Expression.hashmapEmpty .string (.hashmap .string .int) := rfl
+example : [lgtm| hashmap(string, (int) -> int)]
+    = Expression.hashmapEmpty .string (.fn [.int] .int) := rfl
+
+-- `hashmap` is a keyword, so it is no variable name inside a DSL term; outside one it is an
+-- ordinary Lean identifier, which declaring it with `&` is what preserves.
+example : [lgtm| var "hashmap"] = Expression.varRef "hashmap" := rfl
+
+-- A lookup is written with no space before the `[`, which is what tells it from a list literal.
+example : [lgtm| m[k]] = Expression.hashmapGet (.varRef "m") (.varRef "k") := rfl
+example : [lgtm| m["a"]] = Expression.hashmapGet (.varRef "m") (.stringLit "a") := rfl
+example : [lgtm| m[x + 1]]
+    = Expression.hashmapGet (.varRef "m") (.plus (.varRef "x") (.intLit 1)) := rfl
+
+-- It binds as tightly as a field read does, and nests into itself and into the other postfix forms.
+example : [lgtm| m[a][b]]
+    = Expression.hashmapGet (.hashmapGet (.varRef "m") (.varRef "a")) (.varRef "b") := rfl
+example : [lgtm| p.m[k]] = Expression.hashmapGet (.structGet (.varRef "p") "m") (.varRef "k") := rfl
+example : [lgtm| f(1)[k]]
+    = Expression.hashmapGet (.app (.varRef "f") [.intLit 1]) (.varRef "k") := rfl
+
+-- And what it produces is an ordinary operand: an option, so a comparison and a match both read one
+-- with no parentheses.
+example : [lgtm| m[k] + 1]
+    = Expression.plus (.hashmapGet (.varRef "m") (.varRef "k")) (.intLit 1) := rfl
+example : [lgtm| m[k] == none : int]
+    = Expression.equals (.hashmapGet (.varRef "m") (.varRef "k")) (.optionNone .int) := rfl
+example : [lgtm| match m[k] with | none => 0 | some(x) => x]
+    = Expression.optionMatch (.hashmapGet (.varRef "m") (.varRef "k")) (.intLit 0) "x"
+        (.varRef "x") := rfl
+
+-- An update names its keys in brackets and is one `hashmapPut` apiece, applied left to right, so
+-- writing two is the same as nesting two.
+example : [lgtm| { m with [k] = 1 }]
+    = Expression.hashmapPut (.varRef "m") (.varRef "k") (.intLit 1) := rfl
+example : [lgtm| { m with ["a"] = 1, ["b"] = 2 }]
+    = Expression.hashmapPut (.hashmapPut (.varRef "m") (.stringLit "a") (.intLit 1))
+        (.stringLit "b") (.intLit 2) := rfl
+example : [lgtm| { { m with ["a"] = 1 } with ["b"] = 2 }]
+    = Expression.hashmapPut (.hashmapPut (.varRef "m") (.stringLit "a") (.intLit 1))
+        (.stringLit "b") (.intLit 2) := rfl
+example : [lgtm| { hashmap(string, int) with ["a"] = 1 }]
+    = Expression.hashmapPut (.hashmapEmpty .string .int) (.stringLit "a") (.intLit 1) := rfl
+example : [lgtm| { m with [k] = x + 1 }]
+    = Expression.hashmapPut (.varRef "m") (.varRef "k")
+        (.plus (.varRef "x") (.intLit 1)) := rfl
+
+-- The brackets are the whole of what tells a map update from a struct update — a field is a name
+-- and a key is an expression — so the two forms never meet and `{ p with }` is the struct update it
+-- has always been.
+example : [lgtm| { p with x = 1 }] = Expression.structUpdate (.varRef "p") [("x", .intLit 1)] := rfl
+example : [lgtm| { p with }] = Expression.structUpdate (.varRef "p") [] := rfl
+
+-- An update is an operand like any other, so a lookup reads one with no parentheses.
+example : [lgtm| { m with ["a"] = 1 }["a"]]
+    = Expression.hashmapGet (.hashmapPut (.varRef "m") (.stringLit "a") (.intLit 1))
+        (.stringLit "a") := rfl
+
+/-- The empty map from `string` to `int`: the shortest declaration that returns one, and the one
+place the annotations are all there is to go on. -/
+lgtm def noneBound as "none-bound" : hashmap string int :=
+  hashmap(string, int)
+
+-- A hashmap needs no declaration to be well formed, so this checks against no `TypeDecls` at all.
+#guard noneBound.check {} []
+#guard !({ noneBound with resultType := [lgtm_ty| hashmap int string] } : FuncDecl).check {} []
+
+/-- `m` with `k` bound to `v`, which is the other half: a binding put into a map rather than read
+out of one. -/
+lgtm def bind (m : hashmap string int) (k : string) (v : int) : hashmap string int :=
+  { m with [k] = v }
+
+#guard bind.check {} []
+#guard !({ bind with body := [lgtm| { m with [v] = k }] } : FuncDecl).check {} []
+#guard !({ bind with resultType := [lgtm_ty| hashmap string string] } : FuncDecl).check {} []
+
+/-- What `k` is bound to in `m`, and zero when it is bound to nothing: the two halves of a lookup,
+which is what an option result is for. -/
+lgtm def getOr as "get-or" (m : hashmap string int) (k : string) : int :=
+  match m[k] with | none => 0 | some(x) => x
+
+#guard getOr.check {} []
+#guard !({ getOr with resultType := [lgtm_ty| option int] } : FuncDecl).check {} []
+#guard !({ getOr with parameters := [("m", [lgtm_ty| hashmap string string]), ("k", .string)] }
+  : FuncDecl).check {} []
+
+-- The key type has to be one a comparison can reach the bottom of, which is the one condition the
+-- three forms share and the one way an annotation alone makes a map ill typed.
+#guard !({ noneBound with
+  body := [lgtm| hashmap((int) -> int, int)]
+  resultType := [lgtm_ty| hashmap ((int) -> int) int] } : FuncDecl).check {} []
+
+-- The *value* type is under no such condition: nothing compares a value a map holds.
+#guard ({ noneBound with
+  body := [lgtm| hashmap(string, (int) -> int)]
+  resultType := [lgtm_ty| hashmap string ((int) -> int)] } : FuncDecl).check {} []
+
+-- And a hashmap is itself not comparable, whatever it relates, where a list of the same things
+-- would be: an association list has no canonical form, so a structural comparison would answer
+-- something other than whether the two are the same map.
+#guard !({ getOr with body := [lgtm| if m == m then { 1 } else { 0 }] } : FuncDecl).check {} []
+#guard !({ noneBound with
+  body := [lgtm| hashmap(hashmap string int, int)]
+  resultType := [lgtm_ty| hashmap (hashmap string int) int] } : FuncDecl).check {} []

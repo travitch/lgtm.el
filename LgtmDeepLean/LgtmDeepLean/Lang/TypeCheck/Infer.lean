@@ -266,6 +266,22 @@ public def Expression.infer (td : TypeDecls) (ctx : Context) : Expression → Op
     match l.infer td ctx with
     | some (.list t) => some (.list t)
     | _ => none
+  | .hashmapEmpty kt vt => if Ty.comparable td kt then some (.hashmap kt vt) else none
+  | .hashmapPut m k v =>
+    match m.infer td ctx with
+    | some (.hashmap kt vt) => do
+      guard (k.infer td ctx == some kt)
+      guard (v.infer td ctx == some vt)
+      guard (Ty.comparable td kt)
+      some (.hashmap kt vt)
+    | _ => none
+  | .hashmapGet m k =>
+    match m.infer td ctx with
+    | some (.hashmap kt vt) => do
+      guard (k.infer td ctx == some kt)
+      guard (Ty.comparable td kt)
+      some (.option vt)
+    | _ => none
 
 /-- Infer the types of `es`, in order, or `none` if any one of them is ill typed. -/
 public def Expression.inferList (td : TypeDecls) (ctx : Context) :
@@ -507,6 +523,49 @@ type. -/
         ∧ ∀ t' ∈ rs, t' = t := by
   simp only [Expression.infer]
   split <;> simp_all [Option.bind_eq_some_iff, guard]
+
+/-! The three hashmap forms.  Each of them asks for the key type to be comparable, which is the one
+condition that is not about the shape of the expression: a hashmap is read by comparing the key
+given against the keys the map carries, so a key type `Ty.comparable` turns down is one no `get`
+could answer and no `put` could rebind over.  It is required of the empty map as well, so that a
+hashmap type nothing could do anything with is not reachable by building one. -/
+
+/-- A `hashmapEmpty` takes its type from its two annotations, the way an empty list and an empty
+option take theirs: it binds nothing, so there is no key and no value for either half to be read
+off. -/
+@[simp, grind =] public theorem Expression.infer_hashmapEmpty_eq_some {td : TypeDecls}
+    {ctx : Context} {kt vt t : Ty} :
+    (Expression.hashmapEmpty kt vt).infer td ctx = some t ↔
+      Ty.comparable td kt = true ∧ t = .hashmap kt vt := by
+  simp only [Expression.infer]
+  split <;> grind
+
+/-- A `hashmapPut` is typeable when its first operand is a hashmap and the key and value it is given
+are of the two types that hashmap relates — and then it is that same hashmap type.
+
+Rebinding introduces no type structure, so the result's type is the map's, the way `listReverse`'s
+is its operand's. -/
+@[simp, grind =] public theorem Expression.infer_hashmapPut_eq_some {td : TypeDecls} {ctx : Context}
+    {m k v : Expression} {t : Ty} :
+    (Expression.hashmapPut m k v).infer td ctx = some t ↔
+      ∃ kt vt, m.infer td ctx = some (.hashmap kt vt) ∧ k.infer td ctx = some kt
+        ∧ v.infer td ctx = some vt ∧ Ty.comparable td kt = true ∧ t = .hashmap kt vt := by
+  simp only [Expression.infer]
+  split <;> simp_all [Option.bind_eq_some_iff, guard] <;> grind
+
+/-- A `hashmapGet` is typeable when its first operand is a hashmap and its second is a key of that
+hashmap's key type, and then it is an option of its value type.
+
+An option rather than the value type itself, because a key the map does not bind is not an error:
+`optionMatch` is what the two cases are read with, so a lookup that found nothing is a value like
+any other. -/
+@[simp, grind =] public theorem Expression.infer_hashmapGet_eq_some {td : TypeDecls} {ctx : Context}
+    {m k : Expression} {t : Ty} :
+    (Expression.hashmapGet m k).infer td ctx = some t ↔
+      ∃ kt vt, m.infer td ctx = some (.hashmap kt vt) ∧ k.infer td ctx = some kt
+        ∧ Ty.comparable td kt = true ∧ t = .option vt := by
+  simp only [Expression.infer]
+  split <;> simp_all [Option.bind_eq_some_iff, guard] <;> grind
 
 /-! Inversion principles for `inferList`.  Together these say what it computes: the argument types
 in order, and `none` as soon as one argument has no type. -/

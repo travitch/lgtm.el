@@ -7,6 +7,7 @@ public inductive Ty where
 | string
 | option : Ty → Ty
 | list : Ty → Ty
+| hashmap : Ty → Ty → Ty
 /-- A function from the types of its parameters to the type of its result. -/
 | fn : List Ty → Ty → Ty
 /-- A declared structure type (matched nominally). -/
@@ -45,6 +46,7 @@ public def Ty.beq : Ty → Ty → Bool
   | .string, .string => true
   | .option a, .option b => Ty.beq a b
   | .list a, .list b => Ty.beq a b
+  | .hashmap k1 v1, .hashmap k2 v2 => Ty.beq k1 k2 && Ty.beq v1 v2
   | .fn as r, .fn bs r' => Ty.beqList as bs && Ty.beq r r'
   | .struct a, .struct b => a == b
   | .ind a, .ind b => a == b
@@ -69,6 +71,7 @@ public theorem Ty.beq_iff_eq : ∀ (a b : Ty), Ty.beq a b = true ↔ a = b
   | .string, b => by cases b <;> simp [Ty.beq]
   | .option a, b => by cases b <;> simp [Ty.beq, Ty.beq_iff_eq a]
   | .list a, b => by cases b <;> simp [Ty.beq, Ty.beq_iff_eq a]
+  | .hashmap k v, b => by cases b <;> simp [Ty.beq, Ty.beq_iff_eq k, Ty.beq_iff_eq v]
   | .fn as r, b => by cases b <;> simp [Ty.beq, Ty.beqList_iff_eq as, Ty.beq_iff_eq r]
   | .struct s, b => by cases b <;> simp [Ty.beq]
   | .ind s, b => by cases b <;> simp [Ty.beq]
@@ -153,6 +156,18 @@ This is a special form (instead of `indMatch`) because options get compiled away
 | lnil : Ty → Expression
 | lcons : Expression → Expression → Expression
 | listReverse : Expression → Expression
+| hashmapEmpty : Ty → Ty → Expression
+/-- Augment the given hashmap `m` with a binding of `k` to `v`
+
+> hashmapPut m k v
+
+Creates a new hashmap with the new binding, discarding any previous binding for `k`. -/
+| hashmapPut : Expression → Expression → Expression → Expression
+/-- Get the value bound to `k` in `m`, if any.  Returns an `option v`.
+
+> hashampGet m k
+-/
+| hashmapGet : Expression → Expression → Expression
 
 public structure FuncDecl where
   docstring : String

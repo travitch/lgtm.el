@@ -56,7 +56,9 @@ private def ctx : Context :=
   [("xs", .list .int), ("n", .int), ("s", .string), ("f", .fn [.int, .string] .int),
     ("p", .struct "Point"), ("b", .struct "Box"), ("c", .ind "Color"), ("sh", .ind "Shape"),
     ("t", .ind "Tree"), ("flag", .bool), ("wf", .struct "WithFn"), ("hd", .ind "Holder"),
-    ("o", .option .int), ("op", .option (.struct "Point")), ("ofn", .option (.fn [.int] .int))]
+    ("o", .option .int), ("op", .option (.struct "Point")), ("ofn", .option (.fn [.int] .int)),
+    ("m", .hashmap .string .int), ("mp", .hashmap .string (.struct "Point")),
+    ("mfn", .hashmap .string (.fn [.int] .int)), ("mbad", .hashmap (.fn [.int] .int) .int)]
 
 -- Inference determines the type of every form.
 #guard (Expression.intLit 3).infer types ctx == some .int
@@ -1082,3 +1084,157 @@ private def nothing : FuncDecl where
 #guard (Expression.optionSome (.intLit 1)).check types ctx (.option .int)
 #guard !(Expression.optionSome (.intLit 1)).check types ctx .int
 #guard (Expression.optionMatch (.varRef "o") (.intLit 0) "x" (.varRef "x")).check types ctx .int
+
+/-! ### Hashmaps
+
+A hashmap type relates two types and names no declaration, so it is structural the way `list` and
+`option` are and `types` has nothing to say about it.  What is new is the condition the three forms
+share: the key type has to be one `Ty.comparable` accepts, since a map is read by comparing the key
+it is given against the keys it carries.
+
+`ctx` gives `m` a map from `string` to `int`, `mp` one to a declared struct, `mfn` one to function
+type — a comparable key with an uncomparable value, which is allowed — and `mbad` one *from*
+function type, which is the case the condition is for. -/
+
+-- A hashmap type is its two halves and nothing else, so two of them agree exactly when both halves
+-- do, and the order is part of it.
+#guard Ty.hashmap .string .int == Ty.hashmap .string .int
+#guard Ty.hashmap .string .int != Ty.hashmap .int .string
+#guard Ty.hashmap .string .int != Ty.hashmap .string .string
+#guard Ty.hashmap .string .int != Ty.list .string
+
+-- An empty map takes both types from its annotations, the way an empty list takes its one.
+#guard (Expression.hashmapEmpty .string .int).infer types ctx == some (.hashmap .string .int)
+#guard (Expression.hashmapEmpty .int (.list .string)).infer types ctx
+  == some (.hashmap .int (.list .string))
+#guard (Expression.hashmapEmpty (.struct "Point") .int).infer types ctx
+  == some (.hashmap (.struct "Point") .int)
+
+-- The key type being comparable is the one thing an annotation is held to, and the one way an empty
+-- map fails to have a type at all.  A function type is what it rules out, under a declared type as
+-- directly.
+#guard (Expression.hashmapEmpty (.fn [.int] .int) .int).infer types ctx == none
+#guard (Expression.hashmapEmpty (.struct "WithFn") .int).infer types ctx == none
+#guard (Expression.hashmapEmpty (.list (.fn [.int] .int)) .int).infer types ctx == none
+#guard (Expression.hashmapEmpty (.hashmap .string .int) .int).infer types ctx == none
+
+-- The *value* type is under no such condition: nothing ever compares a value the map holds.
+#guard (Expression.hashmapEmpty .string (.fn [.int] .int)).infer types ctx
+  == some (.hashmap .string (.fn [.int] .int))
+#guard (Expression.hashmapEmpty .string (.struct "WithFn")).infer types ctx
+  == some (.hashmap .string (.struct "WithFn"))
+#guard (Expression.hashmapEmpty .string (.hashmap .string .int)).infer types ctx
+  == some (.hashmap .string (.hashmap .string .int))
+
+-- An annotation names types rather than being checked against the table, so an undeclared name goes
+-- through here exactly as it does under `lnil` and `optionNone`.
+#guard (Expression.hashmapEmpty .string (.struct "Nope")).infer types ctx
+  == some (.hashmap .string (.struct "Nope"))
+
+-- A hashmap is itself never comparable, whatever it relates and however it is wrapped, where a list
+-- of the same things is: an association list has no canonical form, so a structural comparison
+-- would answer something other than whether two maps are the same map.
+#guard !Ty.comparable types (.hashmap .string .int)
+#guard !Ty.comparable types (.list (.hashmap .string .int))
+#guard !Ty.comparable types (.option (.hashmap .string .int))
+#guard Ty.comparable types (.list (.list .string))
+#guard (Expression.equals (.varRef "m") (.varRef "m")).infer types ctx == none
+#guard (Expression.equals (.varRef "xs") (.varRef "xs")).infer types ctx == some .bool
+
+-- A put keeps the map's type and holds the key and the value to the two halves of it.
+#guard (Expression.hashmapPut (.varRef "m") (.stringLit "a") (.intLit 1)).infer types ctx
+  == some (.hashmap .string .int)
+#guard (Expression.hashmapPut (.varRef "m") (.varRef "s") (.varRef "n")).infer types ctx
+  == some (.hashmap .string .int)
+#guard (Expression.hashmapPut (.varRef "mp") (.varRef "s") (.varRef "p")).infer types ctx
+  == some (.hashmap .string (.struct "Point"))
+#guard (Expression.hashmapPut (.varRef "m") (.intLit 1) (.intLit 1)).infer types ctx == none
+#guard (Expression.hashmapPut (.varRef "m") (.varRef "s") (.varRef "s")).infer types ctx == none
+
+-- A value of function type is as puttable as any other, since nothing compares one.
+#guard (Expression.hashmapPut (.varRef "mfn") (.varRef "s")
+  (.lam [("x", .int)] (.varRef "x"))).infer types ctx
+  == some (.hashmap .string (.fn [.int] .int))
+
+-- The first operand has to be a map, and nothing else will do.
+#guard (Expression.hashmapPut (.varRef "xs") (.stringLit "a") (.intLit 1)).infer types ctx == none
+#guard (Expression.hashmapPut (.varRef "p") (.stringLit "a") (.intLit 1)).infer types ctx == none
+#guard (Expression.hashmapPut (.varRef "nope") (.stringLit "a") (.intLit 1)).infer types ctx == none
+
+-- A get is the map's value type under an option, so a key the map does not bind is a value rather
+-- than an error, and `optionMatch` is what reads the two cases.
+#guard (Expression.hashmapGet (.varRef "m") (.stringLit "a")).infer types ctx == some (.option .int)
+#guard (Expression.hashmapGet (.varRef "mp") (.varRef "s")).infer types ctx
+  == some (.option (.struct "Point"))
+#guard (Expression.hashmapGet (.varRef "mfn") (.varRef "s")).infer types ctx
+  == some (.option (.fn [.int] .int))
+#guard (Expression.hashmapGet (.varRef "m") (.intLit 1)).infer types ctx == none
+#guard (Expression.hashmapGet (.varRef "xs") (.stringLit "a")).infer types ctx == none
+#guard (Expression.hashmapGet (.varRef "nope") (.stringLit "a")).infer types ctx == none
+#guard (Expression.optionMatch (.hashmapGet (.varRef "m") (.varRef "s")) (.intLit 0) "x"
+  (.varRef "x")).infer types ctx == some .int
+
+-- A map whose keys are not comparable is one no form can touch, however well the key and the value
+-- fit the two halves of the type it was annotated with.  This is the whole of why the condition is
+-- on `put` and `get` as well as on the empty map: a hashmap type reaches a body through a parameter
+-- or a field without any `hashmapEmpty` having built one.
+#guard (Expression.hashmapPut (.varRef "mbad") (.lam [("x", .int)] (.varRef "x"))
+  (.intLit 1)).infer types ctx == none
+#guard (Expression.hashmapGet (.varRef "mbad")
+  (.lam [("x", .int)] (.varRef "x"))).infer types ctx == none
+
+-- The forms nest into each other and into everything else: what each produces is an operand of
+-- whatever its type is an operand of.
+#guard (Expression.hashmapGet (.hashmapPut (.varRef "m") (.varRef "s") (.intLit 1))
+  (.varRef "s")).infer types ctx == some (.option .int)
+#guard (Expression.hashmapPut (.hashmapPut (.varRef "m") (.stringLit "a") (.intLit 1))
+  (.stringLit "b") (.intLit 2)).infer types ctx == some (.hashmap .string .int)
+#guard (Expression.lcons (.varRef "m") (.lnil (.hashmap .string .int))).infer types ctx
+  == some (.list (.hashmap .string .int))
+#guard (Expression.optionSome (.varRef "m")).infer types ctx
+  == some (.option (.hashmap .string .int))
+#guard (Expression.hashmapPut (.hashmapEmpty .string (.hashmap .string .int)) (.varRef "s")
+  (.varRef "m")).infer types ctx == some (.hashmap .string (.hashmap .string .int))
+#guard (Expression.lam [("y", .hashmap .string .int)] (.varRef "y")).infer types ctx
+  == some (.fn [.hashmap .string .int] (.hashmap .string .int))
+
+/-- `fun (m : hashmap string int) (k : string) => match m[k] with | none => 0 | some(x) => x` -/
+private def getOr : FuncDecl where
+  docstring := "What `k` is bound to in `m`, and `0` when it is bound to nothing."
+  name := "get-or"
+  parameters := [("m", .hashmap .string .int), ("k", .string)]
+  body := .optionMatch (.hashmapGet (.varRef "m") (.varRef "k")) (.intLit 0) "x" (.varRef "x")
+  resultType := .int
+
+-- A declaration over the new forms checks like any other, and against no table at all: a hashmap
+-- names nothing for a `TypeDecls` to resolve.
+#guard getOr.check {} []
+#guard !({ getOr with resultType := .option .int } : FuncDecl).check {} []
+#guard !({ getOr with parameters := [("m", .hashmap .string .string), ("k", .string)] }
+  : FuncDecl).check {} []
+#guard !({ getOr with parameters := [("m", .hashmap .int .int), ("k", .string)] }
+  : FuncDecl).check {} []
+#guard !({ getOr with parameters := [("m", .list .int), ("k", .string)] } : FuncDecl).check {} []
+
+/-- `fun (m : hashmap string int) (k : string) (v : int) => { m with [k] = v }` -/
+private def bind : FuncDecl where
+  docstring := "`m` with `k` bound to `v`."
+  name := "bind"
+  parameters := [("m", .hashmap .string .int), ("k", .string), ("v", .int)]
+  body := .hashmapPut (.varRef "m") (.varRef "k") (.varRef "v")
+  resultType := .hashmap .string .int
+
+#guard bind.check {} []
+#guard !({ bind with resultType := .hashmap .string .string } : FuncDecl).check {} []
+#guard !({ bind with body := Expression.hashmapPut (.varRef "m") (.varRef "v") (.varRef "k") }
+  : FuncDecl).check {} []
+
+-- Checking agrees with inference on the new forms too.
+#guard (Expression.hashmapEmpty .string .int).check types ctx (.hashmap .string .int)
+#guard !(Expression.hashmapEmpty .string .int).check types ctx (.hashmap .int .string)
+#guard !(Expression.hashmapEmpty (.fn [.int] .int) .int).check types ctx
+  (.hashmap (.fn [.int] .int) .int)
+#guard (Expression.hashmapGet (.varRef "m") (.varRef "s")).check types ctx (.option .int)
+#guard !(Expression.hashmapGet (.varRef "m") (.varRef "s")).check types ctx .int
+#guard (Expression.hashmapPut (.varRef "m") (.varRef "s") (.varRef "n")).check types ctx
+  (.hashmap .string .int)

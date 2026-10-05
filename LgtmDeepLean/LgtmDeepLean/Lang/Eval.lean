@@ -165,6 +165,37 @@ The name is bound in front of the environment, so it shadows what was there, the
 | ENil (ty : Ty) : Eval td env (.lnil ty) (.list [])
 | ECons (e₁ : Expression) (e₂ : Expression) : Eval td env e₁ v → Eval td env e₂ (.list vs) → Eval td env (.lcons e₁ e₂) (.list (v :: vs))
 | EListReverse (e : Expression) : Eval td env e (.list vs) → Eval td env (.listReverse e) (.list vs.reverse)
+/-- The empty hashmap, binding nothing.  Its two annotations go nowhere, for the reason `ENil` drops
+`lnil`'s and `ENone` drops `optionNone`'s: a value carries no type, so what they are for is
+`Expression.infer` alone. -/
+| EHashmapEmpty (kt vt : Ty) : Eval td env (.hashmapEmpty kt vt) (.hashmap [])
+/-- A put evaluates the map, the key and the value, and rebinds: the new binding on the front of
+what the map had with any binding for that key dropped.
+
+All three are always evaluated, the way a comparison's two operands are: none of them is in a
+position to make another unnecessary.
+
+`KeyValues.erase?` is where the keys are compared, and its `none` is what leaves this stuck — a key
+in the map that the new one cannot be compared with, which is the only thing that can go wrong here
+and is exactly what `Ty.comparable` on the key type rules out.  Putting the new binding on the front
+of an *erase* rather than in place is what makes this a map rather than a stack of shadowed
+bindings: a key is bound once, so there is never a later binding for `KeyValues.lookup?` to walk
+past. -/
+| EHashmapPut (m k v : Expression) :
+    Eval td env m (.hashmap kvs) → Eval td env k vk → Eval td env v vv →
+    KeyValues.erase? kvs vk = some kvs' →
+    Eval td env (.hashmapPut m k v) (.hashmap ((vk, vv) :: kvs'))
+/-- A get evaluates the map and the key and hands back the option of what that key is bound to.
+
+One rule rather than the two `optionMatch` has, and for the reason `EEquals` is one rule: what a
+proof is left with here is not a choice between branches but the map, the key, and what
+`KeyValues.lookup?` said about the two.  A key the map does not bind is not one of the things that
+can go wrong — it is the empty option, which is a value like any other — and the `none` that leaves
+this stuck is the one a put's does. -/
+| EHashmapGet (m k : Expression) :
+    Eval td env m (.hashmap kvs) → Eval td env k vk →
+    KeyValues.lookup? kvs vk = some o →
+    Eval td env (.hashmapGet m k) (.option o)
 
 
 /-- Evaluating a well-typed expression produces a value of its inferred type.
@@ -325,6 +356,29 @@ public theorem Eval.hasType {td : TypeDecls} {env : Env} {ctx : Context} {e : Ex
       obtain ⟨t'', hw, heq⟩ := Value.hasType_option_some_iff.mp (ihscrut henv hsc)
       obtain rfl : t'' = t' := by simpa using heq.symm
       exact ihsbody (Env.hasType_cons hw henv) (by simpa using hsb)
+  | EHashmapPut m k v _ _ _ herase ihm ihk ihv =>
+      obtain ⟨kt, vt, hm, hk, hv, -, rfl⟩ := Expression.infer_hashmapPut_eq_some.mp ht
+      obtain ⟨kt', vt', hkeys, hvals, heq⟩ := Value.hasType_hashmap_iff.mp (ihm henv hm)
+      obtain ⟨rfl, rfl⟩ : kt = kt' ∧ vt = vt' := by simpa using heq
+      -- The new binding is typed by the induction hypotheses for the key and the value expressions;
+      -- every other binding is one the map already carried, so the map's own type speaks for it.
+      refine .hashmap (fun p hp => ?_) (fun p hp => ?_) <;>
+        rcases List.mem_cons.mp hp with rfl | hp'
+      · simpa using ihk henv hk
+      · exact hkeys p (KeyValues.mem_of_erase? herase hp')
+      · simpa using ihv henv hv
+      · exact hvals p (KeyValues.mem_of_erase? herase hp')
+  | @EHashmapGet _ _ _ o m k _ _ hlookup ihm ihk =>
+      obtain ⟨kt, vt, hm, hk, -, rfl⟩ := Expression.infer_hashmapGet_eq_some.mp ht
+      obtain ⟨kt', vt', -, hvals, heq⟩ := Value.hasType_hashmap_iff.mp (ihm henv hm)
+      obtain ⟨rfl, rfl⟩ : kt = kt' ∧ vt = vt' := by simpa using heq
+      -- Which key produced the value does not matter: every value a hashmap carries is at the one
+      -- type its hashmap type gives, so having found a binding at all is what types the result.
+      cases o with
+      | none => exact .optionNone
+      | some w =>
+          obtain ⟨k', hk'⟩ := KeyValues.mem_of_lookup? hlookup
+          exact .optionSome (hvals (k', w) hk')
   | _ => grind [Value.HasType]
 
 /-- `Apply d gs args v`: calling `d` with `args` among the globals `gs` returns `v`.
