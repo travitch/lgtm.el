@@ -101,6 +101,10 @@ lgtm def Comment.isPersistedToServer (c : struct Comment) : bool :=
   | none => false
   | some(_t) => true
 
+lgtm struct CommentThread {
+  value : struct CommentRef,
+  children : list (struct CommentRef)
+}
 
 /-! ## What this module contributes to the model
 
