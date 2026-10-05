@@ -33,6 +33,7 @@ to keep the termination checking simple. -/
 @[expose] public def Ty.comparableWith (sOk iOk : String → Bool) : Ty → Bool
   | .bool | .int | .string => true
   | .fn _ _ => false
+  | .option t => Ty.comparableWith sOk iOk t
   | .list t => Ty.comparableWith sOk iOk t
   | .struct name => sOk name
   | .ind name => iOk name
@@ -87,3 +88,8 @@ the context of how types referenced in `t` are defined. -/
 /-- A list is comparable exactly when its elements are. -/
 @[simp, grind =] public theorem Ty.comparable_list {td : TypeDecls} {t : Ty} :
     Ty.comparable td (.list t) = Ty.comparable td t := rfl
+
+/-- And an option exactly when the type it holds is, for the same reason: the only value of one that
+a comparison has anything to look at is the value it holds. -/
+@[simp, grind =] public theorem Ty.comparable_option {td : TypeDecls} {t : Ty} :
+    Ty.comparable td (.option t) = Ty.comparable td t := rfl

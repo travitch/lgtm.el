@@ -16,6 +16,14 @@ public inductive Value where
 | bool : Bool → Value
 | int : Int → Value
 | string : String → Value
+/-- A value of option type, or nothing: Lean's own `Option`, since the IR's option is Lean's.
+
+Carrying an `Option Value` rather than splitting this into two constructors is what keeps every rule
+about one of these a rule about the `Option` it holds — `Value.beq?` compares two by comparing what
+they hold, and `Eval`'s two match rules are the two cases of this field.  It is a nested occurrence,
+exactly as `list` is, and it holds no type: an empty option is empty whatever it could have held, the
+same way an empty list is, so it is `Value.HasType` that says at which type. -/
+| option : Option Value → Value
 | list : List Value → Value
 /-- A function together with the environment it was written in: the bindings it captured and the
 globals it was reached among, then the parameters and body of the `lam` itself.
@@ -117,10 +125,11 @@ mutual
 
 /-- Whether `a` and `b` are the same value, or `none` where they cannot be compared at all.
 
-Deep and structural: two lists are equal when they hold the same values in the same order, two struct
-values when they are of the same struct and every field holds the same value, and two values of an
-inductive type when they are of the same type, were built by the same constructor, and that
-constructor's data is the same value for value.
+Deep and structural: two lists are equal when they hold the same values in the same order, two
+options when they are both empty or both hold the same value, two struct values when they are of the
+same struct and every field holds the same value, and two values of an inductive type when they are
+of the same type, were built by the same constructor, and that constructor's data is the same value
+for value.
 
 A closure is what `none` is for.  Two functions are the same function when they agree on every
 argument, which is a question about what they *do*: no value carries enough to settle it, and a
@@ -133,12 +142,16 @@ a closure is, and there is no equality between values of different types for the
 about.
 
 What decides `false` without looking further is a difference in shape *within* one type: two lists of
-different lengths, and two values of an inductive type built by different constructors.  Both are
-genuinely different values, and neither needs anything underneath it compared to say so. -/
+different lengths, an empty option against one that holds a value, and two values of an inductive
+type built by different constructors.  All are genuinely different values, and none needs anything
+underneath it compared to say so. -/
 @[expose] public def Value.beq? : Value → Value → Option Bool
   | .bool a, .bool b => some (a == b)
   | .int a, .int b => some (a == b)
   | .string a, .string b => some (a == b)
+  | .option (some a), .option (some b) => Value.beq? a b
+  | .option none, .option none => some true
+  | .option _, .option _ => some false
   | .list as, .list bs => Value.beqList? as bs
   | .struct n fas, .struct m fbs => if n == m then Value.beqFields? fas fbs else none
   | .ind n c as, .ind m d bs =>
@@ -205,6 +218,18 @@ public theorem Value.beq?_eq_some_iff : ∀ (a b : Value) (r : Bool),
   | .bool x, b, r => by cases b <;> simp_all [Value.beq?] <;> grind
   | .int x, b, r => by cases b <;> simp_all [Value.beq?] <;> grind
   | .string x, b, r => by cases b <;> simp_all [Value.beq?] <;> grind
+  | .option oa, b, r => by
+    cases b with
+    | option ob =>
+      cases oa with
+      | none => cases ob <;> simp [Value.beq?]
+      | some a =>
+        cases ob with
+        | none => simp [Value.beq?]
+        | some b =>
+          intro h
+          simpa using Value.beq?_eq_some_iff a b r (by simpa [Value.beq?] using h)
+    | _ => simp [Value.beq?]
   | .list as, b, r => by
     cases b with
     | list bs =>
@@ -364,6 +389,9 @@ public theorem Env.lookup_of_globals {env : Env} {x : String}
 
 A list value is homogeneous: every element has the list's single element type.
 
+An option value holds nothing or one value of the type the option type gives, so an empty one has
+every option type for the reason an empty list has every list type.
+
 A closure has a function type when its body checks against the result type under its parameters and
 *some* context its captured environment agrees with.  That agreement is `Env.HasType`, but it cannot
 be named here — `Env.HasType` is a definition, and it is defined in terms of `Value.HasType` — and it
@@ -392,6 +420,12 @@ public inductive Value.HasType (td : TypeDecls) : Value → Ty → Prop where
 | string (s : String) : HasType td (.string s) .string
 | list {vs : List Value} {t : Ty} :
     (∀ v ∈ vs, HasType td v t) → HasType td (.list vs) (.list t)
+/-- An empty option has every option type, the way an empty list has every list type: there is no
+value in it for a type to be required of.  Which one it has in a given place is what the annotation
+on `Expression.optionNone` settles. -/
+| optionNone {t : Ty} : HasType td (.option none) (.option t)
+/-- And one that holds a value has the option type of that value's type. -/
+| optionSome {v : Value} {t : Ty} : HasType td v t → HasType td (.option (some v)) (.option t)
 | closure {cbindings : Bindings} {cglobals : Globals} {ps : Context}
     {body : Expression} {cctx : Context} {r : Ty} :
     Globals.WellTyped td cglobals →
@@ -474,6 +508,31 @@ what lets `Eval.hasType` hand `Env.HasType` straight to the induction hypothesis
       simp [hv]
     · obtain ⟨v', hv', hty⟩ := hval x t hx
       grind
+
+/-- What it takes for an empty option to have a type: the type is an option type, and that is the
+whole of it.
+
+The element type is existential and stays that way — nothing in the value constrains it — which is
+exactly why `Expression.optionNone` carries an annotation. -/
+@[simp] public theorem Value.hasType_option_none_iff {td : TypeDecls} {t : Ty} :
+    Value.HasType td (.option none) t ↔ ∃ t', t = .option t' := by
+  constructor
+  · intro h
+    cases h with
+    | optionNone => exact ⟨_, rfl⟩
+  · rintro ⟨t', rfl⟩
+    exact .optionNone
+
+/-- And what it takes for an option holding a value: the type it holds is the value's. -/
+@[simp] public theorem Value.hasType_option_some_iff {td : TypeDecls} {v : Value} {t : Ty} :
+    Value.HasType td (.option (some v)) t ↔
+      ∃ t', Value.HasType td v t' ∧ t = .option t' := by
+  constructor
+  · intro h
+    cases h with
+    | optionSome hv => exact ⟨_, hv, rfl⟩
+  · rintro ⟨t', hv, rfl⟩
+    exact .optionSome hv
 
 /-- What it takes for a struct value to have a type, as one existential over the declaration its name
 resolves to.

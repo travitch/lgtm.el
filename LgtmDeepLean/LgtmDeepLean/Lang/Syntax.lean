@@ -29,14 +29,14 @@ Scoping is the IR's, not Lean's: an identifier always becomes a `varRef` of its 
 `x` in `[lgtm| fun (x : int) => x]` refers to the DSL binder and never to a Lean variable called
 `x`.  To reach a Lean term of type `Expression` or `Ty`, splice it with `~(...)`.
 
-The keywords inside a DSL term — `bool`, `int`, `string`, `list`, `true`, `false`, `reverse`, `var`,
-`struct`, `new`, and `as` — are declared with `&`, Lean's non-reserved symbol form, so importing this
-module does not stop `int` or `true` from being used as ordinary Lean identifiers.  What it does cost
-is those names as *DSL variables*: the categories below are declared `behavior := symbol`, so an
-identifier matching one of them is that keyword and never a `varRef`, and `var "true"` is how a
-variable of such a name is reached.  `lgtm` is the one exception and
-*is* a reserved token: a command's leading keyword has to be reserved for the command parser to find
-it at all, so a file importing this module cannot also name something `lgtm`.
+The keywords inside a DSL term — `bool`, `int`, `string`, `list`, `option`, `true`, `false`, `some`,
+`none`, `reverse`, `var`, `struct`, `new`, and `as` — are declared with `&`, Lean's non-reserved
+symbol form, so importing this module does not stop `int` or `some` from being used as ordinary Lean
+identifiers.  What it does cost is those names as *DSL variables*: the categories below are
+declared `behavior := symbol`, so an identifier matching one of them is that keyword and never a
+`varRef`, and `var "true"` is how a variable of such a name is reached.  `lgtm` is the one exception
+and *is* a reserved token: a command's leading keyword has to be reserved for the command parser to
+find it at all, so a file importing this module cannot also name something `lgtm`.
 
 `let`, `in`, `with`, `match`, `inductive`, `if`, `then` and `else` are written as plain symbols rather
 than with `&`, because Lean reserves all of them already: declaring them here takes nothing away that
@@ -60,6 +60,11 @@ syntax:max &"bool" : lgtmTy
 syntax:max &"int" : lgtmTy
 syntax:max &"string" : lgtmTy
 syntax:max &"list" lgtmTy:max : lgtmTy
+/-- `option int` is a value of type `int` or nothing.
+
+Like `list` and unlike `struct` and `inductive`, it carries the type it holds rather than naming a
+declaration, so there is no `lgtm` command declaring one and no `TypeDecls` entry to resolve. -/
+syntax:max &"option" lgtmTy:max : lgtmTy
 /-- `struct Point` is the type the `lgtm struct` named `Point` declares.  The string form,
 `struct "my-struct"`, is for struct names that are not Lean identifiers — the same escape hatch
 `var` is for variables. -/
@@ -81,6 +86,7 @@ macro_rules
   | `([lgtm_ty| int]) => `(Ty.int)
   | `([lgtm_ty| string]) => `(Ty.string)
   | `([lgtm_ty| list $t]) => `(Ty.list [lgtm_ty| $t])
+  | `([lgtm_ty| option $t]) => `(Ty.option [lgtm_ty| $t])
   | `([lgtm_ty| struct $n:ident]) => `(Ty.struct $(Lean.quote n.getId.toString))
   | `([lgtm_ty| struct $n:str]) => `(Ty.struct $n)
   | `([lgtm_ty| inductive $n:ident]) => `(Ty.ind $(Lean.quote n.getId.toString))
@@ -99,6 +105,11 @@ application and `reverse`, so `1 + 2 :: xs` is `(1 + 2) :: xs`, `f(x) + 1` is `(
 
 A list literal carries its element type, because `lnil` does: `[1, 2 : int]` is
 `.lcons (.intLit 1) (.lcons (.intLit 2) (.lnil .int))`, and the empty list is `[: int]`.
+
+The two option values are written `some(1)` and `none : int`, and a `match` whose alternatives are
+named `none` and `some` takes one apart.  The empty one carries a type for the reason an empty list
+literal does — it holds nothing to read one off — while `some` needs none, since what it holds says
+it.
 
 The three struct forms are `new Point { x = 1, y = 2 }`, `p.x`, and `{ p with x = 1 }`.  A field read
 is written two ways for one reason: `p.x` is a single identifier token as far as Lean's tokenizer is
@@ -139,6 +150,24 @@ components are expected; `new "my-type" "Red"(1)` is the escape hatch for names 
 identifiers. -/
 syntax:max &"new" ident "(" lgtmExpr,* ")" : lgtmExpr
 syntax:max &"new" str str "(" lgtmExpr,* ")" : lgtmExpr
+/-- `some(e)` is the option holding `e`.  It takes no annotation, because `optionSome` takes none:
+the value it holds is what the element type is read off.
+
+Written with parentheses the way a call and a `new` are, and for the same reason the `match`
+alternative `| some(x) => ...` is: the one value an option holds is given like the one argument a
+constructor takes. -/
+syntax:max &"some" "(" lgtmExpr ")" : lgtmExpr
+/-- `none : int` is the empty option at `int`, annotated because `optionNone` is: an empty option
+holds nothing to read a type off, exactly as an empty list literal does not.
+
+The annotation is a type at `max`, so `none : list int` and `none : option int` need no parentheses
+while a function type does: `none : ((int) -> int)`.  Inside a list literal, which ends with an
+annotation of its own, the option takes parentheses to say which `:` is which:
+`[(none : int) : option int]`.
+
+`none` is a keyword, so neither it nor `some` is available as a variable name inside a DSL term;
+`var "none"` is the escape hatch, the same one `true` and `new` leave. -/
+syntax:max &"none" " : " lgtmTy:max : lgtmExpr
 /-- One alternative of a `match`: the constructor's name, the names to bind the values it carries to,
 and the expression to evaluate when the value was built by it.  A constructor that carries nothing
 takes no parentheses. -/
@@ -147,7 +176,16 @@ public syntax lgtmAlt := " | " ident ("(" ident,* ")")? " => " lgtmExpr
 
 The alternatives have to be the type's constructors in the order it declares them, which is the type
 checker's business rather than the parser's.  An alternative's expression extends as far right as it
-can, so a `match` nested inside one needs parentheses — the same way a `let` does. -/
+can, so a `match` nested inside one needs parentheses — the same way a `let` does.
+
+`match o with | none => 0 | some(x) => x` is the one special case: alternatives named `none` and
+`some` make an `optionMatch` rather than an `indMatch`, since an option is taken apart by a form of
+its own.  The two have to be both of them and in that order, which the parser does not ask of the
+alternatives of an `indMatch` but which `optionMatch` asks here — it holds the two cases an option
+has rather than a list to check against a declaration, so there is nothing for a third alternative
+or a missing one to mean.  The cost is that an inductive type declaring a constructor called `none`
+or `some` is one this syntax cannot match on; `~(Expression.indMatch ...)` is the way to write that
+one. -/
 syntax:10 "match " lgtmExpr " with" lgtmAlt* : lgtmExpr
 /-- `if b then { 1 } else { 2 }` chooses between its two branches.
 
@@ -180,6 +218,35 @@ syntax:10 "let " ident " = " lgtmExpr " in " lgtmExpr:10 : lgtmExpr
 
 /-- `[lgtm| e]` is the `Expression` that `e` denotes. -/
 syntax:max "[lgtm| " lgtmExpr "]" : term
+
+/-- The `optionMatch` on `scrut` that `alts` describes, when they are the option forms:
+`| none => e` first and `| some(x) => e` second, each alternative given as its constructor name, the
+names it binds, and its body.
+
+`none` when no alternative names either, which is every other `match` and is an `indMatch`; an error
+when one does and the rest of the shape is not an option's, because there is no second reading to
+fall back on — a `match` mentioning `none` is one the writer meant for an option.
+
+`meta` because it runs while a macro expands, and `public` for the reason `throwOnRepeatedName` is:
+a `module` hides even the names its own macros expand to. -/
+public meta def optionMatchAlts (scrut : Lean.TSyntax `lgtmExpr)
+    (alts : Array (Lean.Ident × Array Lean.Ident × Lean.TSyntax `lgtmExpr)) :
+    Lean.MacroM (Option (Lean.TSyntax `term)) := do
+  let isOptionCtor (c : Lean.Ident) : Bool := c.getId == `none || c.getId == `some
+  let some (named, _, _) := alts.find? (fun (c, _, _) => isOptionCtor c) | return none
+  let #[(nc, nxs, nbody), (sc, sxs, sbody)] := alts
+    | Lean.Macro.throwErrorAt named
+        "a match on an option has two alternatives: `| none => ... | some(x) => ...`"
+  unless nc.getId == `none && sc.getId == `some do
+    Lean.Macro.throwErrorAt named
+      "a match on an option takes `none` first and `some` second"
+  unless nxs.isEmpty do
+    Lean.Macro.throwErrorAt nc "`none` holds nothing, so its alternative binds no names"
+  let #[x] := sxs
+    | Lean.Macro.throwErrorAt sc
+        "`some` holds one value, so its alternative binds one name: `| some(x) => ...`"
+  return some (← `(Expression.optionMatch [lgtm| $scrut] [lgtm| $nbody]
+    $(Lean.quote x.getId.toString) [lgtm| $sbody]))
 
 macro_rules
   | `([lgtm| $x:ident]) => do
@@ -246,14 +313,21 @@ macro_rules
   | `([lgtm| new $ty:str $c:str($args,*)]) => do
       let as ← args.getElems.mapM fun a => `([lgtm| $a])
       `(Expression.indNew $ty $c [$as,*])
+  | `([lgtm| some($e)]) => `(Expression.optionSome [lgtm| $e])
+  | `([lgtm| none : $t]) => `(Expression.optionNone [lgtm_ty| $t])
   | `([lgtm| match $e with $alts:lgtmAlt*]) => do
-      let as ← alts.mapM fun alt =>
+      let parsed ← alts.mapM fun alt =>
         match alt with
-        | `(lgtmAlt| | $c:ident $[($xs:ident,*)]? => $b:lgtmExpr) => do
-            let ns : Array (Lean.TSyntax `term) :=
-              ((xs.map (·.getElems)).getD #[]).map fun x => Lean.quote x.getId.toString
-            `(($(Lean.quote c.getId.toString), [$ns,*], [lgtm| $b]))
+        | `(lgtmAlt| | $c:ident $[($xs:ident,*)]? => $b:lgtmExpr) =>
+            return (c, (xs.map (·.getElems)).getD #[], b)
         | _ => Lean.Macro.throwUnsupported
+      -- An alternative named `none` or `some` is a match on an option rather than on a declared
+      -- inductive type, and is the one form taking it apart.
+      if let some m ← optionMatchAlts e parsed then
+        return m
+      let as ← parsed.mapM fun (c, xs, b) => do
+        let ns : Array (Lean.TSyntax `term) := xs.map fun x => Lean.quote x.getId.toString
+        `(($(Lean.quote c.getId.toString), [$ns,*], [lgtm| $b]))
       `(Expression.indMatch [lgtm| $e] [$as,*])
 
 /-! ## Declarations -/
@@ -909,5 +983,144 @@ private def sameWrapped : FuncDecl :=
   { sameTree with parameters := [("a", .ind "Wrapped"), ("b", .ind "Wrapped")] }
 
 #guard !sameWrapped.check { ss := Structs.ofDecls [Point], is := Inductives.ofDecls [Wrapped] } []
+
+/-! ### Options -/
+
+-- An option type holds another type, which it carries rather than names, so it nests both ways and
+-- needs no declaration to be written.
+example : [lgtm_ty| option int] = Ty.option .int := rfl
+example : [lgtm_ty| option option int] = Ty.option (.option .int) := rfl
+example : [lgtm_ty| option list int] = Ty.option (.list .int) := rfl
+example : [lgtm_ty| list option int] = Ty.list (.option .int) := rfl
+example : [lgtm_ty| option struct Point] = Ty.option (.struct "Point") := rfl
+example : [lgtm_ty| option ((int) -> int)] = Ty.option (.fn [.int] .int) := rfl
+example : [lgtm_ty| (option int) -> option string]
+    = Ty.fn [.option .int] (.option .string) := rfl
+
+-- The option holding a value takes no annotation, and the empty one takes the type it is empty at.
+example : [lgtm| some(1)] = Expression.optionSome (.intLit 1) := rfl
+example : [lgtm| some(x + 1)] = Expression.optionSome (.plus (.varRef "x") (.intLit 1)) := rfl
+example : [lgtm| some(some(1))] = Expression.optionSome (.optionSome (.intLit 1)) := rfl
+example : [lgtm| none : int] = Expression.optionNone .int := rfl
+example : [lgtm| none : list string] = Expression.optionNone (.list .string) := rfl
+example : [lgtm| none : option int] = Expression.optionNone (.option .int) := rfl
+example : [lgtm| none : ((int) -> int)] = Expression.optionNone (.fn [.int] .int) := rfl
+example : [lgtm| some(none : int)] = Expression.optionSome (.optionNone .int) := rfl
+
+-- `some` and `none` are keywords, so neither is a variable name inside a DSL term; outside one they
+-- are Lean's own, which declaring them with `&` is what preserves.
+example : [lgtm| var "some"] = Expression.varRef "some" := rfl
+example : [lgtm| var "none"] = Expression.varRef "none" := rfl
+example : (some 1 : Option Nat) = Option.some 1 := rfl
+example : (none : Option Nat) = Option.none := rfl
+
+-- Both are ordinary operands: the annotation stops at the type, so a `+` or a `==` after one
+-- applies to the whole of it, and neither form needs parentheses to be an argument.
+example : [lgtm| some(1) == none : int]
+    = Expression.equals (.optionSome (.intLit 1)) (.optionNone .int) := rfl
+example : [lgtm| f(some(1), none : int)]
+    = Expression.app (.varRef "f") [.optionSome (.intLit 1), .optionNone .int] := rfl
+example : [lgtm| some(1) :: os] = Expression.lcons (.optionSome (.intLit 1)) (.varRef "os") := rfl
+example : [lgtm| let o = some(1) in o]
+    = Expression.let_ "o" (.optionSome (.intLit 1)) (.varRef "o") := rfl
+example : [lgtm| if b then { some(1) } else { none : int }]
+    = Expression.ite (.varRef "b") (.optionSome (.intLit 1)) (.optionNone .int) := rfl
+example : [lgtm| fun (o : option int) => o]
+    = Expression.lam [("o", .option .int)] (.varRef "o") := rfl
+
+-- A list literal ends with an annotation of its own, so an empty option inside one is parenthesized
+-- to say which `:` is which.
+example : [lgtm| [(none : int) : option int]]
+    = Expression.lcons (.optionNone .int) (.lnil (.option .int)) := rfl
+example : [lgtm| [some(1), (none : int) : option int]]
+    = Expression.lcons (.optionSome (.intLit 1))
+        (.lcons (.optionNone .int) (.lnil (.option .int))) := rfl
+
+-- A `match` on an option is the two cases it has, which is an `optionMatch` rather than an
+-- `indMatch`: the empty case computes with nothing and the other binds what the option held.
+example : [lgtm| match o with | none => 0 | some(x) => x + 1]
+    = Expression.optionMatch (.varRef "o") (.intLit 0) "x"
+        (.plus (.varRef "x") (.intLit 1)) := rfl
+example : [lgtm| match f(1) with | none => "" | some(s) => s]
+    = Expression.optionMatch (.app (.varRef "f") [.intLit 1]) (.stringLit "") "s"
+        (.varRef "s") := rfl
+example : [lgtm| match some(1) with | none => 0 | some(x) => x]
+    = Expression.optionMatch (.optionSome (.intLit 1)) (.intLit 0) "x" (.varRef "x") := rfl
+
+-- An alternative's expression extends as far right as it can here too, so a match nested in one
+-- needs no parentheses and one nested in the scrutinee does.
+example : [lgtm| match o with | none => 0 | some(x) => match x with | none => 1 | some(y) => y]
+    = Expression.optionMatch (.varRef "o") (.intLit 0) "x"
+        (.optionMatch (.varRef "x") (.intLit 1) "y" (.varRef "y")) := rfl
+example : [lgtm| (match o with | none => 0 | some(x) => x) + 1]
+    = Expression.plus (.optionMatch (.varRef "o") (.intLit 0) "x" (.varRef "x")) (.intLit 1) := rfl
+
+-- A match naming neither is the `indMatch` it was, which is what the special case is special to.
+example : [lgtm| match c with | Red => 0 | Rgb(r, g, b) => r]
+    = Expression.indMatch (.varRef "c")
+        [("Red", [], .intLit 0), ("Rgb", ["r", "g", "b"], .varRef "r")] := rfl
+
+/-- One more than what `o` holds, and zero when it holds nothing: the two option forms and the match
+between them, which is what a declaration returning an `int` from an option looks like. -/
+lgtm def succOrZero as "succ-or-zero" (o : option int) : int :=
+  match o with | none => 0 | some(x) => x + 1
+
+-- An option needs no declaration to be well formed, so this checks against no `TypeDecls` at all.
+#guard succOrZero.check {} []
+
+-- The two cases have to share a type, and the name bound is the type the option holds — so `x + 1`
+-- is an `int` because the parameter is an `option int`.
+#guard !({ succOrZero with
+  body := [lgtm| match o with | none => 0 | some(x) => "a"] } : FuncDecl).check {} []
+#guard !({ succOrZero with
+  parameters := [("o", [lgtm_ty| option string])] } : FuncDecl).check {} []
+
+-- And the scrutinee has to be an option: a list is not one, however much the match looks like it
+-- could take one apart.
+#guard !({ succOrZero with
+  parameters := [("o", [lgtm_ty| list int])] } : FuncDecl).check {} []
+
+/-- `n`, held in an option, which is the other half: a value put into one rather than taken out. -/
+lgtm def justInt as "just-int" (n : int) : option int :=
+  some(n)
+
+#guard justInt.check {} []
+#guard !({ justInt with resultType := [lgtm_ty| option string] } : FuncDecl).check {} []
+
+/-- Nothing, at `int`: the shortest declaration returning an option, and the one place the
+annotation is all there is to go on. -/
+lgtm def noInt as "no-int" : option int :=
+  none : int
+
+#guard noInt.check {} []
+#guard !({ noInt with resultType := [lgtm_ty| option string] } : FuncDecl).check {} []
+
+/-- Whether two options are the same option, which an option is as comparable as what it holds. -/
+lgtm def sameOpt as "same-opt" (a : option int) (b : option int) : bool :=
+  a == b
+
+#guard sameOpt.check {} []
+
+-- So an option of function type is no more comparable than the functions it holds.
+#guard !({ sameOpt with
+  parameters := [("a", .option fnTy), ("b", .option fnTy)] } : FuncDecl).check {} []
+
+-- Both alternatives are required and in the order `optionMatch` holds them, since there is nothing
+-- else a `match` naming `none` could have meant.
+/-- error: a match on an option takes `none` first and `some` second -/
+#guard_msgs(error) in
+#check [lgtm| match o with | some(x) => x | none => 0]
+
+/-- error: a match on an option has two alternatives: `| none => ... | some(x) => ...` -/
+#guard_msgs(error) in
+#check [lgtm| match o with | none => 0]
+
+/-- error: `some` holds one value, so its alternative binds one name: `| some(x) => ...` -/
+#guard_msgs(error) in
+#check [lgtm| match o with | none => 0 | some(x, y) => x]
+
+/-- error: `none` holds nothing, so its alternative binds no names -/
+#guard_msgs(error) in
+#check [lgtm| match o with | none(x) => 0 | some(y) => y]
 
 end Tests

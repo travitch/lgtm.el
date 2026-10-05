@@ -246,6 +246,17 @@ public def Expression.infer (td : TypeDecls) (ctx : Context) : Expression → Op
   | .plus l r | .minus l r =>
     if l.infer td ctx == some .int && r.infer td ctx == some .int then some .int else none
   | .stringLit _ => some .string
+  | .optionNone t => some (.option t)
+  | .optionSome e => do
+    let t ← e.infer td ctx
+    some (.option t)
+  | .optionMatch scrut nbody x sbody =>
+    match scrut.infer td ctx with
+    | some (.option t) => do
+      let r ← nbody.infer td ctx
+      guard (sbody.infer td ((x, t) :: ctx) == some r)
+      some r
+    | _ => none
   | .lnil t => some (.list t)
   | .lcons hd tl => do
     let t ← hd.infer td ctx
@@ -323,6 +334,13 @@ decomposes into premises about `e`'s subterms automatically. -/
     (Expression.lnil t).infer td ctx = some (.list t) := by
   simp [Expression.infer]
 
+/-- An empty option takes its type from its annotation, the way an empty list does: there is no
+value in it for an element type to be read off. -/
+@[simp, grind =] public theorem Expression.infer_optionNone {td : TypeDecls} {ctx : Context}
+    {t : Ty} :
+    (Expression.optionNone t).infer td ctx = some (.option t) := by
+  simp [Expression.infer]
+
 /-- A `plus` is typeable exactly when both operands are `int`s, and then it is an `int`. -/
 @[simp, grind =] public theorem Expression.infer_plus_eq_some {td : TypeDecls} {ctx : Context}
     {l r : Expression} {t : Ty} :
@@ -361,6 +379,31 @@ result's: unlike `lcons`, this form introduces no new type structure. -/
       ∃ t', l.infer td ctx = some (.list t') ∧ t = .list t' := by
   simp only [Expression.infer]
   split <;> grind
+
+/-- An `optionSome` is typeable exactly when the expression it holds is, and then it is an option of
+that expression's type.  No annotation is needed, unlike `optionNone`: the value is what the element
+type is read off, the way `lcons` reads a list's element type off its head. -/
+@[simp, grind =] public theorem Expression.infer_optionSome_eq_some {td : TypeDecls} {ctx : Context}
+    {e : Expression} {t : Ty} :
+    (Expression.optionSome e).infer td ctx = some t ↔
+      ∃ t', e.infer td ctx = some t' ∧ t = .option t' := by
+  simp [Expression.infer, Option.bind_eq_some_iff]
+  grind
+
+/-- An `optionMatch` is typeable when its scrutinee is an option and its two cases have one type —
+and then that is its type.
+
+The same shape as `ite` rather than as `indMatch`: the cases are the two the type has, so there is
+nothing to be exhaustive about and no list of inferred types to find a common one among.  What the
+`some` case adds is the name it binds, which is in scope in that case alone and at the type the
+scrutinee's option holds. -/
+@[simp, grind =] public theorem Expression.infer_optionMatch_eq_some {td : TypeDecls}
+    {ctx : Context} {scrut nbody sbody : Expression} {x : String} {t : Ty} :
+    (Expression.optionMatch scrut nbody x sbody).infer td ctx = some t ↔
+      ∃ t', scrut.infer td ctx = some (.option t') ∧ nbody.infer td ctx = some t
+        ∧ sbody.infer td ((x, t') :: ctx) = some t := by
+  simp only [Expression.infer]
+  split <;> simp_all [Option.bind_eq_some_iff, guard]
 
 /-- A `lam` is typeable when its body is, under its parameters extended with the enclosing
 context, and then it is a function from the parameters' types to the body's.

@@ -5,6 +5,16 @@ public inductive Ty where
 | bool
 | int
 | string
+/-- A value of the given type, or nothing.
+
+This behaves like an inductive type of two constructors — `Expression.optionNone` and
+`Expression.optionSome` build one, and `Expression.optionMatch` takes one apart — but it is a type
+former of its own rather
+than an `InductiveDecl`, because extraction gives it a representation of its own and erases the
+constructors.  That is also why it needs no declaration to be well formed: unlike `.struct` and
+`.ind`, which are nominal and name something a `TypeDecls` has to resolve, this one carries its
+element type. -/
+| option : Ty → Ty
 | list : Ty → Ty
 /-- A function from the types of its parameters to the type of its result. -/
 | fn : List Ty → Ty → Ty
@@ -42,6 +52,7 @@ public def Ty.beq : Ty → Ty → Bool
   | .bool, .bool => true
   | .int, .int => true
   | .string, .string => true
+  | .option a, .option b => Ty.beq a b
   | .list a, .list b => Ty.beq a b
   | .fn as r, .fn bs r' => Ty.beqList as bs && Ty.beq r r'
   | .struct a, .struct b => a == b
@@ -65,6 +76,7 @@ public theorem Ty.beq_iff_eq : ∀ (a b : Ty), Ty.beq a b = true ↔ a = b
   | .bool, b => by cases b <;> simp [Ty.beq]
   | .int, b => by cases b <;> simp [Ty.beq]
   | .string, b => by cases b <;> simp [Ty.beq]
+  | .option a, b => by cases b <;> simp [Ty.beq, Ty.beq_iff_eq a]
   | .list a, b => by cases b <;> simp [Ty.beq, Ty.beq_iff_eq a]
   | .fn as r, b => by cases b <;> simp [Ty.beq, Ty.beqList_iff_eq as, Ty.beq_iff_eq r]
   | .struct s, b => by cases b <;> simp [Ty.beq]
@@ -136,6 +148,27 @@ Example: match c with | Red => 0 | Rgb(r, g, b) => r -/
 | plus : Expression → Expression → Expression
 | minus : Expression → Expression → Expression
 | stringLit : String → Expression
+/-- The empty option value with its type to aid type checking.
+
+Spelled `optionNone` rather than `none` for the reason every other form carries the name of the type
+it belongs to — `indNew`, `structNew` — and for one more: a constructor called `Expression.none`
+would shadow `Option.none` inside every declaration in the `Expression` namespace, which is most of
+the type checker. -/
+| optionNone : Ty → Expression
+/-- The option value holding another value. -/
+| optionSome : Expression → Expression
+/-- Case analysis on a value of option type: the expression to take apart, the expression to
+evaluate when it holds nothing, and — for when it holds a value — the name to bind that value to
+together with the expression to evaluate under it.
+
+`indMatch` specialised to `Ty.option`, and specialised in the two ways that matter.  The cases are
+the two the type has rather than a list of alternatives, so there is no exhaustiveness to check and
+no constructor name to resolve: an `option` carries its element type instead of naming a declaration,
+so the type of the name bound is read off the scrutinee.  And an `optionSome` carries one value
+rather than a list of them, so one name is bound rather than as many as a declaration gives.
+
+Example: match o with | none => 0 | some(x) => x -/
+| optionMatch : Expression → Expression → String → Expression → Expression
 /-- The empty list annotated with its element type -/
 | lnil : Ty → Expression
 | lcons : Expression → Expression → Expression

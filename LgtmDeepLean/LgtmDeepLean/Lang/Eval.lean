@@ -137,6 +137,31 @@ is why the *type* of each has to come from the declaration when `Eval.hasType` t
 | EPlus (e₁ : Expression) (e₂ : Expression) : Eval td env e₁ (.int n₁) → Eval td env e₂ (.int n₂) → Eval td env (.plus e₁ e₂) (.int (n₁ + n₂))
 | EMinus (e₁ : Expression) (e₂ : Expression) : Eval td env e₁ (.int n₁) → Eval td env e₂ (.int n₂) → Eval td env (.minus e₁ e₂) (.int (n₁ - n₂))
 | EStringLit (s : String) : Eval td env (.stringLit s) (.string s)
+/-- An empty option evaluates to the empty value, and its annotation goes nowhere: a value carries no
+type, so what the annotation is for is `Expression.infer` alone — exactly as `ENil` drops `lnil`'s. -/
+| ENone (ty : Ty) : Eval td env (.optionNone ty) (.option none)
+| ESome (e : Expression) : Eval td env e v → Eval td env (.optionSome e) (.option (some v))
+/-- A match on an option that came out empty evaluates its first case, and one on an option holding a
+value binds that value to the name the second case gives and evaluates that.
+
+Two rules rather than one, the way `ite` has two: a proof taking one apart is left with the case that
+ran, and the case that did not run is not mentioned at all — only one of them is ever evaluated.
+
+They are also the two rules `EIndMatch` is one rule for.  A `match` on an inductive type finds its
+alternative by the constructor name the value carries, which is a lookup that may fail; an option has
+two cases and the value is one of them, so there is nothing to resolve and no way for a match on an
+option value to be stuck.  A scrutinee that evaluates to something that is not an option is the only
+thing that can go wrong here, and that is what typing rules out.
+
+The name is bound in front of the environment, so it shadows what was there, the way a `let`'s is. -/
+| EOptionMatchNone (scrut nbody : Expression) (x : String) (sbody : Expression) :
+    Eval td env scrut (.option none) →
+    Eval td env nbody v →
+    Eval td env (.optionMatch scrut nbody x sbody) v
+| EOptionMatchSome (scrut nbody : Expression) (x : String) (sbody : Expression) :
+    Eval td env scrut (.option (some w)) →
+    Eval td ⟨(x, w) :: env.bindings, env.globals⟩ sbody v →
+    Eval td env (.optionMatch scrut nbody x sbody) v
 | ENil (ty : Ty) : Eval td env (.lnil ty) (.list [])
 | ECons (e₁ : Expression) (e₂ : Expression) : Eval td env e₁ v → Eval td env e₂ (.list vs) → Eval td env (.lcons e₁ e₂) (.list (v :: vs))
 | EListReverse (e : Expression) : Eval td env e (.list vs) → Eval td env (.listReverse e) (.list vs.reverse)
@@ -162,6 +187,12 @@ is not something the type has heard about.
 `ELet` is the other rule that extends the environment, and it is the easy one: the context grows on
 the left exactly as the bindings do, so `Env.hasType_cons` — applied to the type the bound expression
 was inferred at — is the whole case.
+
+The two `optionMatch` rules are the two `ite` rules with a binding in one of them.  Which case ran is
+not something the type has heard about, so it is again both cases having been held to one type that
+makes this work; and the name the second case binds takes its type from the scrutinee's option type,
+which is all the value it took apart says about what it carries.  `Env.hasType_cons` then does for
+that name what it does for a `let`'s.
 
 `EApp` is where the context stops being fixed, which is why the induction generalizes it: the
 closure's body was checked against a context of its own, recovered from the closure's type, and has
@@ -284,6 +315,16 @@ public theorem Eval.hasType {td : TypeDecls} {env : Env} {ctx : Context} {e : Ex
       obtain ⟨t', htmem, hxlen, hinfer⟩ := Expression.lookup_of_inferAlts halts hc halt
       obtain rfl : t' = t := hrs t' htmem
       exact ihbody (Env.hasType_match hxlen hvlen hvals henv) (by simpa using hinfer)
+  | EOptionMatchNone scrut nbody x sbody _ _ _ ihnbody =>
+      obtain ⟨-, -, hnb, -⟩ := Expression.infer_optionMatch_eq_some.mp ht
+      exact ihnbody henv hnb
+  | EOptionMatchSome scrut nbody x sbody _ _ ihscrut ihsbody =>
+      obtain ⟨t', hsc, -, hsb⟩ := Expression.infer_optionMatch_eq_some.mp ht
+      -- The type of the name this case binds is the one the scrutinee's option type holds, which is
+      -- the only thing the value it took apart says about what it carries.
+      obtain ⟨t'', hw, heq⟩ := Value.hasType_option_some_iff.mp (ihscrut henv hsc)
+      obtain rfl : t'' = t' := by simpa using heq.symm
+      exact ihsbody (Env.hasType_cons hw henv) (by simpa using hsb)
   | _ => grind [Value.HasType]
 
 /-- `Apply d gs args v`: calling `d` with `args` among the globals `gs` returns `v`.

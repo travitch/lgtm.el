@@ -1282,3 +1282,235 @@ private def sameFns : FuncDecl :=
 -- `Ty.comparable` that rules it out, on the type the two operands share.
 #guard !sameFns.check {} []
 
+
+/-! ## Options
+
+The option forms are the two values and the match between them.  There is no table here, the way
+there is for the struct and inductive sections: an `option` carries its element type rather than
+naming a declaration, so nothing about one is resolved anywhere.
+
+They have no surface syntax yet, so the expressions are spliced in with `~(...)`: the DSL is what
+`lgtm def` is written in, and a form it does not cover is still an ordinary `Expression`. -/
+
+-- An empty option evaluates to the empty value, and its annotation goes nowhere: a value carries no
+-- type, so the two below produce the same value and it is only the type checker that tells them
+-- apart.
+example : Eval {} ∅ (Expression.optionNone .int) (.option none) := .ENone .int
+example : Eval {} ∅ (Expression.optionNone .string) (.option none) := .ENone .string
+
+-- And to nothing else, so an empty option is not an empty list.
+example : ¬ Eval {} ∅ (Expression.optionNone .int) (.list []) := by
+  intro h; cases h
+
+-- A `some` evaluates what it holds and keeps the value, whatever it took to arrive at.
+example : Eval {} ∅ (Expression.optionSome (.intLit 1)) (.option (some (.int 1))) :=
+  .ESome _ (.EIntLit 1)
+example : Eval {} ∅ (Expression.optionSome (.plus (.intLit 1) (.intLit 2)))
+    (.option (some (.int 3))) :=
+  .ESome _ (.EPlus (n₁ := 1) (n₂ := 2) _ _ (.EIntLit 1) (.EIntLit 2))
+example : Eval {} ∅ (Expression.optionSome (.optionSome (.intLit 1)))
+    (.option (some (.option (some (.int 1))))) :=
+  .ESome _ (.ESome _ (.EIntLit 1))
+
+/-- An option holding an `int` has the type `option int`, which is the whole of what
+`Value.HasType` asks of one: the value it holds is held to the type the option gives. -/
+private theorem hasType_someInt {a : Int} :
+    Value.HasType td (.option (some (.int a))) (.option .int) := .optionSome (.int a)
+
+/-- An empty one has that type too, and it has every other option type as well — there is no value
+in it for a type to be required of, the way there is none in an empty list. -/
+private theorem hasType_noneInt : Value.HasType td (.option none) (.option .int) := .optionNone
+
+example : Value.HasType ({} : TypeDecls) (.option none) (.option (.fn [.int] .int)) := .optionNone
+
+/-- One more than what `o` holds, and `0` when it holds nothing. -/
+lgtm private def succOr as "succ-or" (o : ~(Ty.option .int)) : int :=
+  ~(Expression.optionMatch (.varRef "o") (.intLit 0) "x" [lgtm| x + 1])
+
+#guard succOr.check {} []
+
+-- Which case runs is decided by the value the scrutinee produced, and it is `EOptionMatchSome` or
+-- `EOptionMatchNone` that says so — the two rules `ite` has two of for the same reason.
+example : FuncDecl.Apply succOr {} [] [.option (some (.int 4))] (.int 5) :=
+  .EApply _ (.cons "o" hasType_someInt .nil)
+    (.EOptionMatchSome _ _ _ _ (.EVarRef "o" rfl)
+      (.EPlus (n₁ := 4) (n₂ := 1) _ _ (.EVarRef "x" rfl) (.EIntLit 1)))
+
+example : FuncDecl.Apply succOr {} [] [.option none] (.int 0) :=
+  .EApply _ (.cons "o" hasType_noneInt .nil)
+    (.EOptionMatchNone _ _ _ _ (.EVarRef "o" rfl) (.EIntLit 0))
+
+-- Soundness covers the new forms: the declared result type comes back from `succOr` checking, with
+-- nothing said about which case ran — which is the reason both cases were held to one type.
+example (v : Value) (ov : Option Value) (h : FuncDecl.Apply succOr {} [] [.option ov] v) :
+    v.HasType {} .int :=
+  h.hasType Globals.wellTyped_nil (by simp [succOr, List.lookup])
+
+-- An argument of the wrong type is stuck at the call, as it is for any other parameter: an option of
+-- `int`s is what the declaration asks for, and an `int` is not one.
+example (v : Value) : ¬ FuncDecl.Apply succOr {} [] [.int 4] v := by
+  rintro ⟨-, hargs, -⟩
+  cases hargs with
+  | cons _ hv _ => cases hv
+
+/-- Which case runs is decided by the value and nothing else, and the one that runs computes with
+what the option held: this is the property a match exists to express, for every `a` rather than for
+one.
+
+Inverting it is two cases because there are two rules, and the `none` rule is ruled out by the value
+the scrutinee produced rather than assumed away — an option holding a value is not an empty one, and
+that is all it takes. -/
+private theorem succOr.eq_succ {a : Int} {res : Value}
+    (h : FuncDecl.Apply succOr {} [] [.option (some (.int a))] res) : res = .int (a + 1) := by
+  obtain ⟨-, -, hbody⟩ := h
+  cases hbody with
+  | EOptionMatchNone _ _ _ _ hsc _ =>
+    cases hsc with
+    | EVarRef _ hlo =>
+      simp [succOr, FuncDecl.callEnv, Env.extend, Globals.env, Env.lookup] at hlo
+  | EOptionMatchSome _ _ _ _ hsc hsb =>
+    cases hsc with
+    | EVarRef _ hlo =>
+      simp [succOr, FuncDecl.callEnv, Env.extend, Globals.env, Env.lookup] at hlo
+      subst hlo
+      cases hsb with
+      | EPlus _ _ h₁ h₂ =>
+        cases h₁ with
+        | EVarRef _ hlx =>
+          cases h₂ with
+          | EIntLit _ =>
+            -- The name the `some` case bound is read straight off the front of the bindings, so
+            -- nothing about the call environment comes into it.
+            simp [Env.lookup, List.lookup] at hlx
+            grind
+
+/-- And the other case for an empty option, which is the half that computes with nothing at all. -/
+private theorem succOr.eq_zero {res : Value}
+    (h : FuncDecl.Apply succOr {} [] [.option none] res) : res = .int 0 := by
+  obtain ⟨-, -, hbody⟩ := h
+  cases hbody with
+  | EOptionMatchNone _ _ _ _ hsc hnb =>
+    cases hnb with
+    | EIntLit _ => rfl
+  | EOptionMatchSome _ _ _ _ hsc _ =>
+    cases hsc with
+    | EVarRef _ hlo =>
+      simp [succOr, FuncDecl.callEnv, Env.extend, Globals.env, Env.lookup] at hlo
+
+-- The case that did not run is never evaluated, the way the branch of an `ite` that did not is: the
+-- `none` case below has no value at all, and the match still has one.
+example : Eval {} ∅ (Expression.optionMatch (.optionSome (.intLit 1))
+    (.app (.varRef "missing") []) "x" (.varRef "x")) (.int 1) :=
+  .EOptionMatchSome _ _ _ _ (.ESome _ (.EIntLit 1)) (.EVarRef "x" rfl)
+
+-- The name is bound in front of the environment, so it shadows what was there, and only inside its
+-- own case.
+example : Eval {} ⟨[("x", .int 9)], []⟩ (Expression.optionMatch (.optionSome (.intLit 1))
+    (.varRef "x") "x" (.varRef "x")) (.int 1) :=
+  .EOptionMatchSome _ _ _ _ (.ESome _ (.EIntLit 1)) (.EVarRef "x" rfl)
+
+example : Eval {} ⟨[("x", .int 9)], []⟩ (Expression.optionMatch (.optionNone .int)
+    (.varRef "x") "x" (.varRef "x")) (.int 9) :=
+  .EOptionMatchNone _ _ _ _ (.ENone .int) (.EVarRef "x" rfl)
+
+-- A match on a value that is not an option is stuck: neither rule applies, which is exactly what
+-- the scrutinee having to be an option rules out.  Unlike `EIndMatch`, there is nothing else that
+-- can get one stuck — the two cases are the two an option value comes in, so none has to be found.
+example (v : Value) :
+    ¬ Eval {} ∅ (Expression.optionMatch (.intLit 1) (.intLit 0) "x" (.varRef "x")) v := by
+  intro h
+  cases h with
+  | EOptionMatchNone _ _ _ _ hsc _ => cases hsc
+  | EOptionMatchSome _ _ _ _ hsc _ => cases hsc
+
+/-- `n`, held in an option, which is the other half: a value put into one rather than taken out. -/
+lgtm private def justIt as "just-it" (n : int) : ~(Ty.option .int) :=
+  ~(Expression.optionSome [lgtm| n])
+
+#guard justIt.check {} []
+
+example : FuncDecl.Apply justIt {} [] [.int 7] (.option (some (.int 7))) :=
+  .EApply _ (.cons "n" (.int 7) .nil) (.ESome _ (.EVarRef "n" rfl))
+
+example (v : Value) (a : Int) (h : FuncDecl.Apply justIt {} [] [.int a] v) :
+    v.HasType {} (.option .int) :=
+  h.hasType Globals.wellTyped_nil (by simp [justIt, List.lookup])
+
+/-- Nothing, at `int`: the shortest declaration that returns an option, and the one place the
+annotation is all there is to go on. -/
+lgtm private def nothing : ~(Ty.option .int) :=
+  ~(Expression.optionNone .int)
+
+#guard nothing.check {} []
+
+example : FuncDecl.Apply nothing {} [] [] (.option none) := .EApply _ .nil (.ENone .int)
+
+-- The value an empty option evaluates to says nothing about the type, so it is the declaration that
+-- does: soundness gives back `option int` because `nothing` says `option int`.
+example (v : Value) (h : FuncDecl.Apply nothing {} [] [] v) : v.HasType {} (.option .int) :=
+  h.hasType Globals.wellTyped_nil (by simp [nothing])
+
+/-! ### Comparing options
+
+`Value.beq?` compares two options by comparing what they hold, and decides an empty one against a
+full one without looking at the value — the same way it decides two lists of different lengths. -/
+
+example : Eval {} ∅ (Expression.equals (.optionSome (.intLit 1)) (.optionSome (.intLit 1)))
+    (.bool true) :=
+  .EEquals _ _ (.ESome _ (.EIntLit 1)) (.ESome _ (.EIntLit 1)) rfl
+
+example : Eval {} ∅ (Expression.equals (.optionSome (.intLit 1)) (.optionSome (.intLit 2)))
+    (.bool false) :=
+  .EEquals _ _ (.ESome _ (.EIntLit 1)) (.ESome _ (.EIntLit 2)) rfl
+
+example : Eval {} ∅ (Expression.equals (.optionNone .int) (.optionNone .int)) (.bool true) :=
+  .EEquals _ _ (.ENone .int) (.ENone .int) rfl
+
+example : Eval {} ∅ (Expression.equals (.optionSome (.intLit 1)) (.optionNone .int)) (.bool false) :=
+  .EEquals _ _ (.ESome _ (.EIntLit 1)) (.ENone .int) rfl
+
+/-- Whether two options hold the same thing. -/
+private def sameOpt : FuncDecl where
+  docstring := "Whether `a` and `b` are the same."
+  name := "same-opt"
+  parameters := [("a", .option .int), ("b", .option .int)]
+  body := .equals (.varRef "a") (.varRef "b")
+  resultType := .bool
+
+#guard sameOpt.check {} []
+
+-- And what a comparison coming out `true` *means* holds for options like any other comparable type:
+-- it is the two values being equal, which is what `Value.beq?_eq_some_iff` is for.
+private theorem sameOpt.eq_of_true {a b : Value}
+    (h : FuncDecl.Apply sameOpt {} [] [a, b] (.bool true)) : a = b := by
+  obtain ⟨-, -, hbody⟩ := h
+  cases hbody with
+  | EEquals _ _ h₁ h₂ hb =>
+    cases h₁ with
+    | EVarRef _ hla =>
+      cases h₂ with
+      | EVarRef _ hlb =>
+        simp [sameOpt, FuncDecl.callEnv, Env.extend, Globals.env, Env.lookup,
+          List.lookup] at hla hlb
+        subst hla
+        subst hlb
+        exact Value.eq_of_beq? hb
+
+-- An option of function type is the one option there is no comparing, so a comparison of two of
+-- them is stuck — and `Ty.comparable` is what keeps a well-typed program from reaching it.
+example (v : Value) : ¬ Eval {} ∅ (Expression.equals
+    (.optionSome (.lam [("x", .int)] (.varRef "x")))
+    (.optionSome (.lam [("x", .int)] (.varRef "x")))) v := by
+  intro h
+  cases h with
+  | EEquals _ _ h₁ h₂ hb =>
+      cases h₁ with
+      | ESome _ hl =>
+        cases h₂ with
+        | ESome _ hr =>
+          cases hl
+          cases hr
+          simp [Env.closure, Value.beq?] at hb
+
+#guard !({ sameOpt with parameters := [("a", .option (.fn [.int] .int)),
+  ("b", .option (.fn [.int] .int))] } : FuncDecl).check {} []

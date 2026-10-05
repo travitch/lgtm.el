@@ -55,7 +55,8 @@ private def types : TypeDecls :=
 private def ctx : Context :=
   [("xs", .list .int), ("n", .int), ("s", .string), ("f", .fn [.int, .string] .int),
     ("p", .struct "Point"), ("b", .struct "Box"), ("c", .ind "Color"), ("sh", .ind "Shape"),
-    ("t", .ind "Tree"), ("flag", .bool), ("wf", .struct "WithFn"), ("hd", .ind "Holder")]
+    ("t", .ind "Tree"), ("flag", .bool), ("wf", .struct "WithFn"), ("hd", .ind "Holder"),
+    ("o", .option .int), ("op", .option (.struct "Point")), ("ofn", .option (.fn [.int] .int))]
 
 -- Inference determines the type of every form.
 #guard (Expression.intLit 3).infer types ctx == some .int
@@ -908,3 +909,176 @@ example {alts : List (CtorName × List String × Expression)}
     (h : Expression.altsExhaustive shape.constructors alts = true) : (alts.map Prod.fst).Nodup :=
   Expression.alts_nodup_of_altsExhaustive (by decide) h
 
+
+/-! ### Options
+
+The option type is the one type former besides `list` that is structural rather than nominal, so
+`types` has nothing to say about it: an `option` carries its element type, and a value of one is
+either empty or holds a value of that type.  `ctx` gives `o` an `option int`, `op` an option of a
+declared struct, and `ofn` one of function type — which is the one thing a comparison cannot reach
+the bottom of, under an option as under a list. -/
+
+-- An option type is the element type and nothing else, so two of them agree exactly when their
+-- element types do, and an option is not the list of the same thing.
+#guard Ty.option .int == Ty.option .int
+#guard Ty.option .int != Ty.option .string
+#guard Ty.option .int != Ty.list .int
+#guard Ty.option (.option .int) == Ty.option (.option .int)
+#guard Ty.option (.option .int) != Ty.option .int
+#guard Ty.option (.struct "Point") != Ty.option (.struct "Pair")
+
+-- An empty option takes its type from its annotation, the way an empty list does.
+#guard (Expression.optionNone .int).infer types ctx == some (.option .int)
+#guard (Expression.optionNone .string).infer types ctx == some (.option .string)
+#guard (Expression.optionNone (.option .int)).infer types ctx == some (.option (.option .int))
+#guard (Expression.optionNone (.list .int)).infer types ctx == some (.option (.list .int))
+#guard (Expression.optionNone (.struct "Point")).infer types ctx == some (.option (.struct "Point"))
+
+-- An annotation names a type rather than being checked against the table, so an undeclared name
+-- goes through here exactly as it does under `lnil`: it is what *builds* a value of one that the
+-- table is consulted for.
+#guard (Expression.optionNone (.struct "Nope")).infer types ctx == some (.option (.struct "Nope"))
+
+-- A `some` takes its type from the value it holds, so it needs no annotation.
+#guard (Expression.optionSome (.intLit 1)).infer types ctx == some (.option .int)
+#guard (Expression.optionSome (.varRef "s")).infer types ctx == some (.option .string)
+#guard (Expression.optionSome (.varRef "p")).infer types ctx == some (.option (.struct "Point"))
+#guard (Expression.optionSome (.varRef "f")).infer types ctx
+  == some (.option (.fn [.int, .string] .int))
+#guard (Expression.optionSome (.plus (.varRef "n") (.intLit 1))).infer types ctx
+  == some (.option .int)
+
+-- And an ill-typed value makes the whole thing ill typed.
+#guard (Expression.optionSome (.varRef "nope")).infer types ctx == none
+#guard (Expression.optionSome (.plus (.intLit 1) (.stringLit "a"))).infer types ctx == none
+
+-- Options nest, in each other and in everything else: the type former is a type like any other.
+#guard (Expression.optionSome (.optionSome (.intLit 1))).infer types ctx
+  == some (.option (.option .int))
+#guard (Expression.optionSome (.optionNone .int)).infer types ctx == some (.option (.option .int))
+#guard (Expression.lcons (.varRef "o") (.lnil (.option .int))).infer types ctx
+  == some (.list (.option .int))
+#guard (Expression.lcons (.varRef "o") (.lnil (.option .string))).infer types ctx == none
+#guard (Expression.optionSome (.varRef "xs")).infer types ctx == some (.option (.list .int))
+#guard (Expression.lam [("y", .option .int)] (.varRef "y")).infer types ctx
+  == some (.fn [.option .int] (.option .int))
+
+-- An option is comparable exactly when what it holds is, which is the same walk a list gets.
+#guard Ty.comparable types (.option .int)
+#guard Ty.comparable types (.option (.list .string))
+#guard Ty.comparable types (.option (.struct "Point"))
+#guard Ty.comparable types (.option (.ind "Tree"))
+#guard !Ty.comparable types (.option (.fn [.int] .int))
+#guard !Ty.comparable types (.option (.struct "WithFn"))
+#guard !Ty.comparable types (.list (.option (.fn [.int] .int)))
+#guard (Expression.equals (.varRef "o") (.optionNone .int)).infer types ctx == some .bool
+#guard (Expression.equals (.varRef "o") (.optionSome (.intLit 1))).infer types ctx == some .bool
+#guard (Expression.equals (.varRef "o") (.optionSome (.stringLit "a"))).infer types ctx == none
+#guard (Expression.equals (.varRef "ofn") (.varRef "ofn")).infer types ctx == none
+
+-- A match gives the type its two cases agree on, with the name of the second bound to what the
+-- option holds.
+#guard (Expression.optionMatch (.varRef "o") (.intLit 0) "x" (.varRef "x")).infer types ctx
+  == some .int
+#guard (Expression.optionMatch (.varRef "o") (.intLit 0) "x"
+  (.plus (.varRef "x") (.intLit 1))).infer types ctx == some .int
+#guard (Expression.optionMatch (.varRef "o") (.boolLit false) "x"
+  (.equals (.varRef "x") (.intLit 0))).infer types ctx == some .bool
+#guard (Expression.optionMatch (.varRef "op") (.intLit 0) "q"
+  (.structGet (.varRef "q") "x")).infer types ctx == some .int
+
+-- The name is bound at the type the scrutinee's option holds, so using it at another type is ill
+-- typed, and it is in scope in the second case alone.
+#guard (Expression.optionMatch (.varRef "o") (.intLit 0) "x"
+  (.plus (.varRef "x") (.stringLit "a"))).infer types ctx == none
+#guard (Expression.optionMatch (.varRef "op") (.intLit 0) "q" (.varRef "q")).infer types ctx == none
+#guard (Expression.optionMatch (.varRef "o") (.varRef "x") "x" (.varRef "x")).infer types ctx
+  == none
+
+-- It shadows an enclosing binding of the same name, the way a `let`'s does, and only inside its own
+-- case: the first case still sees the outer `n`.
+#guard (Expression.optionMatch (.optionSome (.stringLit "a")) (.stringLit "b") "n"
+  (.varRef "n")).infer types ctx == some .string
+#guard (Expression.optionMatch (.optionSome (.stringLit "a")) (.varRef "n") "n"
+  (.varRef "n")).infer types ctx == none
+
+-- Both cases are held to one type, which is what makes the form have a type at all: neither the
+-- value nor the scrutinee says which case will run.
+#guard (Expression.optionMatch (.varRef "o") (.intLit 0) "x" (.stringLit "a")).infer types ctx
+  == none
+#guard (Expression.optionMatch (.varRef "o") (.stringLit "a") "x" (.varRef "x")).infer types ctx
+  == none
+
+-- The scrutinee has to be an option, and nothing else will do: there is no value of another type
+-- for the two cases to be a case analysis of.
+#guard (Expression.optionMatch (.varRef "n") (.intLit 0) "x" (.varRef "x")).infer types ctx == none
+#guard (Expression.optionMatch (.varRef "xs") (.intLit 0) "x" (.varRef "x")).infer types ctx == none
+#guard (Expression.optionMatch (.varRef "c") (.intLit 0) "x" (.varRef "x")).infer types ctx == none
+#guard (Expression.optionMatch (.varRef "nope") (.intLit 0) "x" (.varRef "x")).infer types ctx
+  == none
+
+-- An ill-typed case on either side makes the match ill typed, however the other one goes.
+#guard (Expression.optionMatch (.varRef "o") (.varRef "nope") "x" (.varRef "x")).infer types ctx
+  == none
+#guard (Expression.optionMatch (.varRef "o") (.intLit 0) "x" (.varRef "nope")).infer types ctx
+  == none
+
+-- A match on an option of options is a match whose bound name is itself an option, which is all
+-- nesting comes to.
+#guard (Expression.optionMatch (.optionSome (.optionSome (.intLit 1))) (.optionNone .int) "x"
+  (.varRef "x")).infer types ctx == some (.option .int)
+
+-- A match is an expression like any other: it goes where its type goes, and it is an operand of
+-- whatever that type is an operand of.
+#guard (Expression.plus (.optionMatch (.varRef "o") (.intLit 0) "x" (.varRef "x"))
+  (.intLit 1)).infer types ctx == some .int
+#guard (Expression.optionSome (.optionMatch (.varRef "o") (.intLit 0) "x"
+  (.varRef "x"))).infer types ctx == some (.option .int)
+
+/-- `fun (o : option int) => match o with | none => 0 | some(x) => x + 1` -/
+private def succOr : FuncDecl where
+  docstring := "One more than what `o` holds, and `0` when it holds nothing."
+  name := "succ-or"
+  parameters := [("o", .option .int)]
+  body := .optionMatch (.varRef "o") (.intLit 0) "x" (.plus (.varRef "x") (.intLit 1))
+  resultType := .int
+
+-- A declaration over the new forms checks like any other, and against no table at all: an option
+-- names nothing for a `TypeDecls` to resolve.
+#guard succOr.check {} []
+#guard !({ succOr with resultType := .option .int } : FuncDecl).check {} []
+#guard !({ succOr with parameters := [("o", .int)] } : FuncDecl).check {} []
+#guard !({ succOr with parameters := [("o", .option .string)] } : FuncDecl).check {} []
+
+/-- `fun (n : int) => some(n)` -/
+private def justIt : FuncDecl where
+  docstring := "`n`, held in an option."
+  name := "just-it"
+  parameters := [("n", .int)]
+  body := .optionSome (.varRef "n")
+  resultType := .option .int
+
+#guard justIt.check {} []
+#guard !({ justIt with resultType := .option .string } : FuncDecl).check {} []
+#guard !({ justIt with resultType := .int } : FuncDecl).check {} []
+
+/-- `fun => none : int`, which is the shortest declaration that returns an option: the annotation is
+the only thing that says which one. -/
+private def nothing : FuncDecl where
+  docstring := "Nothing, at `int`."
+  name := "nothing"
+  parameters := []
+  body := .optionNone .int
+  resultType := .option .int
+
+#guard nothing.check {} []
+#guard !({ nothing with resultType := .option .string } : FuncDecl).check {} []
+#guard !({ nothing with body := Expression.optionNone .string } : FuncDecl).check {} []
+
+-- Checking agrees with inference on the new forms too.
+#guard (Expression.optionNone .int).check types ctx (.option .int)
+#guard !(Expression.optionNone .int).check types ctx (.option .string)
+#guard !(Expression.optionNone .int).check types ctx .int
+#guard (Expression.optionSome (.intLit 1)).check types ctx (.option .int)
+#guard !(Expression.optionSome (.intLit 1)).check types ctx .int
+#guard (Expression.optionMatch (.varRef "o") (.intLit 0) "x" (.varRef "x")).check types ctx .int
