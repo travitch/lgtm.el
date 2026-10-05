@@ -6,6 +6,7 @@ public import LgtmDeepLean.Lang.Eval
 import LgtmDeepLean.Lang.Eval.Tests
 public import LgtmDeepLean.Lang.IR
 public import LgtmDeepLean.Lang.Syntax
+import LgtmDeepLean.Lang.Syntax.Tests
 public import LgtmDeepLean.Lang.TypeCheck
 public import LgtmDeepLean.Lang.TypeCheck.Comparable
 public import LgtmDeepLean.Lang.TypeCheck.Infer
