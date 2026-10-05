@@ -5,15 +5,6 @@ public inductive Ty where
 | bool
 | int
 | string
-/-- A value of the given type, or nothing.
-
-This behaves like an inductive type of two constructors — `Expression.optionNone` and
-`Expression.optionSome` build one, and `Expression.optionMatch` takes one apart — but it is a type
-former of its own rather
-than an `InductiveDecl`, because extraction gives it a representation of its own and erases the
-constructors.  That is also why it needs no declaration to be well formed: unlike `.struct` and
-`.ind`, which are nominal and name something a `TypeDecls` has to resolve, this one carries its
-element type. -/
 | option : Ty → Ty
 | list : Ty → Ty
 /-- A function from the types of its parameters to the type of its result. -/
@@ -148,26 +139,15 @@ Example: match c with | Red => 0 | Rgb(r, g, b) => r -/
 | plus : Expression → Expression → Expression
 | minus : Expression → Expression → Expression
 | stringLit : String → Expression
-/-- The empty option value with its type to aid type checking.
-
-Spelled `optionNone` rather than `none` for the reason every other form carries the name of the type
-it belongs to — `indNew`, `structNew` — and for one more: a constructor called `Expression.none`
-would shadow `Option.none` inside every declaration in the `Expression` namespace, which is most of
-the type checker. -/
+/-- The empty option value with its type to aid type checking. -/
 | optionNone : Ty → Expression
 /-- The option value holding another value. -/
 | optionSome : Expression → Expression
 /-- Case analysis on a value of option type: the expression to take apart, the expression to
-evaluate when it holds nothing, and — for when it holds a value — the name to bind that value to
-together with the expression to evaluate under it.
+evaluate when it holds nothing, and the name to bind that value to together with the expression
+to evaluate under it.
 
-`indMatch` specialised to `Ty.option`, and specialised in the two ways that matter.  The cases are
-the two the type has rather than a list of alternatives, so there is no exhaustiveness to check and
-no constructor name to resolve: an `option` carries its element type instead of naming a declaration,
-so the type of the name bound is read off the scrutinee.  And an `optionSome` carries one value
-rather than a list of them, so one name is bound rather than as many as a declaration gives.
-
-Example: match o with | none => 0 | some(x) => x -/
+This is a special form (instead of `indMatch`) because options get compiled away during extraction. -/
 | optionMatch : Expression → Expression → String → Expression → Expression
 /-- The empty list annotated with its element type -/
 | lnil : Ty → Expression
