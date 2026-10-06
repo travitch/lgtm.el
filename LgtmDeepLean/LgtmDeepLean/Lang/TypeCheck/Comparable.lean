@@ -25,12 +25,16 @@ One per name `td` declares, and one more.  That is enough to be sure that the se
 forcibly terminated in the presence of a cycle, which remains sound. -/
 @[expose] public def TypeDecls.budget (td : TypeDecls) : Nat := td.names.length + 1
 
+mutual
+
 /-- Is neither a function type nor a hashmap type reachable from `t`, with `sOk` and `iOk` deciding
 that for the structure and inductive names `t` mentions?
 
 Leaving the decision on structure and inductive types to the `sOk` and `iOk` oracles instead of
 directly computing them from `TypeDecls` is helpful to avoid sinking this into the mutual block and
-to keep the termination checking simple.
+to keep the termination checking simple.  The one thing it is mutual with is
+`Ty.comparableWithList`, which walks the types a `tuple` holds: a `Ty` carries a `List Ty` there, so
+the walk over the list is a second function for the reason `Ty.beqList` is one beside `Ty.beq`.
 
 A hashmap stops the walk the way a function type does, and for a reason of the same kind: a `Value`
 of hashmap type is an association list, so two of them carry the bindings they were put in in the
@@ -46,8 +50,27 @@ canonical form for hashmap values would lift. -/
   | .hashmap _ _ => false
   | .option t => Ty.comparableWith sOk iOk t
   | .list t => Ty.comparableWith sOk iOk t
+  | .tuple ts => Ty.comparableWithList sOk iOk ts
   | .struct name => sOk name
   | .ind name => iOk name
+
+/-- The same question of every type in a list: the types a `tuple` holds, each of which a comparison
+of two tuples has to reach the bottom of.
+
+A tuple is positional and its length is part of its type, so there is nothing here that a list's
+element type does not already face — which is why this is `Ty.comparableWith` run along a list and
+nothing more. -/
+@[expose] public def Ty.comparableWithList (sOk iOk : String → Bool) : List Ty → Bool
+  | [] => true
+  | t :: ts => Ty.comparableWith sOk iOk t && Ty.comparableWithList sOk iOk ts
+
+end
+
+@[simp] public theorem Ty.comparableWithList_eq_all {sOk iOk : String → Bool} {ts : List Ty} :
+    Ty.comparableWithList sOk iOk ts = ts.all (Ty.comparableWith sOk iOk) := by
+  induction ts with
+  | nil => rfl
+  | cons t ts ih => simp [Ty.comparableWithList, ih]
 
 mutual
 
@@ -109,3 +132,16 @@ the association list a hashmap value is that has no canonical form, not the type
 a comparison has anything to look at is the value it holds. -/
 @[simp, grind =] public theorem Ty.comparable_option {td : TypeDecls} {t : Ty} :
     Ty.comparable td (.option t) = Ty.comparable td t := rfl
+
+/-- A tuple is comparable exactly when every type it holds is, which is the list case read
+positionally: the two tuples a comparison is given are the same length — that is their type — so
+every position is one it has to be able to reach the bottom of.
+
+A hashmap type among them stops it, so `tuple [kt, vt]` — what `hashmapToList` produces a list of —
+is comparable exactly when the map's two types are.  That is not the comparison on hashmaps arriving
+by another route: what `Ty.comparable` turns a hashmap down for is the order its bindings are carried
+in, and a list of tuples compared elementwise answers about that order rather than in spite of it. -/
+@[simp, grind =] public theorem Ty.comparable_tuple {td : TypeDecls} {ts : List Ty} :
+    Ty.comparable td (.tuple ts) = ts.all (Ty.comparable td) := by
+  rw [Ty.comparable, Ty.comparableWith, Ty.comparableWithList_eq_all]
+  rfl

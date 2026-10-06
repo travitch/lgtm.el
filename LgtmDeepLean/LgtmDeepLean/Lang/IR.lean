@@ -8,6 +8,18 @@ public inductive Ty where
 | option : Ty → Ty
 | list : Ty → Ty
 | hashmap : Ty → Ty → Ty
+/-- A fixed-length sequence of values, each at the type its position gives it: `tuple [int, string]`
+is an `int` beside a `string`.
+
+Positional and structural — it names no declaration, the way `list` and `option` name none — so it
+is to a struct what an inductive constructor's data is to a struct's fields: there is nothing to
+declare and nothing for `TypeDecls` to resolve, and two tuple types are the same when they are the
+same types in the same order.
+
+Unlike `list` it is heterogeneous and its length is part of its type, which is what makes it the type
+of *one binding* of a hashmap: `tuple [kt, vt]` is what `Expression.hashmapToList` produces a list
+of. -/
+| tuple : List Ty → Ty
 /-- A function from the types of its parameters to the type of its result. -/
 | fn : List Ty → Ty → Ty
 /-- A declared structure type (matched nominally). -/
@@ -47,6 +59,7 @@ public def Ty.beq : Ty → Ty → Bool
   | .option a, .option b => Ty.beq a b
   | .list a, .list b => Ty.beq a b
   | .hashmap k1 v1, .hashmap k2 v2 => Ty.beq k1 k2 && Ty.beq v1 v2
+  | .tuple as, .tuple bs => Ty.beqList as bs
   | .fn as r, .fn bs r' => Ty.beqList as bs && Ty.beq r r'
   | .struct a, .struct b => a == b
   | .ind a, .ind b => a == b
@@ -72,6 +85,7 @@ public theorem Ty.beq_iff_eq : ∀ (a b : Ty), Ty.beq a b = true ↔ a = b
   | .option a, b => by cases b <;> simp [Ty.beq, Ty.beq_iff_eq a]
   | .list a, b => by cases b <;> simp [Ty.beq, Ty.beq_iff_eq a]
   | .hashmap k v, b => by cases b <;> simp [Ty.beq, Ty.beq_iff_eq k, Ty.beq_iff_eq v]
+  | .tuple as, b => by cases b <;> simp [Ty.beq, Ty.beqList_iff_eq as]
   | .fn as r, b => by cases b <;> simp [Ty.beq, Ty.beqList_iff_eq as, Ty.beq_iff_eq r]
   | .struct s, b => by cases b <;> simp [Ty.beq]
   | .ind s, b => by cases b <;> simp [Ty.beq]
@@ -168,6 +182,8 @@ Creates a new hashmap with the new binding, discarding any previous binding for 
 > hashampGet m k
 -/
 | hashmapGet : Expression → Expression → Expression
+/-- Convert a hashmap to a list of pairs. -/
+| hashmapToList : Expression → Expression
 
 public structure FuncDecl where
   docstring : String

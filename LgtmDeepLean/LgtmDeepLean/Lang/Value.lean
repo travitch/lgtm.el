@@ -43,6 +43,18 @@ It holds no types, as `list` holds none: at which types its keys and values stan
 `Value.HasType` says, and an empty hashmap has every hashmap type the way an empty list has every
 list type. -/
 | hashmap : List (Value × Value) → Value
+/-- A fixed-length sequence of values, one per type its tuple type gives: what
+`Expression.hashmapToList` makes of one binding of a hashmap.
+
+A `List Value` the way `list` is, and the two are told apart by nothing but which constructor they
+are: a list is homogeneous and of any length, a tuple is positional and of the length its type
+fixes, and it is `Value.HasType` that says which of those the values are held to.  That is the same
+division of labour as between `Value.struct` and its declaration's fields — the value is the values,
+and the shape they have to have is the type's business.
+
+It holds no types, as `list` and `hashmap` hold none.  The empty tuple is the one value of
+`tuple []`, which is the one tuple type that constrains nothing. -/
+| tuple : List Value → Value
 /-- A function together with the environment it was written in: the bindings it captured and the
 globals it was reached among, then the parameters and body of the `lam` itself.
 
@@ -155,10 +167,10 @@ mutual
 /-- Whether `a` and `b` are the same value, or `none` where they cannot be compared at all.
 
 Deep and structural: two lists are equal when they hold the same values in the same order, two
-options when they are both empty or both hold the same value, two struct values when they are of the
-same struct and every field holds the same value, and two values of an inductive type when they are
-of the same type, were built by the same constructor, and that constructor's data is the same value
-for value.
+tuples when they do — the same walk, since a tuple is positional too — two options when they are
+both empty or both hold the same value, two struct values when they are of the same struct and every
+field holds the same value, and two values of an inductive type when they are of the same type, were
+built by the same constructor, and that constructor's data is the same value for value.
 
 A closure is what `none` is for.  Two functions are the same function when they agree on every
 argument, which is a question about what they *do*: no value carries enough to settle it, and a
@@ -182,6 +194,7 @@ underneath it compared to say so. -/
   | .option none, .option none => some true
   | .option _, .option _ => some false
   | .list as, .list bs => Value.beqList? as bs
+  | .tuple as, .tuple bs => Value.beqList? as bs
   | .struct n fas, .struct m fbs => if n == m then Value.beqFields? fas fbs else none
   | .ind n c as, .ind m d bs =>
     if n == m then (if c == d then Value.beqList? as bs else some false) else none
@@ -262,6 +275,12 @@ public theorem Value.beq?_eq_some_iff : ∀ (a b : Value) (r : Bool),
   | .list as, b, r => by
     cases b with
     | list bs =>
+      intro h
+      simpa using Value.beqList?_eq_some_iff as bs r (by simpa [Value.beq?] using h)
+    | _ => simp [Value.beq?]
+  | .tuple as, b, r => by
+    cases b with
+    | tuple bs =>
       intro h
       simpa using Value.beqList?_eq_some_iff as bs r (by simpa [Value.beq?] using h)
     | _ => simp [Value.beq?]
@@ -561,6 +580,14 @@ the same reason — there is nothing in it for either type to be required of. -/
 | hashmap {kvs : List (Value × Value)} {kt vt : Ty} :
     (∀ p ∈ kvs, HasType td p.1 kt) → (∀ p ∈ kvs, HasType td p.2 vt) →
     HasType td (.hashmap kvs) (.hashmap kt vt)
+/-- A tuple carries one value per type its tuple type lists, each of the type in that position.
+
+Where the `list` case holds every element to one type, this holds the values to the types
+positionally and pins the length down as well — which is the `ind` case's clauses without a
+declaration to find them in, since a tuple type carries the types itself. -/
+| tuple {vs : List Value} {ts : List Ty} :
+    vs.length = ts.length → (∀ p ∈ vs.zip ts, HasType td p.1 p.2) →
+    HasType td (.tuple vs) (.tuple ts)
 /-- An empty option has every option type, the way an empty list has every list type: there is no
 value in it for a type to be required of.  Which one it has in a given place is what the annotation
 on `Expression.optionNone` settles. -/
@@ -692,6 +719,22 @@ either — which is exactly why `Expression.hashmapEmpty` carries two annotation
     | hashmap hkeys hvals => exact ⟨_, _, hkeys, hvals, rfl⟩
   · rintro ⟨kt, vt, hkeys, hvals, rfl⟩
     exact .hashmap hkeys hvals
+
+/-- What it takes for a tuple value to have a type: the type is a tuple type of as many types as the
+value has values, each of which the value in that position has.
+
+Nothing is existential — a tuple type carries its types, so a tuple value has at most one type, and
+there is no declaration to resolve the way the `struct` and `ind` cases have one. -/
+@[simp] public theorem Value.hasType_tuple_iff {td : TypeDecls} {vs : List Value} {t : Ty} :
+    Value.HasType td (.tuple vs) t ↔
+      ∃ ts, vs.length = ts.length ∧ (∀ p ∈ vs.zip ts, Value.HasType td p.1 p.2)
+        ∧ t = .tuple ts := by
+  constructor
+  · intro h
+    cases h with
+    | tuple hlen htys => exact ⟨_, hlen, htys, rfl⟩
+  · rintro ⟨ts, hlen, htys, rfl⟩
+    exact .tuple hlen htys
 
 /-- What it takes for a struct value to have a type, as one existential over the declaration its name
 resolves to.

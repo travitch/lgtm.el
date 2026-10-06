@@ -282,6 +282,12 @@ public def Expression.infer (td : TypeDecls) (ctx : Context) : Expression → Op
       guard (Ty.comparable td kt)
       some (.option vt)
     | _ => none
+  | .hashmapToList m =>
+    match m.infer td ctx with
+    | some (.hashmap kt vt) => do
+      guard (Ty.comparable td kt)
+      some (.list (.tuple [kt, vt]))
+    | _ => none
 
 /-- Infer the types of `es`, in order, or `none` if any one of them is ill typed. -/
 public def Expression.inferList (td : TypeDecls) (ctx : Context) :
@@ -524,11 +530,12 @@ type. -/
   simp only [Expression.infer]
   split <;> simp_all [Option.bind_eq_some_iff, guard]
 
-/-! The three hashmap forms.  Each of them asks for the key type to be comparable, which is the one
+/-! The four hashmap forms.  Each of them asks for the key type to be comparable, which is the one
 condition that is not about the shape of the expression: a hashmap is read by comparing the key
 given against the keys the map carries, so a key type `Ty.comparable` turns down is one no `get`
-could answer and no `put` could rebind over.  It is required of the empty map as well, so that a
-hashmap type nothing could do anything with is not reachable by building one. -/
+could answer and no `put` could rebind over.  It is required of the empty map and of `toList` as
+well — neither of which compares a key — so that a hashmap type nothing could do anything with is
+not reachable by building one. -/
 
 /-- A `hashmapEmpty` takes its type from its two annotations, the way an empty list and an empty
 option take theirs: it binds nothing, so there is no key and no value for either half to be read
@@ -564,6 +571,22 @@ any other. -/
     (Expression.hashmapGet m k).infer td ctx = some t ↔
       ∃ kt vt, m.infer td ctx = some (.hashmap kt vt) ∧ k.infer td ctx = some kt
         ∧ Ty.comparable td kt = true ∧ t = .option vt := by
+  simp only [Expression.infer]
+  split <;> simp_all [Option.bind_eq_some_iff, guard] <;> grind
+
+/-- A `hashmapToList` is typeable when its operand is a hashmap, and then it is a list of the tuple
+of that hashmap's two types: one element per binding, each a key beside the value it is bound to.
+
+The map's own type is what both halves of the element type come from, so this form reads no
+expression but the map's — there is no key here to require anything of.  `tuple [kt, vt]` rather
+than two parallel lists because a binding is a key *and* its value: nothing else in the IR relates
+the two, so taking them apart into a list of keys and a list of values would lose which went with
+which. -/
+@[simp, grind =] public theorem Expression.infer_hashmapToList_eq_some {td : TypeDecls}
+    {ctx : Context} {m : Expression} {t : Ty} :
+    (Expression.hashmapToList m).infer td ctx = some t ↔
+      ∃ kt vt, m.infer td ctx = some (.hashmap kt vt) ∧ Ty.comparable td kt = true
+        ∧ t = .list (.tuple [kt, vt]) := by
   simp only [Expression.infer]
   split <;> simp_all [Option.bind_eq_some_iff, guard] <;> grind
 

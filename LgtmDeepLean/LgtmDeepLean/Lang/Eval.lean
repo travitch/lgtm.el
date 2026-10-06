@@ -196,6 +196,20 @@ this stuck is the one a put's does. -/
     Eval td env m (.hashmap kvs) → Eval td env k vk →
     KeyValues.lookup? kvs vk = some o →
     Eval td env (.hashmapGet m k) (.option o)
+/-- A `toList` evaluates the map and hands its bindings back as a list, one two-element tuple per
+binding: the key beside the value it is bound to.
+
+Nothing is compared and nothing can go wrong, so this is the one hashmap rule with no `KeyValues`
+premise — the bindings are already the list this produces, and the walk is `List.map` over them.
+
+The order is the map's own, which is the order the bindings were put in: `Value.hashmap` canonicalizes
+nothing, so two maps binding the same keys to the same values convert to lists that differ whenever
+they were built in different orders.  That is the same fact `Ty.comparable` turns a hashmap type down
+for, and converting does not escape it — `tuple [kt, vt]` is comparable where `hashmap kt vt` is not,
+but what two converted maps then compare equal is the bindings *and* their order. -/
+| EHashmapToList (m : Expression) :
+    Eval td env m (.hashmap kvs) →
+    Eval td env (.hashmapToList m) (.list (kvs.map fun p => .tuple [p.1, p.2]))
 
 
 /-- Evaluating a well-typed expression produces a value of its inferred type.
@@ -379,6 +393,18 @@ public theorem Eval.hasType {td : TypeDecls} {env : Env} {ctx : Context} {e : Ex
       | some w =>
           obtain ⟨k', hk'⟩ := KeyValues.mem_of_lookup? hlookup
           exact .optionSome (hvals (k', w) hk')
+  | EHashmapToList m _ ihm =>
+      obtain ⟨kt, vt, hm, -, rfl⟩ := Expression.infer_hashmapToList_eq_some.mp ht
+      obtain ⟨kt', vt', hkeys, hvals, heq⟩ := Value.hasType_hashmap_iff.mp (ihm henv hm)
+      obtain ⟨rfl, rfl⟩ : kt = kt' ∧ vt = vt' := by simpa using heq
+      -- Every element is a binding of the map, so the two halves of the map's own type are what
+      -- type the two positions of the tuple it became.
+      refine .list fun v hv => ?_
+      obtain ⟨p, hp, rfl⟩ := List.mem_map.mp hv
+      refine .tuple (by simp) fun q hq => ?_
+      rcases (by simpa using hq : q = (p.1, kt) ∨ q = (p.2, vt)) with rfl | rfl
+      · exact hkeys p hp
+      · exact hvals p hp
   | _ => grind [Value.HasType]
 
 /-- `Apply d gs args v`: calling `d` with `args` among the globals `gs` returns `v`.

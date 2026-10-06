@@ -1703,3 +1703,101 @@ example (body : Expression) (w : Value) :
               simp [Env.lookup, List.lookup] at hlm
               subst hlm
               simp [KeyValues.lookup?, Value.beq?] at hlookup
+
+/-! ### Converting a map to a list
+
+`toList` is the one hashmap form that compares nothing: the bindings are already the list it hands
+back, so the rule has no `KeyValues` premise and nothing about it can go wrong.  What it produces is
+one two-element tuple per binding, in the order the map carries them — which is the order they were
+put in, since nothing canonicalizes a `Value.hashmap`. -/
+
+-- An empty map converts to the empty list, and the empty list is a list like any other: the tuple
+-- type it would have held is the type checker's business, since no value carries one.
+example : Eval {} ∅ [lgtm| toList hashmap(string, int)] (.list []) :=
+  .EHashmapToList _ (.EHashmapEmpty _ _)
+
+-- One binding is one tuple: the key first and the value it is bound to second.
+example : Eval {} ∅ [lgtm| toList ({ hashmap(string, int) with ["a"] = 1 })]
+    (.list [.tuple [.string "a", .int 1]]) :=
+  .EHashmapToList _
+    (.EHashmapPut _ _ _ (.EHashmapEmpty _ _) (.EStringLit "a") (.EIntLit 1) rfl)
+
+-- Two bindings are two tuples, in the order the map carries them — the later put first, which is
+-- where it went when it was put.  This is the order a conversion exposes and nothing else fixes.
+example : Eval {} ∅ [lgtm| toList ({ hashmap(string, int) with ["a"] = 1, ["b"] = 2 })]
+    (.list [.tuple [.string "b", .int 2], .tuple [.string "a", .int 1]]) :=
+  .EHashmapToList _
+    (.EHashmapPut _ _ _
+      (.EHashmapPut _ _ _ (.EHashmapEmpty _ _) (.EStringLit "a") (.EIntLit 1) rfl)
+      (.EStringLit "b") (.EIntLit 2) rfl)
+
+-- A key put twice is bound once, so it converts to one tuple and not two: what `KeyValues.erase?`
+-- did to the map is visible in the list its bindings become.
+example : Eval {} ∅ [lgtm| toList ({ hashmap(string, int) with ["a"] = 1, ["a"] = 2 })]
+    (.list [.tuple [.string "a", .int 2]]) :=
+  .EHashmapToList _
+    (.EHashmapPut _ _ _
+      (.EHashmapPut _ _ _ (.EHashmapEmpty _ _) (.EStringLit "a") (.EIntLit 1) rfl)
+      (.EStringLit "a") (.EIntLit 2) rfl)
+
+/-- The list one binding converts to has the list-of-tuple type the type checker gives a `toList`:
+every element a tuple of as many values as the type has types, each at the type in its position. -/
+private theorem hasType_toListA {td : TypeDecls} :
+    Value.HasType td (.list [.tuple [.string "a", .int 1]]) (.list (.tuple [.string, .int])) := by
+  refine .list fun v hv => ?_
+  obtain rfl : v = Value.tuple [.string "a", .int 1] := by simpa using hv
+  refine .tuple (by simp) fun p hp => ?_
+  rcases (by simpa using hp : p = (Value.string "a", Ty.string) ∨ p = (Value.int 1, Ty.int)) with
+    rfl | rfl
+  · exact .string "a"
+  · exact .int 1
+
+/-- Whether `m` binds anything.
+
+The conversion is what makes this writable: a hashmap has no comparison — its bindings have no
+canonical order — while the list they convert to is compared like any other list, against the empty
+one. -/
+lgtm private def isEmpty as "is-empty" (m : hashmap string int) : bool :=
+  toList m == [: tuple(string, int)]
+
+#guard isEmpty.check {} []
+
+-- The comparison is `Value.beq?` on two lists, so the empty map answers `true` and a map binding
+-- something answers `false` — on the length alone, with nothing underneath compared.
+example : FuncDecl.Apply isEmpty {} [] [.hashmap []] (.bool true) :=
+  .EApply _ (.cons "m" hasType_mapEmpty .nil)
+    (.EEquals _ _ (.EHashmapToList _ (.EVarRef "m" rfl)) (.ENil _) rfl)
+
+example : FuncDecl.Apply isEmpty {} [] [.hashmap [(.string "a", .int 1)]] (.bool false) :=
+  .EApply _ (.cons "m" hasType_mapA .nil)
+    (.EEquals _ _ (.EHashmapToList _ (.EVarRef "m" rfl)) (.ENil _) rfl)
+
+-- Soundness covers the form: a `bool` comes back whatever the map held, and the list in the middle
+-- has the type `Eval.hasType` reads off the map's.
+example (kvs : KeyValues) (v : Value) (h : FuncDecl.Apply isEmpty {} [] [.hashmap kvs] v) :
+    v.HasType {} .bool :=
+  h.hasType Globals.wellTyped_nil (by simp [isEmpty, List.lookup]; grind)
+
+-- An argument that is not a map is stuck at the call, as it is for any other parameter.
+example (v : Value) : ¬ FuncDecl.Apply isEmpty {} [] [.list []] v := by
+  rintro ⟨-, hargs, -⟩
+  cases hargs with
+  | cons _ hv _ => cases hv
+
+/-- What a conversion means, for every map rather than for one: every element of the list it produces
+is a binding the map carries, as the tuple of that key and that value.
+
+This is the fact a proof about a converted map carries on with, the way `getOr.mem_of_eval` is for a
+lookup.  Inverting the rule leaves `List.map` over the bindings, and that is the whole of it: no
+comparison stands between a binding and the tuple it becomes. -/
+private theorem isEmpty.mem_of_eval {kvs : KeyValues} {vs : List Value}
+    (h : Eval {} ⟨[("m", .hashmap kvs)], []⟩ [lgtm| toList m] (.list vs)) {v : Value}
+    (hv : v ∈ vs) : ∃ p ∈ kvs, v = .tuple [p.1, p.2] := by
+  cases h with
+  | EHashmapToList _ hm =>
+      cases hm with
+      | EVarRef _ hlm =>
+          simp only [Env.lookup, List.lookup] at hlm
+          simp_all
+          obtain ⟨a, b, hab, rfl⟩ := hv
+          exact ⟨a, b, hab, rfl⟩

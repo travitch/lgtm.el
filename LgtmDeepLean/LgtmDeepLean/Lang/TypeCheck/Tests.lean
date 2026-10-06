@@ -1183,6 +1183,71 @@ function type, which is the case the condition is for. -/
 #guard (Expression.hashmapGet (.varRef "mbad")
   (.lam [("x", .int)] (.varRef "x"))).infer types ctx == none
 
+-- A tuple type is the types it lists, in their order, and nothing else.  It is comparable exactly
+-- when all of them are: a tuple value is as canonical as a list value, so nothing of the kind that
+-- stops two hashmaps being compared is in the way.
+#guard Ty.tuple [.string, .int] == Ty.tuple [.string, .int]
+#guard Ty.tuple [.string, .int] != Ty.tuple [.int, .string]
+#guard Ty.tuple [.string, .int] != Ty.tuple [.string]
+#guard Ty.tuple [.string, .int] != Ty.list .string
+#guard Ty.comparable types (.tuple [.string, .int])
+#guard Ty.comparable types (.tuple [])
+#guard Ty.comparable types (.tuple [.string, .struct "Point"])
+#guard !Ty.comparable types (.tuple [.string, .fn [.int] .int])
+#guard !Ty.comparable types (.tuple [.string, .hashmap .string .int])
+#guard !Ty.comparable types (.tuple [.string, .struct "WithFn"])
+
+-- A `toList` is a list of the map's two types as a tuple: one element per binding, the key beside
+-- the value it is bound to.  It reads no expression but the map's, so there is no key here for
+-- anything to be required of.
+#guard (Expression.hashmapToList (.varRef "m")).infer types ctx
+  == some (.list (.tuple [.string, .int]))
+#guard (Expression.hashmapToList (.varRef "mp")).infer types ctx
+  == some (.list (.tuple [.string, .struct "Point"]))
+#guard (Expression.hashmapToList (.hashmapEmpty .int (.list .string))).infer types ctx
+  == some (.list (.tuple [.int, .list .string]))
+
+-- An uncomparable value type is as fine here as under the other three forms, and an uncomparable key
+-- is turned down as it is there — even though converting compares nothing, the way an empty map
+-- compares nothing and is held to it too.
+#guard (Expression.hashmapToList (.varRef "mfn")).infer types ctx
+  == some (.list (.tuple [.string, .fn [.int] .int]))
+#guard (Expression.hashmapToList (.varRef "mbad")).infer types ctx == none
+
+-- The operand has to be a map, and nothing else will do.
+#guard (Expression.hashmapToList (.varRef "xs")).infer types ctx == none
+#guard (Expression.hashmapToList (.varRef "p")).infer types ctx == none
+#guard (Expression.hashmapToList (.varRef "nope")).infer types ctx == none
+#guard (Expression.hashmapToList (.hashmapGet (.varRef "m") (.varRef "s"))).infer types ctx == none
+
+-- What it produces is an ordinary list, so `reverse` reads one and so does a comparison — which is
+-- the one thing the map it came from cannot be read by.  The key and value types being comparable is
+-- what that last one needs, and it is exactly what the key half is already held to.
+#guard (Expression.listReverse (.hashmapToList (.varRef "m"))).infer types ctx
+  == some (.list (.tuple [.string, .int]))
+#guard (Expression.equals (.hashmapToList (.varRef "m"))
+  (.lnil (.tuple [.string, .int]))).infer types ctx == some .bool
+#guard (Expression.equals (.hashmapToList (.varRef "mfn"))
+  (.lnil (.tuple [.string, .fn [.int] .int]))).infer types ctx == none
+#guard (Expression.hashmapToList (.varRef "m")).check types ctx
+  (.list (.tuple [.string, .int]))
+#guard !(Expression.hashmapToList (.varRef "m")).check types ctx
+  (.list (.tuple [.int, .string]))
+
+/-- `fun (m : hashmap string int) => toList m == [: tuple(string, int)]` -/
+private def isEmpty : FuncDecl where
+  docstring := "Whether `m` binds nothing."
+  name := "is-empty"
+  parameters := [("m", .hashmap .string .int)]
+  body := .equals (.hashmapToList (.varRef "m")) (.lnil (.tuple [.string, .int]))
+  resultType := .bool
+
+-- Converting is what makes this writable at all: a map has no comparison, and the list of its
+-- bindings does.
+#guard isEmpty.check {} []
+#guard !({ isEmpty with body := Expression.equals (.varRef "m") (.hashmapEmpty .string .int) }
+  : FuncDecl).check {} []
+
 -- The forms nest into each other and into everything else: what each produces is an operand of
 -- whatever its type is an operand of.
 #guard (Expression.hashmapGet (.hashmapPut (.varRef "m") (.varRef "s") (.intLit 1))

@@ -755,6 +755,44 @@ example : [lgtm| { m with ["a"] = 1 }["a"]]
     = Expression.hashmapGet (.hashmapPut (.varRef "m") (.stringLit "a") (.intLit 1))
         (.stringLit "a") := rfl
 
+-- A tuple type lists its types in one group in parentheses, the way a function type's parameters
+-- are listed and unlike `hashmap`'s two: the group is what says how many there are, so a function
+-- type among them needs no parentheses of its own and there is an empty one to write.
+example : [lgtm_ty| tuple(string, int)] = Ty.tuple [.string, .int] := rfl
+example : [lgtm_ty| tuple(int, string)] = Ty.tuple [.int, .string] := rfl
+example : [lgtm_ty| tuple()] = Ty.tuple [] := rfl
+example : [lgtm_ty| tuple(int)] = Ty.tuple [.int] := rfl
+example : [lgtm_ty| tuple(int, string, bool)] = Ty.tuple [.int, .string, .bool] := rfl
+example : [lgtm_ty| tuple(list int, option string)]
+    = Ty.tuple [.list .int, .option .string] := rfl
+example : [lgtm_ty| tuple(string, (int) -> int)] = Ty.tuple [.string, .fn [.int] .int] := rfl
+example : [lgtm_ty| tuple(string, tuple(int, bool))]
+    = Ty.tuple [.string, .tuple [.int, .bool]] := rfl
+example : [lgtm_ty| list tuple(string, int)] = Ty.list (.tuple [.string, .int]) := rfl
+example : [lgtm_ty| hashmap tuple(string, int) int]
+    = Ty.hashmap (.tuple [.string, .int]) .int := rfl
+
+-- A conversion is a prefix keyword binding as tightly as `reverse`, so it reads a lookup's operand
+-- and takes parentheses to reach further.
+example : [lgtm| toList m] = Expression.hashmapToList (.varRef "m") := rfl
+example : [lgtm| toList p.m] = Expression.hashmapToList (.structGet (.varRef "p") "m") := rfl
+example : [lgtm| toList f(1)] = Expression.hashmapToList (.app (.varRef "f") [.intLit 1]) := rfl
+example : [lgtm| toList hashmap(string, int)]
+    = Expression.hashmapToList (.hashmapEmpty .string .int) := rfl
+example : [lgtm| toList ({ m with [k] = 1 })]
+    = Expression.hashmapToList (.hashmapPut (.varRef "m") (.varRef "k") (.intLit 1)) := rfl
+
+-- And what it produces is an ordinary list operand: `reverse` reads one, a cons extends one, and a
+-- comparison against the empty list is what asking whether a map binds anything comes to.
+example : [lgtm| reverse toList m]
+    = Expression.listReverse (.hashmapToList (.varRef "m")) := rfl
+example : [lgtm| toList m == [: tuple(string, int)]]
+    = Expression.equals (.hashmapToList (.varRef "m")) (.lnil (.tuple [.string, .int])) := rfl
+
+-- `toList` is a keyword, so it is no variable name inside a DSL term; outside one it is an ordinary
+-- Lean identifier, which declaring it with `&` is what preserves.
+example : [lgtm| var "toList"] = Expression.varRef "toList" := rfl
+
 /-- The empty map from `string` to `int`: the shortest declaration that returns one, and the one
 place the annotations are all there is to go on. -/
 lgtm def noneBound as "none-bound" : hashmap string int :=
