@@ -839,3 +839,86 @@ lgtm def getOr as "get-or" (m : hashmap string int) (k : string) : int :=
 #guard !({ noneBound with
   body := [lgtm| hashmap(hashmap string int, int)]
   resultType := [lgtm_ty| hashmap (hashmap string int) int] } : FuncDecl).check {} []
+
+-- A tuple expression lists its elements in one group in parentheses, the way the *type* lists its
+-- types: the group is what says how many there are, so there is an empty one to write and no
+-- annotation anywhere — the elements are what the types are read off.
+example : [lgtm| tuple(1, "a")] = Expression.tupleNew [.intLit 1, .stringLit "a"] := rfl
+example : [lgtm| tuple("a", 1)] = Expression.tupleNew [.stringLit "a", .intLit 1] := rfl
+example : [lgtm| tuple()] = Expression.tupleNew [] := rfl
+example : [lgtm| tuple(1)] = Expression.tupleNew [.intLit 1] := rfl
+example : [lgtm| tuple(1, "a", true)]
+    = Expression.tupleNew [.intLit 1, .stringLit "a", .boolLit true] := rfl
+example : [lgtm| tuple(x + 1, p.y)]
+    = Expression.tupleNew [.plus (.varRef "x") (.intLit 1), .structGet (.varRef "p") "y"] := rfl
+example : [lgtm| tuple(tuple(1), "a")]
+    = Expression.tupleNew [.tupleNew [.intLit 1], .stringLit "a"] := rfl
+
+-- `tuple` is a keyword, so it is no variable name inside a DSL term; outside one it is an ordinary
+-- Lean identifier, which declaring it with `&` is what preserves.
+example : [lgtm| var "tuple"] = Expression.varRef "tuple" := rfl
+
+-- A read is written like a field read with an index in place of the name, binds as tightly as one,
+-- and nests into the other postfix forms the same way.
+example : [lgtm| t.0] = Expression.tupleGet (.varRef "t") 0 := rfl
+example : [lgtm| t.1] = Expression.tupleGet (.varRef "t") 1 := rfl
+example : [lgtm| t.10] = Expression.tupleGet (.varRef "t") 10 := rfl
+example : [lgtm| p.t.0] = Expression.tupleGet (.structGet (.varRef "p") "t") 0 := rfl
+example : [lgtm| f(1).0] = Expression.tupleGet (.app (.varRef "f") [.intLit 1]) 0 := rfl
+example : [lgtm| m[k].0] = Expression.tupleGet (.hashmapGet (.varRef "m") (.varRef "k")) 0 := rfl
+example : [lgtm| tuple(1, "a").0]
+    = Expression.tupleGet (.tupleNew [.intLit 1, .stringLit "a"]) 0 := rfl
+
+-- What it does not nest into is itself, because Lean's tokenizer reads `0.1` as a decimal and `0.x`
+-- as an attempt at one.  Parentheses are what say which `.` is which, the same way they do for the
+-- two `:`s of `[(none : int) : option int]`.
+example : [lgtm| (t.0).1] = Expression.tupleGet (.tupleGet (.varRef "t") 0) 1 := rfl
+example : [lgtm| (t.0).x] = Expression.structGet (.tupleGet (.varRef "t") 0) "x" := rfl
+
+-- And what a read produces is an ordinary operand, so the looser operators take one without
+-- parentheses.
+example : [lgtm| t.0 + 1] = Expression.plus (.tupleGet (.varRef "t") 0) (.intLit 1) := rfl
+example : [lgtm| t.0 == t.1]
+    = Expression.equals (.tupleGet (.varRef "t") 0) (.tupleGet (.varRef "t") 1) := rfl
+example : [lgtm| reverse tuple(1)] = Expression.listReverse (.tupleNew [.intLit 1]) := rfl
+
+/-- The pair of its two arguments: the shortest declaration whose result type is a tuple, and the
+one place the element types are the arguments' and nothing else. -/
+lgtm def pair (s : string) (n : int) : tuple(string, int) :=
+  tuple(s, n)
+
+-- A tuple needs no declaration to be well formed, so this checks against no `TypeDecls` at all.
+#guard pair.check {} []
+#guard !({ pair with resultType := [lgtm_ty| tuple(int, string)] } : FuncDecl).check {} []
+#guard !({ pair with resultType := [lgtm_ty| tuple(string)] } : FuncDecl).check {} []
+#guard !({ pair with resultType := [lgtm_ty| list string] } : FuncDecl).check {} []
+
+/-- The first half of a pair, which is the other half: a value read out of a tuple rather than put
+into one. -/
+lgtm def fst (t : tuple(string, int)) : string :=
+  t.0
+
+#guard fst.check {} []
+#guard ({ fst with body := [lgtm| t.1], resultType := .int } : FuncDecl).check {} []
+
+-- An index past the end is ill typed, which is what makes the index a literal: the type at a
+-- position that is not known until something runs is a type nothing could report.
+#guard !({ fst with body := [lgtm| t.2] } : FuncDecl).check {} []
+#guard !({ fst with body := [lgtm| t.1] } : FuncDecl).check {} []
+
+-- A tuple is comparable exactly when everything in it is, so a pair of a map is not and a pair of
+-- its two types is: what `Ty.comparable` turns a hashmap down for is the order its bindings are
+-- carried in, which converting does not escape.
+#guard ({ fst with
+  body := [lgtm| if t == t then { t.0 } else { t.0 }] } : FuncDecl).check {} []
+#guard !({ fst with
+  parameters := [("t", [lgtm_ty| tuple(string, hashmap string int)])]
+  body := [lgtm| if t == t then { t.0 } else { t.0 }] } : FuncDecl).check {} []
+
+/-- The bindings of a map as a list of pairs, which is the type `toList` gives one: the form a
+`tuple` is in the IR for. -/
+lgtm def bindings (m : hashmap string int) : list tuple(string, int) :=
+  toList m
+
+#guard bindings.check {} []
+#guard !({ bindings with resultType := [lgtm_ty| list tuple(int, string)] } : FuncDecl).check {} []

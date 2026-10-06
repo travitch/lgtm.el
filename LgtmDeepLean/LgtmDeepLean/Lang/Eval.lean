@@ -210,6 +210,27 @@ but what two converted maps then compare equal is the bindings *and* their order
 | EHashmapToList (m : Expression) :
     Eval td env m (.hashmap kvs) →
     Eval td env (.hashmapToList m) (.list (kvs.map fun p => .tuple [p.1, p.2]))
+/-- Building a tuple evaluates one expression per element and keeps the values in the order they
+were given, which is the order the type the expression is inferred at gives them.
+
+The premise is one evaluation per element with the lengths pinned down separately, the way
+`EIndNew`'s is one per argument and for the same reason: both are positional, and `List.zip` stops
+at the shorter list.  Nothing here says how many elements there ought to be, which is the one way
+this is easier than `EIndNew` — a constructor's arity is its declaration's, where a tuple's length
+is read off the elements themselves. -/
+| ETupleNew (es : List Expression) :
+    es.length = vs.length → (∀ p ∈ es.zip vs, Eval td env p.1 p.2) →
+    Eval td env (.tupleNew es) (.tuple vs)
+/-- Reading an element evaluates the tuple and hands back the value at that position.
+
+Read out of the *value*, as `EStructGet`'s field is: an index the value has nothing at leaves this
+stuck, which is the only thing that can go wrong here and is exactly what typing rules out.  The
+index is a `Nat` in the expression rather than something to evaluate, so there is no premise for it
+— the position is settled before anything runs, which is what let `Expression.infer` read the type
+at it. -/
+| ETupleGet (e : Expression) (i : Nat) :
+    Eval td env e (.tuple vs) → vs[i]? = some v →
+    Eval td env (.tupleGet e i) v
 
 
 /-- Evaluating a well-typed expression produces a value of its inferred type.
@@ -405,6 +426,18 @@ public theorem Eval.hasType {td : TypeDecls} {env : Env} {ctx : Context} {e : Ex
       rcases (by simpa using hq : q = (p.1, kt) ∨ q = (p.2, vt)) with rfl | rfl
       · exact hkeys p hp
       · exact hvals p hp
+  | ETupleNew es hlen hev ihev =>
+      obtain ⟨ts, hts, rfl⟩ := Expression.infer_tupleNew_eq_some.mp ht
+      obtain ⟨hvlen, hall⟩ :=
+        Value.hasType_zip_of_inferList hlen hts fun p hp t' ht' => ihev p hp henv ht'
+      exact .tuple hvlen hall
+  | ETupleGet e i _ hget ihe =>
+      obtain ⟨ts, he, hi⟩ := Expression.infer_tupleGet_eq_some.mp ht
+      obtain ⟨ts', -, htys, heq⟩ := Value.hasType_tuple_iff.mp (ihe henv he)
+      obtain rfl : ts = ts' := by simpa using heq
+      -- The value and the type are two lists of the same length, so the value at the index and the
+      -- type at it are a pair the tuple's own `Value.HasType` already speaks for.
+      exact htys _ (List.mem_zip_of_getElem? hget hi)
   | _ => grind [Value.HasType]
 
 /-- `Apply d gs args v`: calling `d` with `args` among the globals `gs` returns `v`.

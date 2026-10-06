@@ -1801,3 +1801,156 @@ private theorem isEmpty.mem_of_eval {kvs : KeyValues} {vs : List Value}
           simp_all
           obtain ⟨a, b, hab, rfl⟩ := hv
           exact ⟨a, b, hab, rfl⟩
+
+/-! ## Tuples
+
+The two forms a tuple is built and taken apart by.  Building one is `EIndNew` without a constructor
+to name — one evaluation per element, in the order they were written — and reading one is
+`EStructGet` by position instead of by name, so the two ways either can go wrong are the two ways
+those can: nothing at all for the first, and an index the value has nothing at for the second. -/
+
+-- Building one evaluates each element and keeps the values in order.  The empty tuple evaluates
+-- nothing, which is what makes it the one value of `tuple()`.
+example : Eval {} ∅ [lgtm| tuple()] (.tuple []) :=
+  .ETupleNew (vs := []) _ rfl (by simp)
+
+example : Eval {} ∅ [lgtm| tuple(1, "a")] (.tuple [.int 1, .string "a"]) :=
+  .ETupleNew (vs := [.int 1, .string "a"]) _ rfl (by
+    rintro p hp
+    simp at hp
+    rcases hp with rfl | rfl
+    · exact .EIntLit 1
+    · exact .EStringLit "a")
+
+-- The order is the order the elements were written, which is the whole of what a tuple records: the
+-- same two values the other way round are a different value at a different type.
+example : Eval {} ∅ [lgtm| tuple("a", 1)] (.tuple [.string "a", .int 1]) :=
+  .ETupleNew (vs := [.string "a", .int 1]) _ rfl (by
+    rintro p hp
+    simp at hp
+    rcases hp with rfl | rfl
+    · exact .EStringLit "a"
+    · exact .EIntLit 1)
+
+-- Reading one hands back the value at that position, whatever its type: a tuple is heterogeneous,
+-- so the two reads of one pair produce values of two types.
+example : Eval {} ⟨[("t", .tuple [.string "a", .int 1])], []⟩ [lgtm| t.0] (.string "a") :=
+  .ETupleGet _ _ (.EVarRef "t" rfl) rfl
+
+example : Eval {} ⟨[("t", .tuple [.string "a", .int 1])], []⟩ [lgtm| t.1] (.int 1) :=
+  .ETupleGet _ _ (.EVarRef "t" rfl) rfl
+
+-- The two forms compose, so building and reading back is the identity on each position.
+example : Eval {} ∅ [lgtm| tuple(1, "a").1] (.string "a") :=
+  .ETupleGet _ _
+    (.ETupleNew (vs := [.int 1, .string "a"]) _ rfl (by
+      rintro p hp
+      simp at hp
+      rcases hp with rfl | rfl
+      · exact .EIntLit 1
+      · exact .EStringLit "a"))
+    rfl
+
+-- An index the value has nothing at leaves a read stuck, which is the only thing that can go wrong
+-- here and is exactly what typing rules out — the index is in the expression, so `Expression.infer`
+-- has already read the type at it.
+example (v : Value) :
+    ¬ Eval {} ⟨[("t", .tuple [.string "a", .int 1])], []⟩ [lgtm| t.2] v := by
+  intro h
+  cases h with
+  | ETupleGet _ _ ht hget =>
+      cases ht with
+      | EVarRef _ hlt =>
+          simp [Env.lookup, List.lookup] at hlt
+          subst hlt
+          simp at hget
+
+-- And so does a read of something that is not a tuple at all, a list of the same values included:
+-- the value says which of the two it is, and nothing converts between them.
+example (v : Value) : ¬ Eval {} ⟨[("t", .list [.string "a"])], []⟩ [lgtm| t.0] v := by
+  intro h
+  cases h with
+  | ETupleGet _ _ ht _ =>
+      cases ht with
+      | EVarRef _ hlt => simp [Env.lookup, List.lookup] at hlt
+
+/-- The first half of a pair of a `string` and an `int`, which is the shortest declaration the two
+forms are both in: a parameter of tuple type read at one position. -/
+lgtm private def fst (t : tuple(string, int)) : string :=
+  t.0
+
+/-- And the pair itself, which is the other half: a declaration whose result type is a tuple. -/
+lgtm private def pair (s : string) (n : int) : tuple(string, int) :=
+  tuple(s, n)
+
+-- A tuple names nothing, so both check against no `TypeDecls` at all.
+#guard fst.check {} []
+#guard pair.check {} []
+
+/-- A pair of a `string` and an `int` has the tuple type of those two, which is as much as a tuple
+value's type ever needs: there is no declaration to resolve, so the length and the two positions are
+the whole of it. -/
+private theorem hasType_pairA {td : TypeDecls} :
+    Value.HasType td (.tuple [.string "a", .int 1]) (.tuple [.string, .int]) :=
+  .tuple (by simp) (by
+    rintro p hp
+    simp at hp
+    rcases hp with rfl | rfl
+    · exact .string "a"
+    · exact .int 1)
+
+example : FuncDecl.Apply fst {} [] [.tuple [.string "a", .int 1]] (.string "a") :=
+  .EApply _ (.cons "t" hasType_pairA .nil) (.ETupleGet _ _ (.EVarRef "t" rfl) rfl)
+
+example : FuncDecl.Apply pair {} [] [.string "a", .int 1] (.tuple [.string "a", .int 1]) :=
+  .EApply _ (.cons "s" (.string "a") (.cons "n" (.int 1) .nil))
+    (.ETupleNew (vs := [.string "a", .int 1]) _ rfl (by
+      rintro p hp
+      simp at hp
+      rcases hp with rfl | rfl
+      · exact .EVarRef "s" rfl
+      · exact .EVarRef "n" rfl))
+
+-- Soundness covers both forms: a `string` comes back from the read whatever the pair held, and the
+-- value the build produced has the declared tuple type.
+example (v w : Value) (h : FuncDecl.Apply fst {} [] [.tuple [v, w]] (.string "a")) :
+    Value.HasType {} (.string "a") .string :=
+  h.hasType Globals.wellTyped_nil (by simp [fst, List.lookup])
+
+example (s : String) (n : Int) (v : Value)
+    (h : FuncDecl.Apply pair {} [] [.string s, .int n] v) :
+    v.HasType {} (.tuple [.string, .int]) :=
+  h.hasType Globals.wellTyped_nil (by simp [pair, List.lookup])
+
+-- An argument that is not a tuple is stuck at the call, as it is for any other parameter: a list of
+-- the same two values will not do.
+example (v : Value) : ¬ FuncDecl.Apply fst {} [] [.list [.string "a", .int 1]] v := by
+  rintro ⟨-, hargs, -⟩
+  cases hargs with
+  | cons _ hv _ => cases hv
+
+-- Nor will a pair of the two types the other way round, which is the one thing a tuple's length and
+-- order being part of its type comes to.
+example (v : Value) : ¬ FuncDecl.Apply fst {} [] [.tuple [.int 1, .string "a"]] v := by
+  rintro ⟨-, hargs, -⟩
+  cases hargs with
+  | cons _ hv _ =>
+      obtain ⟨ts, hlen, htys, heq⟩ := Value.hasType_tuple_iff.mp hv
+      obtain rfl : ts = [.string, .int] := by simpa using heq.symm
+      cases htys (.int 1, .string) (by simp)
+
+/-- What a read means, for every pair rather than for one: the value it hands back is the value the
+tuple carried at that position.
+
+This is the fact a proof about a tuple carries on with, the way `isEmpty.mem_of_eval` is for a
+converted map.  Inverting the rule leaves `getElem?` on the values and that is the whole of it: no
+comparison and no declaration stands between a position and what is at it. -/
+private theorem fst.eq_of_eval {vs : List Value} {v : Value}
+    (h : Eval {} ⟨[("t", .tuple vs)], []⟩ [lgtm| t.0] v) : vs[0]? = some v := by
+  cases h with
+  | ETupleGet _ _ ht hget =>
+      cases ht with
+      | EVarRef _ hlt =>
+          simp [Env.lookup, List.lookup] at hlt
+          subst hlt
+          exact hget

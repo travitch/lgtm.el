@@ -184,6 +184,30 @@ Creates a new hashmap with the new binding, discarding any previous binding for 
 | hashmapGet : Expression → Expression → Expression
 /-- Convert a hashmap to a list of pairs. -/
 | hashmapToList : Expression → Expression
+/-- Create a new tuple with the given elements.
+
+> tupleNew [$expression1, $expression2, ...]
+
+with concrete syntax tuple($expression1, $expression2, ...).
+
+A `List Expression`, the way `Ty.tuple` holds a `List Ty` and `Value.tuple` a `List Value`: a tuple
+is positional, so the elements are given in the order their types come in and there is nothing to
+name.  How many there are is not checked against anything — a tuple type is whatever types the
+elements turned out to have, unlike `indNew`, whose arity is its declaration's.  `tupleNew []` is
+the one value of `tuple []`. -/
+| tupleNew : List Expression → Expression
+/-- Get an element from a tuple.
+
+> tupleGet $tuple $index
+
+with concrete syntax t.N where N is the index.
+
+The index is a `Nat` rather than an `Expression`, which is what makes this typeable at all: a tuple
+is heterogeneous, so what comes out is of the type its tuple type gives at that position, and a
+position arrived at by evaluating something would be one no `Ty` could be read off.  That is the
+same reason `structGet` takes a `FieldName` rather than an expression — this is its positional
+counterpart, over a type that carries its own fields instead of naming a declaration. -/
+| tupleGet : Expression → Nat → Expression
 
 public structure FuncDecl where
   docstring : String

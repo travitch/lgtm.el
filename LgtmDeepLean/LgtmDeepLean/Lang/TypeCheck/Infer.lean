@@ -126,6 +126,17 @@ public theorem List.mem_zip_of_lookup {α β γ : Type} [BEq α] [LawfulBEq α] 
           · simp only [hk] at hb hc
             exact List.mem_cons_of_mem _ (ih h hb hc)
 
+/-- The positional counterpart of `List.mem_zip_of_lookup`: where two lists both have an entry at
+one index, those two entries are paired in the zip.
+
+This is what a `tupleGet` is typed through, the way the struct rules are read through the `lookup`
+version: a tuple's value and its type are two lists of the same length, so the value at a position
+and the type at that position are a pair the `Value.HasType` premise over `List.zip` already speaks
+for. -/
+public theorem List.mem_zip_of_getElem? {α β : Type} {as : List α} {bs : List β} {i : Nat} {a : α}
+    {b : β} (ha : as[i]? = some a) (hb : bs[i]? = some b) : (a, b) ∈ as.zip bs :=
+  List.mem_of_getElem? (i := i) (by simp [List.zip, List.getElem?_zipWith, ha, hb])
+
 /-- A lookup only ever hands back an entry the list contains, which is how a fact stated over every
 entry of a table — as `Globals.WellTyped` and `structUpdate`'s typing rule both are — reaches the one
 entry a name resolved to. -/
@@ -287,6 +298,13 @@ public def Expression.infer (td : TypeDecls) (ctx : Context) : Expression → Op
     | some (.hashmap kt vt) => do
       guard (Ty.comparable td kt)
       some (.list (.tuple [kt, vt]))
+    | _ => none
+  | .tupleNew es => do
+    let ts ← Expression.inferList td ctx es
+    some (.tuple ts)
+  | .tupleGet e i =>
+    match e.infer td ctx with
+    | some (.tuple ts) => ts[i]?
     | _ => none
 
 /-- Infer the types of `es`, in order, or `none` if any one of them is ill typed. -/
@@ -589,6 +607,37 @@ which. -/
         ∧ t = .list (.tuple [kt, vt]) := by
   simp only [Expression.infer]
   split <;> simp_all [Option.bind_eq_some_iff, guard] <;> grind
+
+/-! The two tuple forms.  Neither asks for anything the expression does not carry: a tuple type
+holds the types it relates, so there is no declaration to resolve the way the struct and inductive
+forms have one, and no comparability condition the way the hashmap forms have one. -/
+
+/-- A `tupleNew` is typeable exactly when every element is, and then it is the tuple of their types
+in the order they were written.
+
+It takes no annotation, unlike `lnil` and `optionNone` and `hashmapEmpty`: the elements are what the
+types are read off, and `tupleNew []` needs none either — `tuple []` is the only type it could
+have. -/
+@[simp, grind =] public theorem Expression.infer_tupleNew_eq_some {td : TypeDecls} {ctx : Context}
+    {es : List Expression} {t : Ty} :
+    (Expression.tupleNew es).infer td ctx = some t ↔
+      ∃ ts, Expression.inferList td ctx es = some ts ∧ t = .tuple ts := by
+  simp [Expression.infer, Option.bind_eq_some_iff]
+  grind
+
+/-- A `tupleGet` is typeable when its operand is a tuple with an element at that index, and then it
+has the type that tuple type gives at it.
+
+The index is read off the expression rather than evaluated, which is what lets one `Ty` come out of
+a heterogeneous value: `getElem?` is a lookup in the *type*, so an index past the end is ill typed
+rather than a failure at run time.  That is the positional reading of `structGet`, whose field name
+is looked up in the declaration the operand's type names. -/
+@[simp, grind =] public theorem Expression.infer_tupleGet_eq_some {td : TypeDecls} {ctx : Context}
+    {e : Expression} {i : Nat} {t : Ty} :
+    (Expression.tupleGet e i).infer td ctx = some t ↔
+      ∃ ts, e.infer td ctx = some (.tuple ts) ∧ ts[i]? = some t := by
+  simp only [Expression.infer]
+  split <;> grind
 
 /-! Inversion principles for `inferList`.  Together these say what it computes: the argument types
 in order, and `none` as soon as one argument has no type. -/

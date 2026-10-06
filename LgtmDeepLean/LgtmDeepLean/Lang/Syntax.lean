@@ -143,6 +143,11 @@ The third is the shape a struct update is written in, and the brackets are what 
 key is an expression where a field is a name.  The last is written like `reverse`, as a prefix
 keyword, because it is the same kind of thing: one operand, and a value of a different type out.
 
+The two tuple forms are `tuple(1, "a")` and `t.0`.  The first is written the way the *type*
+`tuple(int, string)` is, with its elements in one comma-separated group; the second is `p.x` with an
+index in place of the field name, which is what reading a positional type rather than a named
+declaration comes to.
+
 The three struct forms are `new Point { x = 1, y = 2 }`, `p.x`, and `{ p with x = 1 }`.  A field read
 is written two ways for one reason: `p.x` is a single identifier token as far as Lean's tokenizer is
 concerned, so a dotted identifier is split into a `varRef` and one `structGet` per component, while
@@ -243,6 +248,37 @@ Several bindings are one `hashmapPut` apiece, applied left to right, so
 `{ m with [a] = 1, [b] = 2 }` is `{ { m with [a] = 1 } with [b] = 2 }`.  At least one is required:
 `{ m with }` is the struct update it has always been. -/
 syntax:max "{" lgtmExpr " with " lgtmKeyBinding,+ "}" : lgtmExpr
+/-- `tuple(1, "a")` is an `int` beside a `string`.
+
+Written the way the type `tuple(int, string)` is and for the same reason: a tuple takes any number
+of elements, so where the comma-separated group ends is what says how many there are.  `tuple()` is
+the empty tuple.
+
+It carries no annotation, unlike `[: int]` and `none : int` and `hashmap(string, int)`: the elements
+are what the types are read off, and the empty tuple needs none either — `tuple()` has the one type
+it could have, where an empty list has every list type.
+
+`tuple` is a keyword, so it is not available as a variable name inside a DSL term; `var "tuple"` is
+the escape hatch, the same one `true`, `none`, `hashmap` and `new` leave. -/
+syntax:max &"tuple" "(" lgtmExpr,* ")" : lgtmExpr
+/-- `t.0` is the first element of the tuple `t`, `t.1` the second.
+
+The positional counterpart of `p.x`, and written to look like one: the index takes the place of the
+field name, because a tuple type carries its types where a struct names a declaration that carries
+its fields.  It binds as tightly as a field read and nests the same way — `p.t.0`, `f(1).0`,
+`m[k].0` — since what one produces is an operand like any other.
+
+What it cannot nest *into* is itself, because of Lean's tokenizer rather than anything here: `t.0.1`
+reads `0.1` as a decimal and `t.0.x` reads `0.x` as an attempt at one, so taking something out of an
+element takes parentheses — `(t.0).1` and `(t.0).x`.  That is the same kind of cost `m[k]` pays for
+being written with no space before the `[`.
+
+The index is a literal rather than an expression, which is what makes the form typeable: a tuple is
+heterogeneous, so the type that comes out is the one the tuple type gives at that position, and
+there is no type to give for a position that is not known until something runs.  An index past the
+end is therefore ill typed rather than a failure at run time, which is the type checker's business
+rather than the parser's. -/
+syntax:max lgtmExpr:max noWs "." noWs num : lgtmExpr
 /-- One alternative of a `match`: the constructor's name, the names to bind the values it carries to,
 and the expression to evaluate when the value was built by it.  A constructor that carries nothing
 takes no parentheses. -/
@@ -399,6 +435,10 @@ macro_rules
             acc ← `(Expression.hashmapPut $acc [lgtm| $k] [lgtm| $v])
         | _ => Lean.Macro.throwUnsupported
       return acc
+  | `([lgtm| tuple($es,*)]) => do
+      let as ← es.getElems.mapM fun e => `([lgtm| $e])
+      `(Expression.tupleNew [$as,*])
+  | `([lgtm| $e.$i:num]) => `(Expression.tupleGet [lgtm| $e] $i)
   | `([lgtm| some($e)]) => `(Expression.optionSome [lgtm| $e])
   | `([lgtm| none : $t]) => `(Expression.optionNone [lgtm_ty| $t])
   | `([lgtm| match $e with $alts:lgtmAlt*]) => do

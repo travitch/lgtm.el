@@ -58,7 +58,9 @@ private def ctx : Context :=
     ("t", .ind "Tree"), ("flag", .bool), ("wf", .struct "WithFn"), ("hd", .ind "Holder"),
     ("o", .option .int), ("op", .option (.struct "Point")), ("ofn", .option (.fn [.int] .int)),
     ("m", .hashmap .string .int), ("mp", .hashmap .string (.struct "Point")),
-    ("mfn", .hashmap .string (.fn [.int] .int)), ("mbad", .hashmap (.fn [.int] .int) .int)]
+    ("mfn", .hashmap .string (.fn [.int] .int)), ("mbad", .hashmap (.fn [.int] .int) .int),
+    ("tu", .tuple [.string, .int]), ("tu3", .tuple [.int, .string, .bool]),
+    ("tue", .tuple []), ("tufn", .tuple [.string, .fn [.int] .int])]
 
 -- Inference determines the type of every form.
 #guard (Expression.intLit 3).infer types ctx == some .int
@@ -1303,3 +1305,114 @@ private def bind : FuncDecl where
 #guard !(Expression.hashmapGet (.varRef "m") (.varRef "s")).check types ctx .int
 #guard (Expression.hashmapPut (.varRef "m") (.varRef "s") (.varRef "n")).check types ctx
   (.hashmap .string .int)
+
+/-! ## The two tuple forms
+
+A tuple type carries the types it relates, so neither form resolves a declaration the way the struct
+and inductive forms do and neither asks for comparability the way the hashmap forms do.  What is new
+is that the result of a read depends on *which* position was read: a tuple is heterogeneous, which
+is what makes the index part of the expression rather than something to evaluate.
+
+`ctx` gives `tu` a pair of `string` and `int`, `tu3` a triple, `tue` the empty tuple, and `tufn` a
+pair whose second half is a function type — comparable in none of its positions, which is the one
+thing a tuple type is held to anywhere. -/
+
+-- Building one takes its type from its elements: as many types as there are elements, each the
+-- type of the element in that position.  There is no annotation, and the empty tuple needs none.
+#guard (Expression.tupleNew [.stringLit "a", .intLit 1]).infer types ctx
+  == some (.tuple [.string, .int])
+#guard (Expression.tupleNew [.intLit 1, .stringLit "a"]).infer types ctx
+  == some (.tuple [.int, .string])
+#guard (Expression.tupleNew []).infer types ctx == some (.tuple [])
+#guard (Expression.tupleNew [.intLit 1]).infer types ctx == some (.tuple [.int])
+#guard (Expression.tupleNew [.varRef "s", .varRef "n", .varRef "flag"]).infer types ctx
+  == some (.tuple [.string, .int, .bool])
+#guard (Expression.tupleNew [.varRef "p", .varRef "xs"]).infer types ctx
+  == some (.tuple [.struct "Point", .list .int])
+
+-- An element with no type is what makes the whole thing untypeable, the way one argument of a call
+-- is: `inferList` stops at the first one it cannot type.
+#guard (Expression.tupleNew [.varRef "s", .varRef "nope"]).infer types ctx == none
+#guard (Expression.tupleNew [.plus (.varRef "s") (.intLit 1)]).infer types ctx == none
+
+-- A value of function type or of hashmap type is as collectable as any other: nothing here compares
+-- an element, so a `tupleNew` is under no condition a `hashmapEmpty` would be.
+#guard (Expression.tupleNew [.varRef "s", .lam [("x", .int)] (.varRef "x")]).infer types ctx
+  == some (.tuple [.string, .fn [.int] .int])
+#guard (Expression.tupleNew [.varRef "m"]).infer types ctx
+  == some (.tuple [.hashmap .string .int])
+
+-- Reading one is the type its tuple type gives at that index, which is what makes a heterogeneous
+-- value readable at all.
+#guard (Expression.tupleGet (.varRef "tu") 0).infer types ctx == some .string
+#guard (Expression.tupleGet (.varRef "tu") 1).infer types ctx == some .int
+#guard (Expression.tupleGet (.varRef "tu3") 0).infer types ctx == some .int
+#guard (Expression.tupleGet (.varRef "tu3") 1).infer types ctx == some .string
+#guard (Expression.tupleGet (.varRef "tu3") 2).infer types ctx == some .bool
+#guard (Expression.tupleGet (.varRef "tufn") 1).infer types ctx == some (.fn [.int] .int)
+
+-- An index past the end has no type, and the empty tuple has no index at all: `getElem?` on the
+-- type list is the whole of the rule, so this is decided before anything runs.
+#guard (Expression.tupleGet (.varRef "tu") 2).infer types ctx == none
+#guard (Expression.tupleGet (.varRef "tu3") 3).infer types ctx == none
+#guard (Expression.tupleGet (.varRef "tue") 0).infer types ctx == none
+
+-- The operand has to be a tuple, and nothing else will do — a list of the same things included,
+-- which is the one type a tuple is otherwise easy to mistake for.
+#guard (Expression.tupleGet (.varRef "xs") 0).infer types ctx == none
+#guard (Expression.tupleGet (.varRef "p") 0).infer types ctx == none
+#guard (Expression.tupleGet (.varRef "m") 0).infer types ctx == none
+#guard (Expression.tupleGet (.varRef "nope") 0).infer types ctx == none
+
+-- The two forms nest into each other and into everything else: what each produces is an operand of
+-- whatever its type is an operand of.
+#guard (Expression.tupleGet (.tupleNew [.varRef "s", .varRef "n"]) 1).infer types ctx == some .int
+#guard (Expression.tupleNew [.tupleNew [.intLit 1], .varRef "s"]).infer types ctx
+  == some (.tuple [.tuple [.int], .string])
+#guard (Expression.tupleGet (.tupleGet (.tupleNew [.varRef "tu"]) 0) 0).infer types ctx
+  == some .string
+#guard (Expression.plus (.tupleGet (.varRef "tu") 1) (.intLit 1)).infer types ctx == some .int
+#guard (Expression.lcons (.varRef "tu") (.lnil (.tuple [.string, .int]))).infer types ctx
+  == some (.list (.tuple [.string, .int]))
+#guard (Expression.structGet (.tupleGet (.tupleNew [.varRef "p"]) 0) "x").infer types ctx
+  == some .int
+
+-- A tuple is comparable exactly when every position is, so a pair of a hashmap is not and the pair
+-- `toList` produces is: what stops two maps being compared is the order their bindings are carried
+-- in, and a list of pairs compared elementwise answers about that order rather than in spite of it.
+#guard (Expression.equals (.varRef "tu") (.varRef "tu")).infer types ctx == some .bool
+#guard (Expression.equals (.varRef "tue") (.varRef "tue")).infer types ctx == some .bool
+#guard (Expression.equals (.varRef "tufn") (.varRef "tufn")).infer types ctx == none
+#guard (Expression.equals (.tupleNew [.varRef "m"]) (.tupleNew [.varRef "m"])).infer types ctx
+  == none
+#guard (Expression.equals (.hashmapToList (.varRef "m"))
+  (.tupleNew [.varRef "s", .varRef "n"])).infer types ctx == none
+#guard (Expression.equals (.hashmapToList (.varRef "m"))
+  (.lcons (.tupleNew [.varRef "s", .varRef "n"]) (.lnil (.tuple [.string, .int])))).infer types ctx
+  == some .bool
+
+/-- `fun (m : hashmap string int) (k : string) => tuple(m, k).0[tuple(m, k).1]` written the long
+way: a declaration whose body builds a tuple and reads both halves back out. -/
+private def roundTrip : FuncDecl where
+  docstring := "What `k` is bound to in `m`, by way of a tuple holding both."
+  name := "round-trip"
+  parameters := [("m", .hashmap .string .int), ("k", .string)]
+  body := .let_ "pair" (.tupleNew [.varRef "m", .varRef "k"])
+    (.hashmapGet (.tupleGet (.varRef "pair") 0) (.tupleGet (.varRef "pair") 1))
+  resultType := .option .int
+
+-- A declaration over the new forms checks like any other, and against no table at all: a tuple
+-- names nothing for a `TypeDecls` to resolve.
+#guard roundTrip.check {} []
+#guard !({ roundTrip with resultType := .int } : FuncDecl).check {} []
+#guard !({ roundTrip with
+  body := .let_ "pair" (.tupleNew [.varRef "k", .varRef "m"])
+    (.hashmapGet (.tupleGet (.varRef "pair") 0) (.tupleGet (.varRef "pair") 1)) } : FuncDecl).check
+  {} []
+
+-- Checking agrees with inference on the tuple forms too.
+#guard (Expression.tupleNew [.varRef "s", .varRef "n"]).check types ctx (.tuple [.string, .int])
+#guard !(Expression.tupleNew [.varRef "s", .varRef "n"]).check types ctx (.tuple [.int, .string])
+#guard !(Expression.tupleNew [.varRef "s", .varRef "n"]).check types ctx (.tuple [.string])
+#guard (Expression.tupleGet (.varRef "tu") 0).check types ctx .string
+#guard !(Expression.tupleGet (.varRef "tu") 0).check types ctx .int
