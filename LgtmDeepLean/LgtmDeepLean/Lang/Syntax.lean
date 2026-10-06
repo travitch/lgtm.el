@@ -30,7 +30,8 @@ Scoping is the IR's, not Lean's: an identifier always becomes a `varRef` of its 
 `x`.  To reach a Lean term of type `Expression` or `Ty`, splice it with `~(...)`.
 
 The keywords inside a DSL term — `bool`, `int`, `string`, `list`, `option`, `hashmap`, `tuple`,
-`true`, `false`, `some`, `none`, `reverse`, `toList`, `var`, `struct`, `new`, and `as` — are declared
+`true`, `false`, `some`, `none`, `reverse`, `length`, `toList`, `var`, `struct`, `new`, and `as` — are
+declared
 with `&`, Lean's
 non-reserved symbol form, so importing this module does not stop `int` or `some` from being used as
 ordinary Lean identifiers.  What it does cost is those names as *DSL variables*: the categories
@@ -127,11 +128,15 @@ macro_rules
 /-! ## Expressions
 
 Precedence runs `==` looser than `::`, which is looser than `+`/`-`, which are looser than
-application and `reverse`, so `1 + 2 :: xs` is `(1 + 2) :: xs`, `f(x) + 1` is `(f(x)) + 1`, and
-`x :: xs == ys` compares two lists rather than consing onto a comparison.
+application, `reverse` and `length`, so `1 + 2 :: xs` is `(1 + 2) :: xs`, `f(x) + 1` is
+`(f(x)) + 1`, and `x :: xs == ys` compares two lists rather than consing onto a comparison.
 
 A list literal carries its element type, because `lnil` does: `[1, 2 : int]` is
 `.lcons (.intLit 1) (.lcons (.intLit 2) (.lnil .int))`, and the empty list is `[: int]`.
+
+The two list operations are `reverse xs` and `length xs`, both prefix keywords binding as tightly as
+application.  They differ in what comes back out: a reversal is a list of the same type, where a
+length is an `int` whatever the elements were.
 
 The two option values are written `some(1)` and `none : int`, and a `match` whose alternatives are
 named `none` and `some` takes one apart.  The empty one carries a type for the reason an empty list
@@ -168,6 +173,15 @@ syntax:max "~" "(" term ")" : lgtmExpr
 syntax:max &"var" str : lgtmExpr
 syntax:max "[" lgtmExpr,* " : " lgtmTy "]" : lgtmExpr
 syntax:max &"reverse" lgtmExpr:max : lgtmExpr
+/-- `length xs` is how many elements `xs` has, as an `int`.
+
+A prefix keyword binding as tightly as `reverse`, so `length xs + 1` is the length plus one and
+`length (reverse xs)` takes parentheses to reach past one operand.  Unlike `reverse` what comes out
+is not a list, which is what makes `length xs == 0` a comparison of two `int`s.
+
+`length` is a keyword, so it is not available as a variable name inside a DSL term; `var "length"`
+is the escape hatch, the same one `reverse` and `toList` leave. -/
+syntax:max &"length" lgtmExpr:max : lgtmExpr
 syntax:max lgtmExpr:max noWs "(" lgtmExpr,* ")" : lgtmExpr
 /-- `new Point { x = 1, y = 2 }` builds a `Point`.  Every field the declaration has must be given,
 in the order it declares them, which is the type checker's business rather than the parser's. -/
@@ -382,6 +396,7 @@ macro_rules
   | `([lgtm| $a :: $b]) => `(Expression.lcons [lgtm| $a] [lgtm| $b])
   | `([lgtm| $a == $b]) => `(Expression.equals [lgtm| $a] [lgtm| $b])
   | `([lgtm| reverse $e]) => `(Expression.listReverse [lgtm| $e])
+  | `([lgtm| length $e]) => `(Expression.listLength [lgtm| $e])
   | `([lgtm| [$es,* : $t]]) => do
       let mut acc ← `(Expression.lnil [lgtm_ty| $t])
       for e in es.getElems.reverse do

@@ -164,6 +164,18 @@ The name is bound in front of the environment, so it shadows what was there, the
     Eval td env (.optionMatch scrut nbody x sbody) v
 | ENil (ty : Ty) : Eval td env (.lnil ty) (.list [])
 | ECons (e₁ : Expression) (e₂ : Expression) : Eval td env e₁ v → Eval td env e₂ (.list vs) → Eval td env (.lcons e₁ e₂) (.list (v :: vs))
+/-- A length evaluates the list and hands back how many elements it has, as an `int`.
+
+`List.length` is a `Nat` and `Value.int` holds an `Int`, so the count is cast on the way out: the IR
+has no natural number type, and a length is one of the few places a `Nat` would otherwise appear.
+The cast is total and loses nothing — a length is never negative — which is why this needs no premise
+beyond evaluating the operand.
+
+The elements are not looked at, only counted, so unlike `EListReverse` this is a rule whose result
+mentions none of them.  A non-list operand leaves it stuck, which is the only thing that can go
+wrong here and is exactly what typing rules out. -/
+| EListLength (e : Expression) :
+    Eval td env e (.list vs) → Eval td env (.listLength e) (.int (vs.length : Int))
 | EListReverse (e : Expression) : Eval td env e (.list vs) → Eval td env (.listReverse e) (.list vs.reverse)
 /-- The empty hashmap, binding nothing.  Its two annotations go nowhere, for the reason `ENil` drops
 `lnil`'s and `ENone` drops `optionNone`'s: a value carries no type, so what they are for is

@@ -123,6 +123,28 @@ private def ctx : Context :=
 #guard (Expression.listReverse (.listReverse (.varRef "xs"))).infer types ctx == some (.list .int)
 #guard (Expression.listReverse (.listReverse (.intLit 1))).infer types ctx == none
 
+-- A length is an `int` whatever the elements are: the element type is counted, not inspected.
+#guard (Expression.listLength (.varRef "xs")).infer types ctx == some .int
+#guard (Expression.listLength (.lnil .string)).infer types ctx == some .int
+#guard (Expression.listLength (.lcons (.intLit 1) (.lnil .int))).infer types ctx == some .int
+#guard (Expression.listLength (.lnil (.list .int))).infer types ctx == some .int
+
+-- Only a list has a length, so a non-list operand is ill typed.
+#guard (Expression.listLength (.intLit 1)).infer types ctx == none
+#guard (Expression.listLength (.stringLit "a")).infer types ctx == none
+#guard (Expression.listLength (.varRef "n")).infer types ctx == none
+#guard (Expression.listLength (.varRef "f")).infer types ctx == none
+
+-- An ill-typed operand makes the whole length ill typed.
+#guard (Expression.listLength (.varRef "nope")).infer types ctx == none
+#guard (Expression.listLength (.lcons (.intLit 1) (.lnil .string))).infer types ctx == none
+
+-- A length composes with the `int` operations on the way out and with `reverse` on the way in,
+-- but lengths do not nest: what one gives back is not a list.
+#guard (Expression.plus (.listLength (.varRef "xs")) (.intLit 1)).infer types ctx == some .int
+#guard (Expression.listLength (.listReverse (.varRef "xs"))).infer types ctx == some .int
+#guard (Expression.listLength (.listLength (.varRef "xs"))).infer types ctx == none
+
 -- A `lam` takes its parameter types from its annotation and its result type from its body.
 #guard (Expression.lam [("x", .int)] (.varRef "x")).infer types ctx == some (.fn [.int] .int)
 #guard (Expression.lam [("x", .int), ("y", .string)] (.varRef "y")).infer types ctx

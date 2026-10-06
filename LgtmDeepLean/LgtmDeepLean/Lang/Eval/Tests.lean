@@ -128,6 +128,53 @@ private theorem reverseTwice.eq_self {vs : List Value} {res : Value}
         simp [reverseTwice, FuncDecl.callEnv, Env.extend, Globals.env, Env.lookup] at hlx
         grind
 
+/-- The length of `xs` with `x` on the front. -/
+lgtm private def lengthCons as "length-cons" (x : int) (xs : list int) : int :=
+  length (x :: xs)
+
+-- `EListLength` counts the list `ECons` has just built, so the element pushed on the front is
+-- counted along with the ones that were already there.
+example : FuncDecl.Apply lengthCons {} [] [.int 1, .list [.int 2, .int 3]] (.int 3) :=
+  .EApply _ (.cons "x" (.int 1) (.cons "xs" (hasType_intList (is := [2, 3])) .nil))
+    (.EListLength (vs := [.int 1, .int 2, .int 3]) _
+      (.ECons _ _ (.EVarRef "x" rfl) (.EVarRef "xs" rfl)))
+
+-- A length is an `int` whatever the list held, so soundness gives the declared result type back
+-- without any reasoning about the elements.
+example (v : Value) (h : FuncDecl.Apply lengthCons {} [] [.int 1, .list [.int 2, .int 3]] v) :
+    v.HasType {} .int :=
+  h.hasType Globals.wellTyped_nil (by simp [lengthCons, List.lookup])
+
+-- Only a list has a length, so a body taking the length of one of the `int` parameters does not
+-- check — and neither does one whose result is declared to be the list it counted.
+example : ¬ ({ lengthCons with body := [lgtm| length x] } : FuncDecl).WellTyped {} [] := by
+  simp [lengthCons, List.lookup]
+
+example : ¬ ({ lengthCons with resultType := [lgtm_ty| list int] } : FuncDecl).WellTyped {} [] := by
+  simp [lengthCons, List.lookup]
+
+/-- The length of `xs` reversed. -/
+lgtm private def lengthOfReverse as "length-of-reverse" (xs : list int) : int :=
+  length (reverse xs)
+
+/-- Reversing a list does not change its length.
+
+Inverting the `EListLength` step and the `EListReverse` under it down to the `EVarRef` that read
+`xs` leaves exactly `List.length_reverse`, so this is a property of the program proved from the
+evaluator rather than from any one input — the same shape as `reverseTwice.eq_self`, over the two
+list forms composed instead of one twice. -/
+private theorem lengthOfReverse.eq_length {vs : List Value} {res : Value}
+    (h : FuncDecl.Apply lengthOfReverse {} [] [.list vs] res) : res = .int vs.length := by
+  obtain ⟨-, -, hbody⟩ := h
+  cases hbody with
+  | EListLength _ h₁ =>
+    cases h₁ with
+    | EListReverse _ h₂ =>
+      cases h₂ with
+      | EVarRef _ hlx =>
+        simp [lengthOfReverse, FuncDecl.callEnv, Env.extend, Globals.env, Env.lookup] at hlx
+        grind
+
 /-- The body of the inner lambda of `adderExpr`, `x + n`, which needs an `n` from outside itself. -/
 private def adderInner : Expression := [lgtm| x + n]
 

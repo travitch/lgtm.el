@@ -169,6 +169,8 @@ This is a special form (instead of `indMatch`) because options get compiled away
 /-- The empty list annotated with its element type -/
 | lnil : Ty → Expression
 | lcons : Expression → Expression → Expression
+/-- Calculate the length of the given list. -/
+| listLength : Expression → Expression
 | listReverse : Expression → Expression
 | hashmapEmpty : Ty → Ty → Expression
 /-- Augment the given hashmap `m` with a binding of `k` to `v`

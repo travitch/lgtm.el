@@ -99,6 +99,24 @@ example : [lgtm| reverse (x :: xs)]
 example : [lgtm| reverse reverse xs]
     = Expression.listReverse (.listReverse (.varRef "xs")) := rfl
 
+-- `length` is written like `reverse`, and binds as tightly, so it takes one operand and no more.
+example : [lgtm| length xs] = Expression.listLength (.varRef "xs") := rfl
+example : [lgtm| length (x :: xs)]
+    = Expression.listLength (.lcons (.varRef "x") (.varRef "xs")) := rfl
+example : [lgtm| length [1, 2 : int]]
+    = Expression.listLength (.lcons (.intLit 1) (.lcons (.intLit 2) (.lnil .int))) := rfl
+example : [lgtm| length reverse xs]
+    = Expression.listLength (.listReverse (.varRef "xs")) := rfl
+
+-- Binding tighter than `+` and `==` is what makes an `int` out of a length usable in place.
+example : [lgtm| length xs + 1]
+    = Expression.plus (.listLength (.varRef "xs")) (.intLit 1) := rfl
+example : [lgtm| length xs == length ys]
+    = Expression.equals (.listLength (.varRef "xs")) (.listLength (.varRef "ys")) := rfl
+
+-- A variable of a keyword's name takes the escape hatch, the way `reverse` and `toList` do.
+example : [lgtm| var "length"] = Expression.varRef "length" := rfl
+
 -- Application takes all its arguments at once, and nests to the left.
 example : [lgtm| f(x)] = Expression.app (.varRef "f") [.varRef "x"] := rfl
 example : [lgtm| f(1, "a")] = Expression.app (.varRef "f") [.intLit 1, .stringLit "a"] := rfl

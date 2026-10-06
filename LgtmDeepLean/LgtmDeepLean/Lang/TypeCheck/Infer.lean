@@ -273,6 +273,10 @@ public def Expression.infer (td : TypeDecls) (ctx : Context) : Expression → Op
     let t ← hd.infer td ctx
     guard (tl.infer td ctx == some (.list t))
     some (.list t)
+  | .listLength l =>
+    match l.infer td ctx with
+    | some (.list _) => some .int
+    | _ => none
   | .listReverse l =>
     match l.infer td ctx with
     | some (.list t) => some (.list t)
@@ -407,6 +411,19 @@ and then *required* of the tail, so one `Ty` covers every element. -/
       ∃ t', hd.infer td ctx = some t' ∧ tl.infer td ctx = some (.list t') ∧ t = .list t' := by
   simp [Expression.infer, Option.bind_eq_some_iff, guard]
   grind
+
+/-- A `listLength` is typeable when its operand is a list, and then it is an `int`.
+
+The element type is existentially quantified and goes nowhere: a length counts the elements without
+looking at any of them, so *which* list it is handed is all the premise says and the result's type
+does not depend on it.  That is what makes this the one list form whose result is not a list —
+`listReverse` passes its operand's type through, where this one discards it. -/
+@[simp, grind =] public theorem Expression.infer_listLength_eq_some {td : TypeDecls}
+    {ctx : Context} {l : Expression} {t : Ty} :
+    (Expression.listLength l).infer td ctx = some t ↔
+      (∃ t', l.infer td ctx = some (.list t')) ∧ t = .int := by
+  simp only [Expression.infer]
+  split <;> grind
 
 /-- A `listReverse` is typeable when its operand is a list, and then it has that same list
 type.
