@@ -112,6 +112,15 @@ lgtm struct CommentThreads {
   locationRoots : hashmap (inductive ThreadLocation) (list (struct CommentRef))
 }
 
+lgtm def CommentThreads.empty : struct CommentThreads :=
+   new CommentThreads { commentTreeNodes = hashmap(struct CommentRef, struct CommentThread),
+                        serverCommentIds = hashmap(struct ServerId, struct CommentRef),
+                        locationRoots = hashmap(inductive ThreadLocation, list (struct CommentRef))
+                      }
+
+lgtm def CommentThreads.isEmpty (threads : struct CommentThreads) : bool :=
+  length (toList (threads.locationRoots)) == 0
+
 /-! ## What this module contributes to the model
 
 `lgtm` builds one Lean declaration per IR declaration and nothing that collects them, so the lists
@@ -132,6 +141,6 @@ def Model.Basic.inductiveDecls : List InductiveDecl :=
 
 /-- The functions this module declares, in the order they are declared above. -/
 def Model.Basic.funcDecls : List FuncDecl :=
-  [ThreadLocation.isTopLevel, pathOfFileAtVersion, Comment.isPersistedToServer]
+  [ThreadLocation.isTopLevel, pathOfFileAtVersion, Comment.isPersistedToServer, CommentThreads.empty, CommentThreads.isEmpty]
 
 end
