@@ -143,6 +143,11 @@ lgtm struct ModifiedFileState {
   currentThreads : struct CommentThreads
 }
 
+lgtm struct ModifiedFileManager {
+  state : hashmap (struct ModifiedFileRef) (struct ModifiedFileState),
+  modifiedFiles : list (struct ModifiedFileRef)
+}
+
 /-! ## What this module contributes to the model
 
 `lgtm` builds one Lean declaration per IR declaration and nothing that collects them, so the lists
@@ -157,7 +162,8 @@ declaration nothing type checks, which is what `Model.Tests` has a check against
 def Model.Basic.structDecls : List StructDecl :=
   [CommentRef, FileRef, GitRevision, RepositoryRef, ModifiedFileRef,
    CommentFileLocation, ServerId, Comment, CommentThread, CommentThreads,
-   SelectedComment, CommentManager, Repository, ModifiedFileState]
+   SelectedComment, CommentManager, Repository, ModifiedFileState,
+   ModifiedFileManager]
 
 /-- The inductive types this module declares, in the order they are declared above. -/
 def Model.Basic.inductiveDecls : List InductiveDecl :=
