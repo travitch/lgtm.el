@@ -167,6 +167,14 @@ lgtm struct Configuration {
   getRemoteConversations : (struct ModifiedFileManager) -> option (list (struct Comment))
 }
 
+lgtm struct State {
+  configuration : struct Configuration,
+  activeReviewedFile : option (struct ModifiedFileRef),
+  commentBeingEdited : option (struct Comment),
+  commentManager : struct CommentManager,
+  fileManager : struct FileManager
+}
+
 /-! ## What this module contributes to the model
 
 `lgtm` builds one Lean declaration per IR declaration and nothing that collects them, so the lists
@@ -182,7 +190,7 @@ def Model.Basic.structDecls : List StructDecl :=
   [CommentRef, FileRef, GitRevision, RepositoryRef, ModifiedFileRef,
    CommentFileLocation, ServerId, Comment, CommentThread, CommentThreads,
    SelectedComment, CommentManager, Repository, ModifiedFileState,
-   ModifiedFileManager, ChangesetStatus, Configuration]
+   ModifiedFileManager, ChangesetStatus, Configuration, State]
 
 /-- The inductive types this module declares, in the order they are declared above. -/
 def Model.Basic.inductiveDecls : List InductiveDecl :=
