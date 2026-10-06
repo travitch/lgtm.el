@@ -13,9 +13,12 @@ lgtm def CommentThreads.empty : struct CommentThreads :=
                       }
 
 lgtm def CommentThreads.isEmpty (threads : struct CommentThreads) : bool :=
-  length (toList (threads.locationRoots)) == 0
+  length (toList threads.locationRoots) == 0
+
+lgtm def CommentThreads.commentCount (threads : struct CommentThreads) : int :=
+  length (toList threads.commentTreeNodes)
 
 def Model.CommentThreads.funcDecls : List FuncDecl :=
-  [CommentThreads.empty, CommentThreads.isEmpty]
+  [CommentThreads.empty, CommentThreads.isEmpty, CommentThreads.commentCount]
 
 end
