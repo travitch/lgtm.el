@@ -112,6 +112,12 @@ lgtm struct CommentThreads {
   locationRoots : hashmap (inductive ThreadLocation) (list (struct CommentRef))
 }
 
+lgtm struct SelectedComment {
+  version : inductive FileVersion,
+  thread : struct CommentThread,
+  comment : struct CommentRef
+}
+
 /-! ## What this module contributes to the model
 
 `lgtm` builds one Lean declaration per IR declaration and nothing that collects them, so the lists
@@ -124,7 +130,7 @@ declaration nothing type checks, which is what `Model.Tests` has a check against
 
 /-- The structure types this module declares, in the order they are declared above. -/
 def Model.Basic.structDecls : List StructDecl :=
-  [CommentRef, FileRef, GitRevision, RepositoryRef, ModifiedFileRef, CommentFileLocation, ServerId, Comment, CommentThread, CommentThreads]
+  [CommentRef, FileRef, GitRevision, RepositoryRef, ModifiedFileRef, CommentFileLocation, ServerId, Comment, CommentThread, CommentThreads, SelectedComment]
 
 /-- The inductive types this module declares, in the order they are declared above. -/
 def Model.Basic.inductiveDecls : List InductiveDecl :=
