@@ -131,6 +131,18 @@ lgtm struct Repository {
   commits : list (tuple(struct GitRevision, string))
 }
 
+-- TODO: Need boolean conjunction
+--
+-- lgtm def repositoryRefMatches (repository : struct Repository) (ref : struct RepositoryRef) : bool
+
+lgtm struct ModifiedFileState {
+  ref : struct ModifiedFileRef,
+  fileRef : struct FileRef,
+  selectedComment : option (struct SelectedComment),
+  baseThreads : struct CommentThreads,
+  currentThreads : struct CommentThreads
+}
+
 /-! ## What this module contributes to the model
 
 `lgtm` builds one Lean declaration per IR declaration and nothing that collects them, so the lists
@@ -145,7 +157,7 @@ declaration nothing type checks, which is what `Model.Tests` has a check against
 def Model.Basic.structDecls : List StructDecl :=
   [CommentRef, FileRef, GitRevision, RepositoryRef, ModifiedFileRef,
    CommentFileLocation, ServerId, Comment, CommentThread, CommentThreads,
-   SelectedComment, CommentManager, Repository]
+   SelectedComment, CommentManager, Repository, ModifiedFileState]
 
 /-- The inductive types this module declares, in the order they are declared above. -/
 def Model.Basic.inductiveDecls : List InductiveDecl :=
