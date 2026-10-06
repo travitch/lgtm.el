@@ -14,7 +14,10 @@ lgtm def CommentManager.empty : struct CommentManager :=
                        selectedComment = none : struct SelectedComment
                      }
 
+lgtm def CommentManager.get (manager : struct CommentManager) (ref : struct CommentRef) : option (struct Comment) :=
+  manager.comments[ref]
+
 def Model.CommentManager.funcDecls : List FuncDecl :=
-  [CommentManager.empty]
+  [CommentManager.empty, CommentManager.get]
 
 end
