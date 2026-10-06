@@ -10,7 +10,7 @@ meta import LgtmDeepLean.Model.CommentThreads.Operations
 
 lgtm def CommentManager.empty : struct CommentManager :=
   new CommentManager { comments = hashmap(struct CommentRef, struct Comment),
-                       topLevelThreads = var "CommentThreads.empty"(),
+                       topLevelThreads = CommentThreads.empty(),
                        selectedComment = none : struct SelectedComment
                      }
 

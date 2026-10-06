@@ -314,6 +314,20 @@ private def sameFnLists : FuncDecl :=
 lgtm def three : int := 3
 #guard three.check {} []
 
+-- A declaration is called by its IR name, and a dotted one is the whole name rather than a field
+-- read: `Nested.one` is the declaration below, which is how one declaration calls another.  A
+-- nullary one still takes the parentheses — `Ty.fn [] .int` is not `Ty.int`.
+lgtm def Nested.one : int := 1
+example : [lgtm| Nested.one] = Expression.varRef "Nested.one" := rfl
+example : [lgtm| Nested.one()] = Expression.app (.varRef "Nested.one") [] := rfl
+#guard ({ three with body := [lgtm| Nested.one()] } : FuncDecl).check {} [("Nested.one", Nested.one)]
+#guard !({ three with body := [lgtm| Nested.one] } : FuncDecl).check {} [("Nested.one", Nested.one)]
+
+-- A dotted name no declaration has taken is a variable and one field read per component, and the
+-- postfix `.` is what reads a field off a name that is taken.
+example : [lgtm| Nested.two] = Expression.structGet (.varRef "Nested") "two" := rfl
+example : [lgtm| (var "Nested.one").x] = Expression.structGet (.varRef "Nested.one") "x" := rfl
+
 -- `lgtm private def` makes the Lean declaration private; the `FuncDecl` it builds is the same.
 /-- One more than `x`. -/
 lgtm private def succ as "succ-one" (x : int) : int := x + 1

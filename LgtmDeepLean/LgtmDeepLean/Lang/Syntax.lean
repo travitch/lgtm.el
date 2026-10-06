@@ -25,9 +25,15 @@ run time.  A DSL term is *not* checked by `Expression.infer` when it elaborates 
 is a perfectly good `Expression` that happens to be ill typed.  Type checking stays where it was,
 in `Expression.check` and `FuncDecl.check`.
 
-Scoping is the IR's, not Lean's: an identifier always becomes a `varRef` of its own name, so the
-`x` in `[lgtm| fun (x : int) => x]` refers to the DSL binder and never to a Lean variable called
-`x`.  To reach a Lean term of type `Expression` or `Ty`, splice it with `~(...)`.
+Scoping is the IR's, not Lean's: an identifier becomes a `varRef` of its own name, so the `x` in
+`[lgtm| fun (x : int) => x]` refers to the DSL binder and never to a Lean variable called `x`.  To
+reach a Lean term of type `Expression` or `Ty`, splice it with `~(...)`.
+
+Lean names are consulted for one thing only, and it decides nothing about scoping: a *dotted*
+identifier is either one IR name or a field read, and which one it is cannot be read off the
+syntax.  `Foo.bar` is the IR name `Foo.bar` when an `lgtm` declaration has taken that Lean name,
+and otherwise the variable `Foo` with its field `bar` read.  The name it becomes is the one written,
+not the Lean name it was found under.
 
 The keywords inside a DSL term — `bool`, `int`, `string`, `list`, `option`, `hashmap`, `tuple`,
 `true`, `false`, `some`, `none`, `reverse`, `length`, `toList`, `var`, `struct`, `new`, and `as` — are
@@ -155,9 +161,11 @@ declaration comes to.
 
 The three struct forms are `new Point { x = 1, y = 2 }`, `p.x`, and `{ p with x = 1 }`.  A field read
 is written two ways for one reason: `p.x` is a single identifier token as far as Lean's tokenizer is
-concerned, so a dotted identifier is split into a `varRef` and one `structGet` per component, while
-the postfix `.` is what reads a field of something that is not a bare name — `f(1).x`, or
-`(var "my-struct").x`.  The two agree on everything they both accept. -/
+concerned, so a dotted identifier that no declaration has taken as a Lean name is split into a
+`varRef` and one `structGet` per component, while the postfix `.` is what reads a field of something
+that is not a bare name — `f(1).x`, or `(var "my-struct").x`.  The two agree on everything they both
+accept, and the postfix form is also what reads a field off a name a declaration *has* taken:
+`(var "Foo.bar").baz`, since `Foo.bar.baz` would be the whole IR name. -/
 
 syntax:max ident : lgtmExpr
 syntax:max num : lgtmExpr
@@ -373,11 +381,30 @@ public meta def optionMatchAlts (scrut : Lean.TSyntax `lgtmExpr)
   return some (← `(Expression.optionMatch [lgtm| $scrut] [lgtm| $nbody]
     $(Lean.quote x.getId.toString) [lgtm| $sbody]))
 
+/-- Whether `n` is the Lean name of a declaration already in scope, which is how a dotted identifier
+is told apart from a field read.
+
+The name is looked for in the current namespace and then at the root, the way `Lean` resolves one it
+is given unqualified.  What is in scope is what the module has imported `meta`, which is why a module
+calling a declaration of another takes a `meta import` of it as well as an ordinary one.
+
+`meta` because it runs while a macro expands rather than at run time, and `public` for the reason
+`lgtmVis` is: a `module` hides even the names its own macros expand to. -/
+public meta def isDeclInScope (n : Lean.Name) : Lean.MacroM Bool := do
+  if ← Lean.Macro.hasDecl ((← Lean.Macro.getCurrNamespace) ++ n) then return true
+  Lean.Macro.hasDecl n
+
 macro_rules
   | `([lgtm| $x:ident]) => do
-      -- `p.x.y` arrives here as one identifier, because that is how it tokenizes: the first
-      -- component is the variable and each one after it is a field read of what came before.
-      match x.getId.toString.splitOn "." with
+      -- `p.x.y` arrives here as one identifier, because that is how it tokenizes, and the two
+      -- things it can mean are told apart by what is in scope.  A name an `lgtm` declaration
+      -- already took is a `varRef` of the whole of it, so `CommentThreads.empty()` calls that
+      -- declaration.  Any other name is a variable and one field read per component after the
+      -- first.
+      let name := x.getId.toString
+      if ← isDeclInScope x.getId then
+        return ← `(Expression.varRef $(Lean.quote name))
+      match name.splitOn "." with
       | [] => Lean.Macro.throwUnsupported
       | root :: fields =>
           let mut acc ← `(Expression.varRef $(Lean.quote root))
