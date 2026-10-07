@@ -60,12 +60,6 @@ lgtm struct ModifiedFileRef {
   currentFileHash : struct GitRevision
 }
 
-/-- Return the path of VERSION of the MODIFIED-FILE. -/
-lgtm def pathOfFileAtVersion (version : inductive FileVersion) (modifiedFile : struct ModifiedFileRef) : string :=
-  match version with
-  | Base => modifiedFile.baseFileName
-  | Current => modifiedFile.currentFileName
-
 lgtm struct CommentFileLocation {
   version : inductive FileVersion,
   fileRef : struct ModifiedFileRef,
@@ -198,6 +192,6 @@ def Model.Basic.inductiveDecls : List InductiveDecl :=
 
 /-- The functions this module declares, in the order they are declared above. -/
 def Model.Basic.funcDecls : List FuncDecl :=
-  [ThreadLocation.isTopLevel, pathOfFileAtVersion, Comment.isPersistedToServer]
+  [ThreadLocation.isTopLevel, Comment.isPersistedToServer]
 
 end

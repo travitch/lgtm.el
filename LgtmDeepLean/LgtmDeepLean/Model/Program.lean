@@ -4,6 +4,7 @@ public import LgtmDeepLean.Model.Basic
 public import LgtmDeepLean.Model.CommentThreads.Operations
 public import LgtmDeepLean.Model.CommentManager.Operations
 public import LgtmDeepLean.Model.Location.Operations
+public import LgtmDeepLean.Model.Files.Operations
 
 /-! # The model as one program
 
@@ -42,6 +43,6 @@ declaration order of the model and worth keeping stable. -/
 def modelProgram : Program where
   structDecls := Model.Basic.structDecls
   inductiveDecls := Model.Basic.inductiveDecls
-  funcDecls := Model.Basic.funcDecls ++ Model.CommentThreads.funcDecls ++ Model.CommentManager.funcDecls ++ Model.Location.funcDecls
+  funcDecls := Model.Basic.funcDecls ++ Model.CommentThreads.funcDecls ++ Model.CommentManager.funcDecls ++ Model.Location.funcDecls ++ Model.Files.funcDecls
 
 end
