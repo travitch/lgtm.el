@@ -720,6 +720,43 @@ either — which is exactly why `Expression.hashmapEmpty` carries two annotation
   · rintro ⟨kt, vt, hkeys, hvals, rfl⟩
     exact .hashmap hkeys hvals
 
+/-- The bindings a mapping produces are typed by the map it was given and by the values its function
+returned: every key is one that map bound, and every value is what the function returned for the
+binding in that position.
+
+The two clauses `Value.HasType`'s hashmap case takes, rather than the judgement itself, because that
+is the shape a proof builds one from.  They are two unrelated conditions here as they are there: the
+keys are the map's own — which is what `kvs.map Prod.fst = kvs'.map Prod.fst` says, and it is the
+whole of what carries the map's key type to the new map — while the values are the function's
+results, and nothing relates a key to the value beside it.
+
+The values are reached through the zip, so the binding at a position and the value produced for it
+are a pair the premise already speaks for: the keys agreeing says the two lists are as long as each
+other, which is what makes every binding of the result one such pair. -/
+public theorem KeyValues.hasType_map {td : TypeDecls} {kvs kvs' : KeyValues} {kt vt : Ty}
+    (hkeys : kvs.map Prod.fst = kvs'.map Prod.fst) (hk : ∀ p ∈ kvs, Value.HasType td p.1 kt)
+    (hv : ∀ p ∈ kvs.zip kvs', Value.HasType td p.2.2 vt) :
+    (∀ p ∈ kvs', Value.HasType td p.1 kt) ∧ ∀ p ∈ kvs', Value.HasType td p.2 vt := by
+  induction kvs generalizing kvs' with
+  | nil =>
+      obtain rfl : kvs' = [] := by simpa using hkeys.symm
+      simp
+  | cons q kvs ih =>
+      cases kvs' with
+      | nil => simp
+      | cons q' kvs' =>
+          simp only [List.map_cons, List.cons.injEq] at hkeys
+          obtain ⟨hkey, hkeys'⟩ := hkeys
+          obtain ⟨ihk, ihv⟩ := ih hkeys' (fun p hp => hk p (List.mem_cons_of_mem _ hp))
+            fun p hp => hv p (by simp [hp])
+          refine ⟨fun p hp => ?_, fun p hp => ?_⟩
+          · rcases List.mem_cons.mp hp with rfl | hp'
+            · exact hkey ▸ hk q (List.mem_cons_self ..)
+            · exact ihk p hp'
+          · rcases List.mem_cons.mp hp with rfl | hp'
+            · exact hv (q, p) (by simp)
+            · exact ihv p hp'
+
 /-- What it takes for a tuple value to have a type: the type is a tuple type of as many types as the
 value has values, each of which the value in that position has.
 

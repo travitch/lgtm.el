@@ -297,6 +297,13 @@ public def Expression.infer (td : TypeDecls) (ctx : Context) : Expression → Op
       guard (Ty.comparable td kt)
       some (.option vt)
     | _ => none
+  | .hashmapMap m f =>
+    match m.infer td ctx, f.infer td ctx with
+    | some (.hashmap kt vt), some (.fn ps r) => do
+      guard (ps == [kt, vt])
+      guard (Ty.comparable td kt)
+      some (.hashmap kt r)
+    | _, _ => none
   | .hashmapToList m =>
     match m.infer td ctx with
     | some (.hashmap kt vt) => do
@@ -565,12 +572,12 @@ type. -/
   simp only [Expression.infer]
   split <;> simp_all [Option.bind_eq_some_iff, guard]
 
-/-! The four hashmap forms.  Each of them asks for the key type to be comparable, which is the one
+/-! The five hashmap forms.  Each of them asks for the key type to be comparable, which is the one
 condition that is not about the shape of the expression: a hashmap is read by comparing the key
 given against the keys the map carries, so a key type `Ty.comparable` turns down is one no `get`
-could answer and no `put` could rebind over.  It is required of the empty map and of `toList` as
-well — neither of which compares a key — so that a hashmap type nothing could do anything with is
-not reachable by building one. -/
+could answer and no `put` could rebind over.  It is required of the empty map, of `map` and of
+`toList` as well — none of which compares a key — so that a hashmap type nothing could do anything
+with is not reachable by building one. -/
 
 /-- A `hashmapEmpty` takes its type from its two annotations, the way an empty list and an empty
 option take theirs: it binds nothing, so there is no key and no value for either half to be read
@@ -606,6 +613,22 @@ any other. -/
     (Expression.hashmapGet m k).infer td ctx = some t ↔
       ∃ kt vt, m.infer td ctx = some (.hashmap kt vt) ∧ k.infer td ctx = some kt
         ∧ Ty.comparable td kt = true ∧ t = .option vt := by
+  simp only [Expression.infer]
+  split <;> simp_all [Option.bind_eq_some_iff, guard] <;> grind
+
+/-- A `hashmapMap` is typeable when its first operand is a hashmap and its second is a function of
+that hashmap's two types, and then it is a hashmap from the same keys to whatever that function
+returns.
+
+The function takes the key as well as the value, so its parameter types are the map's two in that
+order: `tuple [kt, vt]` is what a binding is where `toList` produces one, and this is the same pair
+read as a parameter list.  The key type is the one thing carried through to the result — a mapping
+rebinds no key — so what the two hashmap types share is exactly what is not mapped. -/
+@[simp, grind =] public theorem Expression.infer_hashmapMap_eq_some {td : TypeDecls} {ctx : Context}
+    {m f : Expression} {t : Ty} :
+    (Expression.hashmapMap m f).infer td ctx = some t ↔
+      ∃ kt vt r, m.infer td ctx = some (.hashmap kt vt) ∧ f.infer td ctx = some (.fn [kt, vt] r)
+        ∧ Ty.comparable td kt = true ∧ t = .hashmap kt r := by
   simp only [Expression.infer]
   split <;> simp_all [Option.bind_eq_some_iff, guard] <;> grind
 

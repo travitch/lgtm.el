@@ -184,6 +184,11 @@ Creates a new hashmap with the new binding, discarding any previous binding for 
 > hashampGet m k
 -/
 | hashmapGet : Expression → Expression → Expression
+/-- Map a function over a hashmap to produce a new hashmap.
+
+Given a hashmap of type hashmap(k, v1), the mapping function is of type fun(k, v1) -> v2,
+producing a hashmap of type hashmap(k, v2). -/
+| hashmapMap : Expression → Expression → Expression
 /-- Convert a hashmap to a list of pairs. -/
 | hashmapToList : Expression → Expression
 /-- Create a new tuple with the given elements.

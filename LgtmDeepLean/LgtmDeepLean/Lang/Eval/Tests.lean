@@ -1849,6 +1849,147 @@ private theorem isEmpty.mem_of_eval {kvs : KeyValues} {vs : List Value}
           obtain ⟨a, b, hab, rfl⟩ := hv
           exact ⟨a, b, hab, rfl⟩
 
+/-! ### Mapping over a map
+
+`map` is the one hashmap form whose second operand is a function, so it is `EApp` once per binding:
+the key and the value it is bound to are the two arguments, `ArgsHaveType` is what holds them to the
+closure's parameters, and the body is evaluated in the environment the closure captured rather than
+in the one the mapping was written in.
+
+Nothing is compared, as nothing is compared by a conversion, so the keys come back as they were and
+in the order they were in.  What can go wrong is what a call can: a second operand that is not a
+function at all, and a function the key and the value do not fit. -/
+
+-- An empty map maps to an empty map: there is no binding for the function to be applied to, so both
+-- premises over the bindings are vacuous and the function is never entered.
+example : Eval {} ∅
+    [lgtm| map hashmap(string, int) (fun (k : string) (v : int) => v + 1)] (.hashmap []) :=
+  .EHashmapMap (kvs' := []) _ _ (.EHashmapEmpty _ _) (.ELam _ _) rfl (by simp) (by simp)
+
+-- One binding is one call, and the key it was bound under is the key it comes back under: the
+-- function is handed both halves of the binding and only the value half is replaced.
+example : Eval {} ∅
+    [lgtm| map ({ hashmap(string, int) with ["a"] = 1 }) (fun (k : string) (v : int) => v + 1)]
+    (.hashmap [(.string "a", .int 2)]) :=
+  .EHashmapMap (kvs' := [(.string "a", .int 2)]) _ _
+    (.EHashmapPut _ _ _ (.EHashmapEmpty _ _) (.EStringLit "a") (.EIntLit 1) rfl)
+    (.ELam _ _) rfl
+    (by rintro p hp
+        simp at hp
+        obtain ⟨rfl, rfl⟩ := hp
+        exact .cons "k" (.string "a") (.cons "v" (.int 1) .nil))
+    (by rintro p hp
+        simp at hp
+        obtain ⟨rfl, rfl⟩ := hp
+        exact .EPlus (n₁ := 1) (n₂ := 1) _ _ (.EVarRef "v" rfl) (.EIntLit 1))
+
+-- The function sees the key as well, so a mapping can produce a map whose values are its keys —
+-- which is the one way a map's value type changes while its keys stay what they were.
+example : Eval {} ∅
+    [lgtm| map ({ hashmap(string, int) with ["a"] = 1 }) (fun (k : string) (v : int) => k)]
+    (.hashmap [(.string "a", .string "a")]) :=
+  .EHashmapMap (kvs' := [(.string "a", .string "a")]) _ _
+    (.EHashmapPut _ _ _ (.EHashmapEmpty _ _) (.EStringLit "a") (.EIntLit 1) rfl)
+    (.ELam _ _) rfl
+    (by rintro p hp
+        simp at hp
+        obtain ⟨rfl, rfl⟩ := hp
+        exact .cons "k" (.string "a") (.cons "v" (.int 1) .nil))
+    (by rintro p hp
+        simp at hp
+        obtain ⟨rfl, rfl⟩ := hp
+        exact .EVarRef "k" rfl)
+
+-- A second operand that is not a function leaves this stuck, which is one of the two things that
+-- can go wrong here and is exactly what typing rules out.
+example (v : Value) : ¬ Eval {} ∅ [lgtm| map hashmap(string, int) 1] v := by
+  intro h
+  cases h with
+  | EHashmapMap _ _ _ hf _ _ _ => cases hf
+
+/-- Every value of `m` with one added to it, the keys left as they were: the shortest declaration
+the form is in, and the one place a map is read by something other than a key. -/
+lgtm private def bump (m : hashmap string int) : hashmap string int :=
+  map m (fun (k : string) (v : int) => v + 1)
+
+#guard bump.check {} []
+
+-- The closure the function evaluates to captures the call's environment, so the body runs over the
+-- parameters of the `fun` in front of `m` — the same way a call into a closure runs it.
+example : FuncDecl.Apply bump {} [] [.hashmap [(.string "a", .int 1)]]
+    (.hashmap [(.string "a", .int 2)]) :=
+  .EApply _ (.cons "m" hasType_mapA .nil)
+    (.EHashmapMap (kvs' := [(.string "a", .int 2)]) _ _ (.EVarRef "m" rfl) (.ELam _ _) rfl
+      (by rintro p hp
+          simp at hp
+          obtain ⟨rfl, rfl⟩ := hp
+          exact .cons "k" (.string "a") (.cons "v" (.int 1) .nil))
+      (by rintro p hp
+          simp at hp
+          obtain ⟨rfl, rfl⟩ := hp
+          exact .EPlus (n₁ := 1) (n₂ := 1) _ _ (.EVarRef "v" rfl) (.EIntLit 1)))
+
+-- An empty map is the one argument that needs neither premise, since there is no binding to apply
+-- the function to.
+example : FuncDecl.Apply bump {} [] [.hashmap []] (.hashmap []) :=
+  .EApply _ (.cons "m" hasType_mapEmpty .nil)
+    (.EHashmapMap (kvs' := []) _ _ (.EVarRef "m" rfl) (.ELam _ _) rfl (by simp) (by simp))
+
+-- Soundness covers the form: the declared map type comes back whatever the map held, with the key
+-- half carried through from the argument and the value half read off the function's body.
+example (kvs : KeyValues) (v : Value) (h : FuncDecl.Apply bump {} [] [.hashmap kvs] v) :
+    v.HasType {} (.hashmap .string .int) :=
+  h.hasType Globals.wellTyped_nil (by
+    -- The two types the function's parameters are compared against are the map's, and `string` is
+    -- the key type the comparability condition is about.
+    simp [bump, List.lookup]
+    exact ⟨.string, .int, ⟨rfl, rfl⟩, .int, ⟨⟨rfl, rfl⟩, rfl⟩, by decide, rfl, rfl⟩)
+
+-- A function the key and the value do not fit is the other thing that can go wrong: the arguments
+-- are the binding, so `ArgsHaveType` turns down a function expecting an `int` key exactly as a call
+-- with the wrong argument types is turned down.
+example (v : Value) :
+    ¬ Eval {} ⟨[("m", .hashmap [(.string "a", .int 1)])], []⟩
+      [lgtm| map m (fun (k : int) (v : int) => v)] v := by
+  intro h
+  cases h with
+  | @EHashmapMap _ _ _ _ _ _ kvs' _ _ hm hf hkeys hat _ =>
+      cases hm with
+      | EVarRef _ hlm =>
+          cases hf with
+          | ELam _ _ =>
+              simp [Env.lookup, List.lookup] at hlm
+              subst hlm
+              -- The keys of the map it built are the keys it was given, so it has one binding, and
+              -- that binding's key is the `string` the function has no parameter for.
+              obtain ⟨q', rfl⟩ : ∃ q', kvs' = [q'] := by
+                cases kvs' with
+                | nil => simp at hkeys
+                | cons q' rest =>
+                    cases rest with
+                    | nil => exact ⟨q', rfl⟩
+                    | cons _ _ => simp at hkeys
+              cases hat ((.string "a", .int 1), q') (by simp) with
+              | cons _ hv _ => cases hv
+
+/-- What a mapping means, for every map rather than for one: the keys of the map it produces are the
+keys of the map it was given.
+
+This is the fact a proof about a mapped map carries on with, the way `isEmpty.mem_of_eval` is for a
+converted one.  Inverting the rule leaves exactly that equality — the values are what the calls
+produced, and the keys are what no call was made about. -/
+private theorem bump.keys_of_eval {kvs kvs' : KeyValues}
+    (h : Eval {} ⟨[("m", .hashmap kvs)], []⟩
+      [lgtm| map m (fun (k : string) (v : int) => v + 1)] (.hashmap kvs')) :
+    kvs.map Prod.fst = kvs'.map Prod.fst := by
+  cases h with
+  | EHashmapMap _ _ hm _ hkeys _ _ =>
+      cases hm with
+      | EVarRef _ hlm =>
+          simp [Env.lookup, List.lookup] at hlm
+          subst hlm
+          exact hkeys
+
 /-! ## Tuples
 
 The two forms a tuple is built and taken apart by.  Building one is `EIndNew` without a constructor

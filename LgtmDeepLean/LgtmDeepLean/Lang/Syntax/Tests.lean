@@ -825,6 +825,40 @@ example : [lgtm| toList m == [: tuple(string, int)]]
 -- Lean identifier, which declaring it with `&` is what preserves.
 example : [lgtm| var "toList"] = Expression.varRef "toList" := rfl
 
+-- A mapping is a prefix keyword with two operands, both binding as tightly as `toList`'s one, so a
+-- name, a field read and a call are each read whole on either side.
+example : [lgtm| map m f] = Expression.hashmapMap (.varRef "m") (.varRef "f") := rfl
+example : [lgtm| map p.m f]
+    = Expression.hashmapMap (.structGet (.varRef "p") "m") (.varRef "f") := rfl
+example : [lgtm| map m g(1)]
+    = Expression.hashmapMap (.varRef "m") (.app (.varRef "g") [.intLit 1]) := rfl
+example : [lgtm| map hashmap(string, int) f]
+    = Expression.hashmapMap (.hashmapEmpty .string .int) (.varRef "f") := rfl
+
+-- A function written out is the loosest form there is, so it takes the parentheses an operand at
+-- that level needs — and the key comes before the value, which is the order the parameters go in.
+example : [lgtm| map m (fun (k : string) (v : int) => v + 1)]
+    = Expression.hashmapMap (.varRef "m")
+        (.lam [("k", .string), ("v", .int)] (.plus (.varRef "v") (.intLit 1))) := rfl
+example : [lgtm| map m (fun (k : string) (v : int) => k)]
+    = Expression.hashmapMap (.varRef "m") (.lam [("k", .string), ("v", .int)] (.varRef "k")) := rfl
+
+-- What it produces is a map, so every form that reads one reads this: a lookup, an update, another
+-- mapping, and a conversion.
+example : [lgtm| (map m f)[k]]
+    = Expression.hashmapGet (.hashmapMap (.varRef "m") (.varRef "f")) (.varRef "k") := rfl
+example : [lgtm| { map m f with [k] = 1 }]
+    = Expression.hashmapPut (.hashmapMap (.varRef "m") (.varRef "f")) (.varRef "k")
+        (.intLit 1) := rfl
+example : [lgtm| map (map m f) g]
+    = Expression.hashmapMap (.hashmapMap (.varRef "m") (.varRef "f")) (.varRef "g") := rfl
+example : [lgtm| toList (map m f)]
+    = Expression.hashmapToList (.hashmapMap (.varRef "m") (.varRef "f")) := rfl
+
+-- `map` is a keyword, so it is no variable name inside a DSL term; outside one it is an ordinary
+-- Lean identifier, which declaring it with `&` is what preserves.
+example : [lgtm| var "map"] = Expression.varRef "map" := rfl
+
 /-- The empty map from `string` to `int`: the shortest declaration that returns one, and the one
 place the annotations are all there is to go on. -/
 lgtm def noneBound as "none-bound" : hashmap string int :=
@@ -853,8 +887,25 @@ lgtm def getOr as "get-or" (m : hashmap string int) (k : string) : int :=
 #guard !({ getOr with parameters := [("m", [lgtm_ty| hashmap string string]), ("k", .string)] }
   : FuncDecl).check {} []
 
--- The key type has to be one a comparison can reach the bottom of, which is the one condition the
--- three forms share and the one way an annotation alone makes a map ill typed.
+/-- Every value of `m` with one added to it, the keys left as they were.  The function takes the key
+as well as the value, so its parameters are the map's two types in that order. -/
+lgtm def bump (m : hashmap string int) : hashmap string int :=
+  map m (fun (k : string) (v : int) => v + 1)
+
+#guard bump.check {} []
+#guard !({ bump with body := [lgtm| map m (fun (v : int) (k : string) => v + 1)] }
+  : FuncDecl).check {} []
+#guard !({ bump with resultType := [lgtm_ty| hashmap string string] } : FuncDecl).check {} []
+
+-- A mapping is what makes the value type the one thing about a map that can change, since the keys
+-- it hands back are the ones it was given: a map to `string` comes out of a map to `int` and the
+-- declaration says so.
+#guard ({ bump with
+  body := [lgtm| map m (fun (k : string) (v : int) => k)]
+  resultType := [lgtm_ty| hashmap string string] } : FuncDecl).check {} []
+
+-- The key type has to be one a comparison can reach the bottom of, which is the one condition every
+-- one of the forms shares and the one way an annotation alone makes a map ill typed.
 #guard !({ noneBound with
   body := [lgtm| hashmap((int) -> int, int)]
   resultType := [lgtm_ty| hashmap ((int) -> int) int] } : FuncDecl).check {} []

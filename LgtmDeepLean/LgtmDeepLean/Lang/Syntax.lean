@@ -36,8 +36,8 @@ and otherwise the variable `Foo` with its field `bar` read.  The name it becomes
 not the Lean name it was found under.
 
 The keywords inside a DSL term — `bool`, `int`, `string`, `list`, `option`, `hashmap`, `tuple`,
-`true`, `false`, `some`, `none`, `reverse`, `length`, `toList`, `var`, `struct`, `new`, and `as` — are
-declared
+`true`, `false`, `some`, `none`, `reverse`, `length`, `map`, `toList`, `var`, `struct`, `new`, and
+`as` — are declared
 with `&`, Lean's
 non-reserved symbol form, so importing this module does not stop `int` or `some` from being used as
 ordinary Lean identifiers.  What it does cost is those names as *DSL variables*: the categories
@@ -149,10 +149,11 @@ named `none` and `some` takes one apart.  The empty one carries a type for the r
 literal does — it holds nothing to read one off — while `some` needs none, since what it holds says
 it.
 
-The four hashmap forms are `hashmap(string, int)`, `m[k]`, `{ m with [k] = v }`, and `toList m`.
-The third is the shape a struct update is written in, and the brackets are what tell the two apart: a
-key is an expression where a field is a name.  The last is written like `reverse`, as a prefix
-keyword, because it is the same kind of thing: one operand, and a value of a different type out.
+The five hashmap forms are `hashmap(string, int)`, `m[k]`, `{ m with [k] = v }`, `map m f`, and
+`toList m`.  The third is the shape a struct update is written in, and the brackets are what tell the
+two apart: a key is an expression where a field is a name.  The last two are written like `reverse`,
+as prefix keywords, because they are the same kind of thing: a map to read and a value of a
+different type out — `map` with the function to apply as a second operand.
 
 The two tuple forms are `tuple(1, "a")` and `t.0`.  The first is written the way the *type*
 `tuple(int, string)` is, with its elements in one comma-separated group; the second is `p.x` with an
@@ -247,6 +248,19 @@ two expressions and no parse, while `m[1]` is a lookup.  It binds as tightly as 
 nests the same way — `p.m[k]`, `f(1)[k]`, `m[k1][k2]` — since what a lookup produces is an operand
 like any other. -/
 syntax:max lgtmExpr:max noWs "[" lgtmExpr "]" : lgtmExpr
+/-- `map m f` is `m` with `f` applied to each of its bindings: a map from the same keys, each bound
+to what `f` returned for that key and the value it was bound to.
+
+A prefix keyword with two operands rather than `toList`'s one, both binding as tightly as that one,
+so `map m f` and `map p.m g(1)` need no parentheses while a function written out does — a `fun` is
+the loosest form there is: `map m (fun (k : string) (v : int) => v + 1)`.
+
+The function takes the key as well as the value, so it is of type `(string, int) -> int` over a
+`hashmap string int`, which is the type checker's business rather than the parser's.
+
+`map` is a keyword, so it is not available as a variable name inside a DSL term; `var "map"` is the
+escape hatch, the same one `reverse` and `toList` leave. -/
+syntax:max &"map" lgtmExpr:max lgtmExpr:max : lgtmExpr
 /-- `toList m` is the bindings of `m` as a list, one `tuple(k, v)` per binding, in the order the map
 carries them.
 
@@ -468,6 +482,7 @@ macro_rules
       `(Expression.indNew $ty $c [$as,*])
   | `([lgtm| hashmap($k, $v)]) => `(Expression.hashmapEmpty [lgtm_ty| $k] [lgtm_ty| $v])
   | `([lgtm| $m[$k]]) => `(Expression.hashmapGet [lgtm| $m] [lgtm| $k])
+  | `([lgtm| map $m $f]) => `(Expression.hashmapMap [lgtm| $m] [lgtm| $f])
   | `([lgtm| toList $m]) => `(Expression.hashmapToList [lgtm| $m])
   | `([lgtm| { $m with $bs:lgtmKeyBinding,* }]) => do
       let mut acc ← `([lgtm| $m])

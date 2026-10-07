@@ -1112,9 +1112,9 @@ private def nothing : FuncDecl where
 /-! ### Hashmaps
 
 A hashmap type relates two types and names no declaration, so it is structural the way `list` and
-`option` are and `types` has nothing to say about it.  What is new is the condition the three forms
-share: the key type has to be one `Ty.comparable` accepts, since a map is read by comparing the key
-it is given against the keys it carries.
+`option` are and `types` has nothing to say about it.  What is new is the condition every one of the
+forms shares: the key type has to be one `Ty.comparable` accepts, since a map is read by comparing
+the key it is given against the keys it carries.
 
 `ctx` gives `m` a map from `string` to `int`, `mp` one to a declared struct, `mfn` one to function
 type — a comparable key with an uncomparable value, which is allowed — and `mbad` one *from*
@@ -1207,6 +1207,70 @@ function type, which is the case the condition is for. -/
 #guard (Expression.hashmapGet (.varRef "mbad")
   (.lam [("x", .int)] (.varRef "x"))).infer types ctx == none
 
+-- A mapping keeps the map's key type and takes its value type from what the function returns, so
+-- the function's parameters are the map's two types in that order and the result type is read off
+-- its body.
+#guard (Expression.hashmapMap (.varRef "m")
+  (.lam [("k", .string), ("v", .int)] (.varRef "v"))).infer types ctx
+  == some (.hashmap .string .int)
+#guard (Expression.hashmapMap (.varRef "m")
+  (.lam [("k", .string), ("v", .int)] (.plus (.varRef "v") (.intLit 1)))).infer types ctx
+  == some (.hashmap .string .int)
+#guard (Expression.hashmapMap (.varRef "m")
+  (.lam [("k", .string), ("v", .int)] (.varRef "k"))).infer types ctx
+  == some (.hashmap .string .string)
+#guard (Expression.hashmapMap (.varRef "m")
+  (.lam [("k", .string), ("v", .int)] (.optionSome (.varRef "v")))).infer types ctx
+  == some (.hashmap .string (.option .int))
+#guard (Expression.hashmapMap (.varRef "mp")
+  (.lam [("k", .string), ("v", .struct "Point")] (.structGet (.varRef "v") "x"))).infer types ctx
+  == some (.hashmap .string .int)
+
+-- The function takes the key *and* the value, in that order, so one of the wrong arity or with the
+-- two the other way round is turned down — the same one comparison `app` makes of an argument list.
+#guard (Expression.hashmapMap (.varRef "m")
+  (.lam [("v", .int), ("k", .string)] (.varRef "v"))).infer types ctx == none
+#guard (Expression.hashmapMap (.varRef "m") (.lam [("v", .int)] (.varRef "v"))).infer types ctx
+  == none
+#guard (Expression.hashmapMap (.varRef "m")
+  (.lam [("k", .string), ("v", .int), ("z", .int)] (.varRef "v"))).infer types ctx == none
+#guard (Expression.hashmapMap (.varRef "m") (.varRef "f")).infer types ctx == none
+
+-- Either operand being the wrong kind of thing is enough: the first has to be a map and the second
+-- a function.
+#guard (Expression.hashmapMap (.varRef "xs")
+  (.lam [("k", .string), ("v", .int)] (.varRef "v"))).infer types ctx == none
+#guard (Expression.hashmapMap (.varRef "nope")
+  (.lam [("k", .string), ("v", .int)] (.varRef "v"))).infer types ctx == none
+#guard (Expression.hashmapMap (.varRef "m") (.varRef "n")).infer types ctx == none
+
+-- A value of function type is as mappable as any other, and as producible: nothing compares a value
+-- a map holds, whichever side of the mapping it is on.
+#guard (Expression.hashmapMap (.varRef "mfn")
+  (.lam [("k", .string), ("v", .fn [.int] .int)] (.intLit 1))).infer types ctx
+  == some (.hashmap .string .int)
+#guard (Expression.hashmapMap (.varRef "m")
+  (.lam [("k", .string), ("v", .int)] (.lam [("x", .int)] (.varRef "v")))).infer types ctx
+  == some (.hashmap .string (.fn [.int] .int))
+
+-- An uncomparable *key* is turned down as it is under the other four forms, even though a mapping
+-- compares no key: the keys it carries through are the ones nothing could have done anything with.
+#guard (Expression.hashmapMap (.varRef "mbad")
+  (.lam [("k", .fn [.int] .int), ("v", .int)] (.varRef "v"))).infer types ctx == none
+
+-- What it produces is a map like any other, so the forms nest into each other.
+#guard (Expression.hashmapGet (.hashmapMap (.varRef "m")
+  (.lam [("k", .string), ("v", .int)] (.varRef "k"))) (.varRef "s")).infer types ctx
+  == some (.option .string)
+#guard (Expression.hashmapMap (.hashmapMap (.varRef "m")
+    (.lam [("k", .string), ("v", .int)] (.varRef "k")))
+  (.lam [("k", .string), ("v", .string)] (.intLit 0))).infer types ctx
+  == some (.hashmap .string .int)
+#guard (Expression.hashmapMap (.varRef "m")
+  (.lam [("k", .string), ("v", .int)] (.varRef "v"))).check types ctx (.hashmap .string .int)
+#guard !(Expression.hashmapMap (.varRef "m")
+  (.lam [("k", .string), ("v", .int)] (.varRef "k"))).check types ctx (.hashmap .string .int)
+
 -- A tuple type is the types it lists, in their order, and nothing else.  It is comparable exactly
 -- when all of them are: a tuple value is as canonical as a list value, so nothing of the kind that
 -- stops two hashmaps being compared is in the way.
@@ -1231,7 +1295,7 @@ function type, which is the case the condition is for. -/
 #guard (Expression.hashmapToList (.hashmapEmpty .int (.list .string))).infer types ctx
   == some (.list (.tuple [.int, .list .string]))
 
--- An uncomparable value type is as fine here as under the other three forms, and an uncomparable key
+-- An uncomparable value type is as fine here as under the other four forms, and an uncomparable key
 -- is turned down as it is there — even though converting compares nothing, the way an empty map
 -- compares nothing and is held to it too.
 #guard (Expression.hashmapToList (.varRef "mfn")).infer types ctx

@@ -208,6 +208,26 @@ this stuck is the one a put's does. -/
     Eval td env m (.hashmap kvs) → Eval td env k vk →
     KeyValues.lookup? kvs vk = some o →
     Eval td env (.hashmapGet m k) (.option o)
+/-- A mapping evaluates the map and the function, then calls that function once per binding — the
+key and the value it is bound to as the two arguments — and binds the key to what the call produced.
+
+The keys are the map's own, which is what `kvs.map Prod.fst = kvs'.map Prod.fst` says: a mapping
+rebinds no key, drops no binding and introduces none, so nothing is compared and this needs no
+`KeyValues` premise, exactly as `EHashmapToList` needs none.  The order is the map's too, for the
+same reason a conversion's is — one value apiece is replaced and nothing is moved.
+
+The two premises over the zip are `EApp`'s two, one per binding: `ArgsHaveType` is what makes a
+function the key and the value do not fit stuck rather than entered with arguments it was not
+written for, and the body is evaluated in the environment the closure captured extended with its
+parameters, which is where a call evaluates it.  A second operand that evaluates to something other
+than a closure is the only other thing that can go wrong here, and that is what typing rules out. -/
+| EHashmapMap (m f : Expression) :
+    Eval td env m (.hashmap kvs) →
+    Eval td env f (.closure cbindings cglobals ps body) →
+    kvs.map Prod.fst = kvs'.map Prod.fst →
+    (∀ p ∈ kvs.zip kvs', ArgsHaveType td ps [p.1.1, p.1.2]) →
+    (∀ p ∈ kvs.zip kvs', Eval td (Env.extend ⟨cbindings, cglobals⟩ ps [p.1.1, p.1.2]) body p.2.2) →
+    Eval td env (.hashmapMap m f) (.hashmap kvs')
 /-- A `toList` evaluates the map and hands its bindings back as a list, one two-element tuple per
 binding: the key beside the value it is bound to.
 
@@ -426,6 +446,21 @@ public theorem Eval.hasType {td : TypeDecls} {env : Env} {ctx : Context} {e : Ex
       | some w =>
           obtain ⟨k', hk'⟩ := KeyValues.mem_of_lookup? hlookup
           exact .optionSome (hvals (k', w) hk')
+  | @EHashmapMap _ _ _ _ _ _ kvs' m f _ _ hkeys hat _ ihm ihf ihev =>
+      obtain ⟨kt, vt, r, hm, hf, -, rfl⟩ := Expression.infer_hashmapMap_eq_some.mp ht
+      obtain ⟨kt', vt', hkeystys, -, heq⟩ := Value.hasType_hashmap_iff.mp (ihm henv hm)
+      obtain ⟨rfl, rfl⟩ : kt = kt' ∧ vt = vt' := by simpa using heq
+      -- The function is a closure whose body was checked against a context of its own, exactly as in
+      -- `EApp`, so what each call produced is of the closure's result type — which is the value half
+      -- of the map the mapping built.
+      obtain ⟨cctx, r', hcenv, hbodyty, heqf⟩ := Value.hasType_closure_iff.mp (ihf henv hf)
+      injection heqf with _ hr
+      subst hr
+      obtain ⟨hkeys', hvals'⟩ :
+          (∀ p ∈ kvs', Value.HasType td p.1 kt) ∧ ∀ p ∈ kvs', Value.HasType td p.2 r :=
+        KeyValues.hasType_map hkeys hkeystys fun p hp =>
+          ihev p hp (Env.hasType_extend (hat p hp) hcenv) (by simpa using hbodyty)
+      exact .hashmap hkeys' hvals'
   | EHashmapToList m _ ihm =>
       obtain ⟨kt, vt, hm, -, rfl⟩ := Expression.infer_hashmapToList_eq_some.mp ht
       obtain ⟨kt', vt', hkeys, hvals, heq⟩ := Value.hasType_hashmap_iff.mp (ihm henv hm)
