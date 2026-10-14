@@ -52,6 +52,18 @@ wrong here, and exactly what typing rules out. -/
 | EIteFalse (c thn els : Expression) :
     Eval td env c (.bool false) → Eval td env els v →
     Eval td env (.ite c thn els) v
+| EBoolAndFalse (l r : Expression) :
+    Eval td env l (.bool false) →
+    Eval td env (.boolAnd l r) (.bool false)
+| EBoolAndTrue (l r : Expression) :
+    Eval td env l (.bool true) → Eval td env r (.bool b) →
+    Eval td env (.boolAnd l r) (.bool b)
+| EBoolOrTrue (l r : Expression) :
+    Eval td env l (.bool true) →
+    Eval td env (.boolOr l r) (.bool true)
+| EBoolOrFalse (l r : Expression) :
+    Eval td env l (.bool false) → Eval td env r (.bool b) →
+    Eval td env (.boolOr l r) (.bool b)
 /-- A comparison evaluates both of its operands and hands back what comparing the two values said.
 
 The comparison itself is `Value.beq?`, which is a function on values and mentions nothing about
@@ -164,6 +176,17 @@ The name is bound in front of the environment, so it shadows what was there, the
     Eval td env (.optionMatch scrut nbody x sbody) v
 | ENil (ty : Ty) : Eval td env (.lnil ty) (.list [])
 | ECons (e₁ : Expression) (e₂ : Expression) : Eval td env e₁ v → Eval td env e₂ (.list vs) → Eval td env (.lcons e₁ e₂) (.list (v :: vs))
+/-- Map `f` over `e` (of type List α).
+
+The length equality clause is a guarantee that the result list is always
+the same length as the input. -/
+| EListMap (e f : Expression) :
+    Eval td env e (.list vs) →
+    Eval td env f (.closure cbindings cglobals ps body) →
+    vs.length = vs'.length →
+    (∀ p ∈ vs.zip vs', ArgsHaveType td ps [p.1]) →
+    (∀ p ∈ vs.zip vs', Eval td (Env.extend ⟨cbindings, cglobals⟩ ps [p.1]) body p.2) →
+    Eval td env (.listMap e f) (.list vs')
 /-- A length evaluates the list and hands back how many elements it has, as an `int`.
 
 `List.length` is a `Nat` and `Value.int` holds an `Int`, so the count is cast on the way out: the IR
@@ -265,50 +288,7 @@ at it. -/
     Eval td env (.tupleGet e i) v
 
 
-/-- Evaluating a well-typed expression produces a value of its inferred type.
-
-`ECons` needs no premise relating the new element to the rest of the list: `Expression.infer`
-already requires the tail to be a list of the element type read off the head, so the values
-`ECons` builds are homogeneous whenever the expression it evaluates is well typed.
-
-`EVarRef` is the one rule that reads a value it did not build, so it is the one rule that needs
-`henv`: the type inferred for a variable is the context's, and only `Env.HasType` ties that to the
-value the environment hands back.  It is also the rule that resolves a global, and the two halves of
-it line up because `Env.lookup` searches the bindings before the globals exactly as the context
-`ctx ++ Globals.types env.globals` is searched left to right.
-
-The two `ite` rules are the ones that say nothing at all about the value they produce: it is whatever
-the branch that ran produced, so the induction hypothesis for that branch is the whole case.  It is
-the type checker having held *both* branches to one type that makes this work, since which of them ran
-is not something the type has heard about.
-
-`ELet` is the other rule that extends the environment, and it is the easy one: the context grows on
-the left exactly as the bindings do, so `Env.hasType_cons` — applied to the type the bound expression
-was inferred at — is the whole case.
-
-The two `optionMatch` rules are the two `ite` rules with a binding in one of them.  Which case ran is
-not something the type has heard about, so it is again both cases having been held to one type that
-makes this work; and the name the second case binds takes its type from the scrutinee's option type,
-which is all the value it took apart says about what it carries.  `Env.hasType_cons` then does for
-that name what it does for a `let`'s.
-
-`EApp` is where the context stops being fixed, which is why the induction generalizes it: the
-closure's body was checked against a context of its own, recovered from the closure's type, and has
-nothing to do with the one the call was made in.  The argument-evaluation premise contributes
-nothing here — `ArgsHaveType` already says what the argument values are, so the types the arguments
-were *inferred* to have are only needed to line that up with the closure's parameters.
-
-`EEquals` is the one rule whose value is computed from the values its operands produced rather than
-copied out of one of them, and it is also the one rule whose result type has nothing to do with its
-operands': a comparison is a `bool`, so the catch-all case covers it the way it covers a literal, and
-what the operands shared is the type checker's business alone.
-
-The three struct rules are where the argument-evaluation premise finally does the work `EApp`'s does
-not.  A struct value carries no types, so nothing but the induction hypothesis says what its fields
-hold: for each field, the expression that produced it is found by name and the type inference gave
-that expression is the type its value has.  That the field names line up across the declaration, the
-expressions and the values is what `Expression.map_fst_of_inferFields` and
-`List.mem_zip_of_lookup` between them supply. -/
+/-- Evaluating a well-typed expression produces a value of its inferred type. -/
 public theorem Eval.hasType {td : TypeDecls} {env : Env} {ctx : Context} {e : Expression}
     {v : Value} {t : Ty} (h : Eval td env e v) (henv : Env.HasType td env ctx)
     (ht : e.infer td (ctx ++ Globals.types env.globals) = some t) : v.HasType td t := by
@@ -423,6 +403,18 @@ public theorem Eval.hasType {td : TypeDecls} {env : Env} {ctx : Context} {e : Ex
       obtain ⟨t'', hw, heq⟩ := Value.hasType_option_some_iff.mp (ihscrut henv hsc)
       obtain rfl : t'' = t' := by simpa using heq.symm
       exact ihsbody (Env.hasType_cons hw henv) (by simpa using hsb)
+  | @EListMap _ _ _ _ _ _ vs' e f _ _ hlen hat _ _ ihf ihev =>
+      obtain ⟨t', r, -, hf, rfl⟩ := Expression.infer_listMap_eq_some.mp ht
+      -- The function is a closure whose body was checked against a context of its own, exactly as in
+      -- `EApp`, so what each call produced is of the closure's result type — which is the element
+      -- type of the list the mapping built.  The list it was given contributes nothing: its element
+      -- type is the function's parameter type and goes no further, so this is the one mapping rule
+      -- that needs no induction hypothesis for its first operand.
+      obtain ⟨cctx, r', hcenv, hbodyty, heqf⟩ := Value.hasType_closure_iff.mp (ihf henv hf)
+      injection heqf with _ hr
+      subst hr
+      exact .list (Value.hasType_listMap hlen fun p hp =>
+        ihev p hp (Env.hasType_extend (hat p hp) hcenv) (by simpa using hbodyty))
   | EHashmapPut m k v _ _ _ herase ihm ihk ihv =>
       obtain ⟨kt, vt, hm, hk, hv, -, rfl⟩ := Expression.infer_hashmapPut_eq_some.mp ht
       obtain ⟨kt', vt', hkeys, hvals, heq⟩ := Value.hasType_hashmap_iff.mp (ihm henv hm)

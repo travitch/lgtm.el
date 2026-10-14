@@ -133,27 +133,32 @@ macro_rules
 
 /-! ## Expressions
 
-Precedence runs `==` looser than `::`, which is looser than `+`/`-`, which are looser than
-application, `reverse` and `length`, so `1 + 2 :: xs` is `(1 + 2) :: xs`, `f(x) + 1` is
-`(f(x)) + 1`, and `x :: xs == ys` compares two lists rather than consing onto a comparison.
+Precedence runs `||` looser than `&&`, which is looser than `==`, which is looser than `::`, which
+is looser than `+`/`-`, which are looser than application, `reverse` and `length`, so `1 + 2 :: xs`
+is `(1 + 2) :: xs`, `f(x) + 1` is `(f(x)) + 1`, `x :: xs == ys` compares two lists rather than
+consing onto a comparison, and `x == y && b` is a conjunction of a comparison rather than a
+comparison against a conjunction.
 
 A list literal carries its element type, because `lnil` does: `[1, 2 : int]` is
 `.lcons (.intLit 1) (.lcons (.intLit 2) (.lnil .int))`, and the empty list is `[: int]`.
 
-The two list operations are `reverse xs` and `length xs`, both prefix keywords binding as tightly as
-application.  They differ in what comes back out: a reversal is a list of the same type, where a
-length is an `int` whatever the elements were.
+The three list operations are `reverse xs`, `length xs` and `map list xs f`, all prefix keywords
+binding as tightly as application.  They differ in what comes back out: a reversal is a list of the
+same type, a mapping is a list of whatever its function returns, and a length is an `int` whatever
+the elements were.  `map` is written with a tag because it is also a hashmap's operation — see the
+note on the two forms below.
 
 The two option values are written `some(1)` and `none : int`, and a `match` whose alternatives are
 named `none` and `some` takes one apart.  The empty one carries a type for the reason an empty list
 literal does — it holds nothing to read one off — while `some` needs none, since what it holds says
 it.
 
-The five hashmap forms are `hashmap(string, int)`, `m[k]`, `{ m with [k] = v }`, `map m f`, and
-`toList m`.  The third is the shape a struct update is written in, and the brackets are what tell the
-two apart: a key is an expression where a field is a name.  The last two are written like `reverse`,
-as prefix keywords, because they are the same kind of thing: a map to read and a value of a
-different type out — `map` with the function to apply as a second operand.
+The five hashmap forms are `hashmap(string, int)`, `m[k]`, `{ m with [k] = v }`, `map hashmap m f`,
+and `toList m`.  The third is the shape a struct update is written in, and the brackets are what tell
+the two apart: a key is an expression where a field is a name.  The last two are written like
+`reverse`, as prefix keywords, because they are the same kind of thing: a map to read and a value of
+a different type out — `map` with the function to apply as a second operand, and with the tag that
+says it is a hashmap being mapped over rather than a list.
 
 The two tuple forms are `tuple(1, "a")` and `t.0`.  The first is written the way the *type*
 `tuple(int, string)` is, with its elements in one comma-separated group; the second is `p.x` with an
@@ -248,19 +253,43 @@ two expressions and no parse, while `m[1]` is a lookup.  It binds as tightly as 
 nests the same way — `p.m[k]`, `f(1)[k]`, `m[k1][k2]` — since what a lookup produces is an operand
 like any other. -/
 syntax:max lgtmExpr:max noWs "[" lgtmExpr "]" : lgtmExpr
-/-- `map m f` is `m` with `f` applied to each of its bindings: a map from the same keys, each bound
-to what `f` returned for that key and the value it was bound to.
+/-! `map` is one keyword over two forms — a list's mapping and a hashmap's — so it is written with a
+tag saying which: `map list xs f` and `map hashmap m f`.
 
-A prefix keyword with two operands rather than `toList`'s one, both binding as tightly as that one,
-so `map m f` and `map p.m g(1)` need no parentheses while a function written out does — a `fun` is
-the loosest form there is: `map m (fun (k : string) (v : int) => v + 1)`.
+The tag is not something a type checker could supply in its place.  `[lgtm| ...]` is a macro, so by
+the time it expands nothing has inferred a type for either operand — the DSL's types are not Lean's,
+and `Expression.infer` runs on the `Expression` this *produces*.  What the two forms do differ in is
+the arity of the function, one parameter against two, but that is readable only where the function is
+written out as a `fun` and says nothing about `map xs f` for a named `f`.  So the tag is written
+rather than deduced, and it is written once per `map` rather than being a form of its own, because
+the two mappings are the same operation over the two things the IR has to map over. -/
+
+/-- `map list xs f` is `xs` with `f` applied to each of its elements: a list of the same length,
+each element replaced by what `f` returned for it.
+
+The function takes one parameter, so it is of type `(int) -> string` over a `list int`, and what
+comes back is a `list string` — the element type is the one thing a mapping over a list does *not*
+carry through, which is the type checker's business rather than the parser's.
+
+The two operands bind as tightly as `reverse`'s one, so `map list xs f` and `map list p.items g(1)`
+need no parentheses while a function written out does — a `fun` is the loosest form there is:
+`map list xs (fun (x : int) => x + 1)`. -/
+syntax:max &"map" &"list" lgtmExpr:max lgtmExpr:max : lgtmExpr
+/-- `map hashmap m f` is `m` with `f` applied to each of its bindings: a map from the same keys, each
+bound to what `f` returned for that key and the value it was bound to.
 
 The function takes the key as well as the value, so it is of type `(string, int) -> int` over a
-`hashmap string int`, which is the type checker's business rather than the parser's.
+`hashmap string int`, which is the type checker's business rather than the parser's.  That is also
+what the tag is standing in for: two parameters where a list's mapping takes one.
+
+The two operands bind as tightly as `toList`'s one, so `map hashmap m f` and `map hashmap p.m g(1)`
+need no parentheses while a function written out does: `map hashmap m (fun (k : string) (v : int) =>
+v + 1)`.
 
 `map` is a keyword, so it is not available as a variable name inside a DSL term; `var "map"` is the
-escape hatch, the same one `reverse` and `toList` leave. -/
-syntax:max &"map" lgtmExpr:max lgtmExpr:max : lgtmExpr
+escape hatch, the same one `reverse` and `toList` leave.  `list` is one too, now that it tags a
+mapping, and `var "list"` is the same escape hatch for it. -/
+syntax:max &"map" &"hashmap" lgtmExpr:max lgtmExpr:max : lgtmExpr
 /-- `toList m` is the bindings of `m` as a list, one `tuple(k, v)` per binding, in the order the map
 carries them.
 
@@ -357,6 +386,18 @@ one produces is an ordinary `bool`.
 The operands must have the same type, and it must be a type a comparison can reach the bottom of —
 which is the type checker's business rather than the parser's. -/
 syntax:50 lgtmExpr:51 " == " lgtmExpr:51 : lgtmExpr
+/-- `a && b` is `true` when both operands are, and `a || b` when either is.
+
+They are the two loosest operators there are, `||` looser than `&&` and both looser than `==`, so
+`x == y && b` and `length xs == 0 || b` need no parentheses and `a || b && c` is `a || (b && c)` —
+the precedences every other language writing them this way gives them.  Both are left-associative,
+unlike `==`: `a && b && c` is `(a && b) && c`, which is the same answer either grouping would give.
+
+Both operands must be `bool`s, which is the type checker's business rather than the parser's.  The
+second is evaluated only when the first did not settle the answer, which is neither's — it is what
+`Eval` says of `boolAnd` and `boolOr`. -/
+syntax:40 lgtmExpr:40 " && " lgtmExpr:41 : lgtmExpr
+syntax:35 lgtmExpr:35 " || " lgtmExpr:36 : lgtmExpr
 syntax:10 "fun" ("(" ident " : " lgtmTy ")")* " => " lgtmExpr:10 : lgtmExpr
 /-- `let x = e in body`.  The bound expression carries no annotation, because `let_` does not: the
 type checker infers it.  The body extends as far right as it can, so `let`s chain without
@@ -436,6 +477,8 @@ macro_rules
   | `([lgtm| $a - $b]) => `(Expression.minus [lgtm| $a] [lgtm| $b])
   | `([lgtm| $a :: $b]) => `(Expression.lcons [lgtm| $a] [lgtm| $b])
   | `([lgtm| $a == $b]) => `(Expression.equals [lgtm| $a] [lgtm| $b])
+  | `([lgtm| $a && $b]) => `(Expression.boolAnd [lgtm| $a] [lgtm| $b])
+  | `([lgtm| $a || $b]) => `(Expression.boolOr [lgtm| $a] [lgtm| $b])
   | `([lgtm| reverse $e]) => `(Expression.listReverse [lgtm| $e])
   | `([lgtm| length $e]) => `(Expression.listLength [lgtm| $e])
   | `([lgtm| [$es,* : $t]]) => do
@@ -482,7 +525,8 @@ macro_rules
       `(Expression.indNew $ty $c [$as,*])
   | `([lgtm| hashmap($k, $v)]) => `(Expression.hashmapEmpty [lgtm_ty| $k] [lgtm_ty| $v])
   | `([lgtm| $m[$k]]) => `(Expression.hashmapGet [lgtm| $m] [lgtm| $k])
-  | `([lgtm| map $m $f]) => `(Expression.hashmapMap [lgtm| $m] [lgtm| $f])
+  | `([lgtm| map list $l $f]) => `(Expression.listMap [lgtm| $l] [lgtm| $f])
+  | `([lgtm| map hashmap $m $f]) => `(Expression.hashmapMap [lgtm| $m] [lgtm| $f])
   | `([lgtm| toList $m]) => `(Expression.hashmapToList [lgtm| $m])
   | `([lgtm| { $m with $bs:lgtmKeyBinding,* }]) => do
       let mut acc ← `([lgtm| $m])

@@ -702,6 +702,32 @@ exactly why `Expression.optionNone` carries an annotation. -/
   · rintro ⟨t', hv, rfl⟩
     exact .optionSome hv
 
+/-- The elements a mapping over a list produces are all of the type its function returns: every
+element of the result is what the call for the element in that position produced.
+
+One clause where `KeyValues.hasType_map` has two, and it mentions nothing of the list it was given:
+a list is homogeneous once where a hashmap is twice over, and nothing of the original elements'
+type survives into the result — a mapping replaces it, where a mapping over a hashmap carries the
+key type through.
+
+What takes the place of the keys agreeing is the lengths agreeing, which is what makes every element
+of the result one of the pairs the premise speaks for. -/
+public theorem Value.hasType_listMap {td : TypeDecls} {vs vs' : List Value} {t : Ty}
+    (hlen : vs.length = vs'.length) (hvs : ∀ p ∈ vs.zip vs', Value.HasType td p.2 t) :
+    ∀ v ∈ vs', Value.HasType td v t := by
+  induction vs generalizing vs' with
+  | nil =>
+      obtain rfl : vs' = [] := by simpa using hlen.symm
+      simp
+  | cons w vs ih =>
+      cases vs' with
+      | nil => simp
+      | cons w' vs' =>
+          intro v hv
+          rcases List.mem_cons.mp hv with rfl | hv'
+          · exact hvs (w, v) (by simp)
+          · exact ih (by simpa using hlen) (fun p hp => hvs p (by simp [hp])) v hv'
+
 /-- What it takes for a hashmap value to have a type: the type is a hashmap type, and the two halves
 of it are what the keys and the values are held to.
 

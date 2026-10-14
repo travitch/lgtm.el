@@ -86,6 +86,45 @@ example : [lgtm| [x == y, true : bool]]
     = Expression.lcons (.equals (.varRef "x") (.varRef "y"))
         (.lcons (.boolLit true) (.lnil .bool)) := rfl
 
+-- `&&` and `||` are looser than `==`, which is what lets a comparison be an operand of either
+-- without parentheses, and `||` is the looser of the two.
+example : [lgtm| b && c] = Expression.boolAnd (.varRef "b") (.varRef "c") := rfl
+example : [lgtm| b || c] = Expression.boolOr (.varRef "b") (.varRef "c") := rfl
+example : [lgtm| x == y && b]
+    = Expression.boolAnd (.equals (.varRef "x") (.varRef "y")) (.varRef "b") := rfl
+example : [lgtm| b && x == y]
+    = Expression.boolAnd (.varRef "b") (.equals (.varRef "x") (.varRef "y")) := rfl
+example : [lgtm| length xs == 0 || b]
+    = Expression.boolOr (.equals (.listLength (.varRef "xs")) (.intLit 0)) (.varRef "b") := rfl
+example : [lgtm| a || b && c]
+    = Expression.boolOr (.varRef "a") (.boolAnd (.varRef "b") (.varRef "c")) := rfl
+example : [lgtm| a && b || c]
+    = Expression.boolOr (.boolAnd (.varRef "a") (.varRef "b")) (.varRef "c") := rfl
+example : [lgtm| (a || b) && c]
+    = Expression.boolAnd (.boolOr (.varRef "a") (.varRef "b")) (.varRef "c") := rfl
+
+-- Both are left-associative, unlike `==`, which takes parentheses to chain at all.
+example : [lgtm| a && b && c]
+    = Expression.boolAnd (.boolAnd (.varRef "a") (.varRef "b")) (.varRef "c") := rfl
+example : [lgtm| a || b || c]
+    = Expression.boolOr (.boolOr (.varRef "a") (.varRef "b")) (.varRef "c") := rfl
+example : [lgtm| a && (b && c)]
+    = Expression.boolAnd (.varRef "a") (.boolAnd (.varRef "b") (.varRef "c")) := rfl
+
+-- What they produce is a `bool` like any other, so every form that reads one reads these: a
+-- condition, an operand of another one, a call's argument, a list of them.
+example : [lgtm| if b && c then { 1 } else { 2 }]
+    = Expression.ite (.boolAnd (.varRef "b") (.varRef "c")) (.intLit 1) (.intLit 2) := rfl
+example : [lgtm| f(b || c)]
+    = Expression.app (.varRef "f") [.boolOr (.varRef "b") (.varRef "c")] := rfl
+example : [lgtm| fun (b : bool) => b && true]
+    = Expression.lam [("b", .bool)] (.boolAnd (.varRef "b") (.boolLit true)) := rfl
+example : [lgtm| let e = b || c in e]
+    = Expression.let_ "e" (.boolOr (.varRef "b") (.varRef "c")) (.varRef "e") := rfl
+example : [lgtm| [b && c, true : bool]]
+    = Expression.lcons (.boolAnd (.varRef "b") (.varRef "c"))
+        (.lcons (.boolLit true) (.lnil .bool)) := rfl
+
 -- A list literal is right-nested `lcons` onto the `lnil` its annotation gives.
 example : [lgtm| [: int]] = Expression.lnil .int := rfl
 example : [lgtm| [1 : int]] = Expression.lcons (.intLit 1) (.lnil .int) := rfl
@@ -239,6 +278,48 @@ lgtm def revCons as "rev-cons" (x : int) (xs : list int) : list int :=
   reverse (x :: xs)
 
 #guard revCons.check {} []
+
+/-- Every element of `xs` with one added to it.  The function takes one parameter, at the list's
+element type, which is what the `list` tag on the `map` is standing in for. -/
+lgtm def bumpAll as "bump-all" (xs : list int) : list int :=
+  map list xs (fun (x : int) => x + 1)
+
+#guard bumpAll.check {} []
+
+-- The element type is the one thing a mapping over a list does not carry through, so what the
+-- function returns is what the result is a list of and the declaration has to say so.
+#guard ({ bumpAll with
+  body := [lgtm| map list xs (fun (x : int) => "a")]
+  resultType := [lgtm_ty| list string] } : FuncDecl).check {} []
+#guard !({ bumpAll with body := [lgtm| map list xs (fun (x : int) => "a")] } : FuncDecl).check {} []
+
+-- The function is held to the element type, and to taking one parameter: a hashmap's two-parameter
+-- function is what the other tag is for, and no `list` mapping accepts one.
+#guard !({ bumpAll with body := [lgtm| map list xs (fun (x : string) => 1)] } : FuncDecl).check {} []
+#guard !({ bumpAll with body := [lgtm| map list xs (fun (x : int) (y : int) => 1)] }
+  : FuncDecl).check {} []
+
+-- And the tag decides nothing about the types: a `list` mapping over a hashmap is ill typed, as a
+-- `hashmap` mapping over a list is.
+#guard !({ bumpAll with body := [lgtm| map list hashmap(string, int) (fun (x : int) => 1)] }
+  : FuncDecl).check {} []
+#guard !({ bumpAll with body := [lgtm| map hashmap xs (fun (x : int) (y : int) => 1)] }
+  : FuncDecl).check {} []
+
+/-- Whether `xs` is empty or is `ys`: the shortest declaration the two boolean operators are in,
+and the one place their being looser than `==` is what keeps a comparison on either side
+unparenthesized. -/
+lgtm def emptyOrEqual as "empty-or-equal" (xs : list int) (ys : list int) : bool :=
+  length xs == 0 || xs == ys
+
+#guard emptyOrEqual.check {} []
+#guard ({ emptyOrEqual with body := [lgtm| length xs == 0 && xs == ys] } : FuncDecl).check {} []
+
+-- Both operands have to be `bool`s, and what comes out is one whatever they were about: there is no
+-- truthiness to read an `int` as, the same way a conditional's condition has none.
+#guard !({ emptyOrEqual with body := [lgtm| length xs || xs == ys] } : FuncDecl).check {} []
+#guard !({ emptyOrEqual with body := [lgtm| xs == ys && length xs] } : FuncDecl).check {} []
+#guard !({ emptyOrEqual with resultType := [lgtm_ty| int] } : FuncDecl).check {} []
 
 /-- Twice one more than `n`. -/
 lgtm def letDouble as "let-double" (n : int) : int :=
@@ -825,39 +906,79 @@ example : [lgtm| toList m == [: tuple(string, int)]]
 -- Lean identifier, which declaring it with `&` is what preserves.
 example : [lgtm| var "toList"] = Expression.varRef "toList" := rfl
 
--- A mapping is a prefix keyword with two operands, both binding as tightly as `toList`'s one, so a
--- name, a field read and a call are each read whole on either side.
-example : [lgtm| map m f] = Expression.hashmapMap (.varRef "m") (.varRef "f") := rfl
-example : [lgtm| map p.m f]
+-- A mapping is a prefix keyword with a tag and two operands, both of them binding as tightly as
+-- `toList`'s one, so a name, a field read and a call are each read whole on either side.
+example : [lgtm| map hashmap m f] = Expression.hashmapMap (.varRef "m") (.varRef "f") := rfl
+example : [lgtm| map hashmap p.m f]
     = Expression.hashmapMap (.structGet (.varRef "p") "m") (.varRef "f") := rfl
-example : [lgtm| map m g(1)]
+example : [lgtm| map hashmap m g(1)]
     = Expression.hashmapMap (.varRef "m") (.app (.varRef "g") [.intLit 1]) := rfl
-example : [lgtm| map hashmap(string, int) f]
+example : [lgtm| map hashmap hashmap(string, int) f]
     = Expression.hashmapMap (.hashmapEmpty .string .int) (.varRef "f") := rfl
 
 -- A function written out is the loosest form there is, so it takes the parentheses an operand at
 -- that level needs — and the key comes before the value, which is the order the parameters go in.
-example : [lgtm| map m (fun (k : string) (v : int) => v + 1)]
+example : [lgtm| map hashmap m (fun (k : string) (v : int) => v + 1)]
     = Expression.hashmapMap (.varRef "m")
         (.lam [("k", .string), ("v", .int)] (.plus (.varRef "v") (.intLit 1))) := rfl
-example : [lgtm| map m (fun (k : string) (v : int) => k)]
+example : [lgtm| map hashmap m (fun (k : string) (v : int) => k)]
     = Expression.hashmapMap (.varRef "m") (.lam [("k", .string), ("v", .int)] (.varRef "k")) := rfl
 
 -- What it produces is a map, so every form that reads one reads this: a lookup, an update, another
 -- mapping, and a conversion.
-example : [lgtm| (map m f)[k]]
+example : [lgtm| (map hashmap m f)[k]]
     = Expression.hashmapGet (.hashmapMap (.varRef "m") (.varRef "f")) (.varRef "k") := rfl
-example : [lgtm| { map m f with [k] = 1 }]
+example : [lgtm| { map hashmap m f with [k] = 1 }]
     = Expression.hashmapPut (.hashmapMap (.varRef "m") (.varRef "f")) (.varRef "k")
         (.intLit 1) := rfl
-example : [lgtm| map (map m f) g]
+example : [lgtm| map hashmap (map hashmap m f) g]
     = Expression.hashmapMap (.hashmapMap (.varRef "m") (.varRef "f")) (.varRef "g") := rfl
-example : [lgtm| toList (map m f)]
+example : [lgtm| toList (map hashmap m f)]
     = Expression.hashmapToList (.hashmapMap (.varRef "m") (.varRef "f")) := rfl
 
+-- The `list` tag is the same keyword over the other thing there is to map over, and it reads its two
+-- operands the same way.
+example : [lgtm| map list xs f] = Expression.listMap (.varRef "xs") (.varRef "f") := rfl
+example : [lgtm| map list p.items f]
+    = Expression.listMap (.structGet (.varRef "p") "items") (.varRef "f") := rfl
+example : [lgtm| map list g(1) f]
+    = Expression.listMap (.app (.varRef "g") [.intLit 1]) (.varRef "f") := rfl
+example : [lgtm| map list [1, 2 : int] f]
+    = Expression.listMap (.lcons (.intLit 1) (.lcons (.intLit 2) (.lnil .int))) (.varRef "f") := rfl
+example : [lgtm| map list [: int] f] = Expression.listMap (.lnil .int) (.varRef "f") := rfl
+
+-- Its function takes one parameter where a hashmap's takes two, which is what the tag is standing in
+-- for: an element is one value where a binding is a key beside its value.
+example : [lgtm| map list xs (fun (x : int) => x + 1)]
+    = Expression.listMap (.varRef "xs") (.lam [("x", .int)] (.plus (.varRef "x") (.intLit 1)))
+    := rfl
+
+-- What it produces is a list, so every form that reads one reads this: a reversal, a length, a cons,
+-- and another mapping.
+example : [lgtm| reverse (map list xs f)]
+    = Expression.listReverse (.listMap (.varRef "xs") (.varRef "f")) := rfl
+example : [lgtm| length (map list xs f)]
+    = Expression.listLength (.listMap (.varRef "xs") (.varRef "f")) := rfl
+example : [lgtm| x :: map list xs f]
+    = Expression.lcons (.varRef "x") (.listMap (.varRef "xs") (.varRef "f")) := rfl
+example : [lgtm| map list (map list xs f) g]
+    = Expression.listMap (.listMap (.varRef "xs") (.varRef "f")) (.varRef "g") := rfl
+
+-- The two tags are what tell the forms apart, and nothing else about a `map` does: the same operands
+-- under the other tag are the other expression.
+example : [lgtm| map list m f] = Expression.listMap (.varRef "m") (.varRef "f") := rfl
+example : [lgtm| map hashmap xs f] = Expression.hashmapMap (.varRef "xs") (.varRef "f") := rfl
+
+-- A conversion produces a list of tuples, which is a list like any other, so the two forms compose
+-- the way the IR's types say they do rather than the way the keyword might suggest.
+example : [lgtm| map list (toList m) f]
+    = Expression.listMap (.hashmapToList (.varRef "m")) (.varRef "f") := rfl
+
 -- `map` is a keyword, so it is no variable name inside a DSL term; outside one it is an ordinary
--- Lean identifier, which declaring it with `&` is what preserves.
+-- Lean identifier, which declaring it with `&` is what preserves.  `list` is one too, now that it
+-- tags a mapping, and takes the same escape hatch.
 example : [lgtm| var "map"] = Expression.varRef "map" := rfl
+example : [lgtm| var "list"] = Expression.varRef "list" := rfl
 
 /-- The empty map from `string` to `int`: the shortest declaration that returns one, and the one
 place the annotations are all there is to go on. -/
@@ -890,10 +1011,10 @@ lgtm def getOr as "get-or" (m : hashmap string int) (k : string) : int :=
 /-- Every value of `m` with one added to it, the keys left as they were.  The function takes the key
 as well as the value, so its parameters are the map's two types in that order. -/
 lgtm def bump (m : hashmap string int) : hashmap string int :=
-  map m (fun (k : string) (v : int) => v + 1)
+  map hashmap m (fun (k : string) (v : int) => v + 1)
 
 #guard bump.check {} []
-#guard !({ bump with body := [lgtm| map m (fun (v : int) (k : string) => v + 1)] }
+#guard !({ bump with body := [lgtm| map hashmap m (fun (v : int) (k : string) => v + 1)] }
   : FuncDecl).check {} []
 #guard !({ bump with resultType := [lgtm_ty| hashmap string string] } : FuncDecl).check {} []
 
@@ -901,7 +1022,7 @@ lgtm def bump (m : hashmap string int) : hashmap string int :=
 -- it hands back are the ones it was given: a map to `string` comes out of a map to `int` and the
 -- declaration says so.
 #guard ({ bump with
-  body := [lgtm| map m (fun (k : string) (v : int) => k)]
+  body := [lgtm| map hashmap m (fun (k : string) (v : int) => k)]
   resultType := [lgtm_ty| hashmap string string] } : FuncDecl).check {} []
 
 -- The key type has to be one a comparison can reach the bottom of, which is the one condition every

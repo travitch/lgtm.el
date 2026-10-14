@@ -117,6 +117,18 @@ public inductive Expression where
 The condition expression must be a boolean.  The two body expressions can be any type, as long
 as it is the same for both. -/
 | ite : Expression → Expression → Expression → Expression
+/-- Conjunction of two booleans, short-circuiting.
+
+> $expression1 && $expression2
+
+-/
+| boolAnd : Expression → Expression → Expression
+/-- Disjunction of two booleans, short-circuiting.
+
+> $expression1 || $expression2
+
+-/
+| boolOr : Expression → Expression → Expression
 /-- Test if two values are equal via deep structural comparison.
 
 The two operands must be of the same type.
@@ -169,6 +181,11 @@ This is a special form (instead of `indMatch`) because options get compiled away
 /-- The empty list annotated with its element type -/
 | lnil : Ty → Expression
 | lcons : Expression → Expression → Expression
+/-- Map a function over lists.
+
+For a list `l` of type `list a`, and a function `f` of type `(a) -> b`, `map l f` produces a `list b`.
+-/
+| listMap : Expression → Expression → Expression
 /-- Calculate the length of the given list. -/
 | listLength : Expression → Expression
 | listReverse : Expression → Expression

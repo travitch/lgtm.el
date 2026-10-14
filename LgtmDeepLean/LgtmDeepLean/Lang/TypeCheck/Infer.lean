@@ -209,6 +209,8 @@ public def Expression.infer (td : TypeDecls) (ctx : Context) : Expression → Op
     let t ← thn.infer td ctx
     guard (els.infer td ctx == some t)
     some t
+  | .boolAnd l r | .boolOr l r =>
+    if l.infer td ctx == some .bool && r.infer td ctx == some .bool then some .bool else none
   | .equals l r => do
     let t ← l.infer td ctx
     guard (r.infer td ctx == some t)
@@ -273,6 +275,12 @@ public def Expression.infer (td : TypeDecls) (ctx : Context) : Expression → Op
     let t ← hd.infer td ctx
     guard (tl.infer td ctx == some (.list t))
     some (.list t)
+  | .listMap l f =>
+    match l.infer td ctx, f.infer td ctx with
+    | some (.list t), some (.fn ps r) => do
+      guard (ps == [t])
+      some (.list r)
+    | _, _ => none
   | .listLength l =>
     match l.infer td ctx with
     | some (.list _) => some .int
@@ -444,6 +452,25 @@ result's: unlike `lcons`, this form introduces no new type structure. -/
   simp only [Expression.infer]
   split <;> grind
 
+/-- A `listMap` is typeable when its first operand is a list and its second is a function of one
+parameter at that list's element type, and then it is a list of whatever that function returns.
+
+The element type is the one thing *not* carried through to the result, which is the opposite of
+`hashmapMap`: a mapping over a hashmap rebinds no key, so the key type survives and the value type
+is replaced, where a list has only the one type and mapping replaces it.  The length survives
+instead — one element apiece — which is what `listReverse` preserves as well.
+
+The function takes one parameter where a hashmap's takes two, since a list element is one value
+where a binding is a key beside its value.  That is also what tells the two forms apart when both
+are written `map`: the arity of the function is the arity of what it is handed. -/
+@[simp, grind =] public theorem Expression.infer_listMap_eq_some {td : TypeDecls} {ctx : Context}
+    {l f : Expression} {t : Ty} :
+    (Expression.listMap l f).infer td ctx = some t ↔
+      ∃ t' r, l.infer td ctx = some (.list t') ∧ f.infer td ctx = some (.fn [t'] r)
+        ∧ t = .list r := by
+  simp only [Expression.infer]
+  split <;> simp_all [Option.bind_eq_some_iff, guard] <;> grind
+
 /-- An `optionSome` is typeable exactly when the expression it holds is, and then it is an option of
 that expression's type.  No annotation is needed, unlike `optionNone`: the value is what the element
 type is read off, the way `lcons` reads a list's element type off its head. -/
@@ -500,6 +527,30 @@ and then that is its type. -/
     (Expression.ite c thn els).infer td ctx = some t ↔
       c.infer td ctx = some .bool ∧ thn.infer td ctx = some t ∧ els.infer td ctx = some t := by
   simp [Expression.infer, Option.bind_eq_some_iff, guard]
+
+/-- A `boolAnd` is typeable exactly when both operands are `bool`s, and then it is a `bool`.
+
+The shape `plus` and `minus` have, over `bool` rather than `int`: one type on both sides and the
+same type out.  Unlike `ite`, which also asks for a `bool`, nothing here is polymorphic — the
+operands are what a conditional's *condition* is, not what its branches are — and unlike `equals`
+there is no comparability to ask after, since the one type this accepts is a leaf. -/
+@[simp, grind =] public theorem Expression.infer_boolAnd_eq_some {td : TypeDecls} {ctx : Context}
+    {l r : Expression} {t : Ty} :
+    (Expression.boolAnd l r).infer td ctx = some t ↔
+      l.infer td ctx = some .bool ∧ r.infer td ctx = some .bool ∧ t = .bool := by
+  simp [Expression.infer]
+  grind
+
+/-- A `boolOr` is typeable exactly when both operands are `bool`s, and then it is a `bool`.
+
+The same rule as `boolAnd`'s: the two differ in which operand's value settles the result without the
+other, which is a fact about evaluating one and not about typing it. -/
+@[simp, grind =] public theorem Expression.infer_boolOr_eq_some {td : TypeDecls} {ctx : Context}
+    {l r : Expression} {t : Ty} :
+    (Expression.boolOr l r).infer td ctx = some t ↔
+      l.infer td ctx = some .bool ∧ r.infer td ctx = some .bool ∧ t = .bool := by
+  simp [Expression.infer]
+  grind
 
 /-- An `equals` is typeable when its two operands are the same type and that type is one a
 comparison can reach the bottom of (see `Ty.comparable`).  The `equals` itself is of type `bool`. -/

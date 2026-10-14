@@ -145,6 +145,65 @@ private def ctx : Context :=
 #guard (Expression.listLength (.listReverse (.varRef "xs"))).infer types ctx == some .int
 #guard (Expression.listLength (.listLength (.varRef "xs"))).infer types ctx == none
 
+-- A mapping takes its element type from what the function returns, which is the one list form whose
+-- result is a list of something other than its operand's elements: `reverse` passes the type
+-- through and `length` discards it, where this one replaces it.
+#guard (Expression.listMap (.varRef "xs") (.lam [("x", .int)] (.varRef "x"))).infer types ctx
+  == some (.list .int)
+#guard (Expression.listMap (.varRef "xs")
+  (.lam [("x", .int)] (.plus (.varRef "x") (.intLit 1)))).infer types ctx == some (.list .int)
+#guard (Expression.listMap (.varRef "xs") (.lam [("x", .int)] (.stringLit "a"))).infer types ctx
+  == some (.list .string)
+#guard (Expression.listMap (.varRef "xs")
+  (.lam [("x", .int)] (.optionSome (.varRef "x")))).infer types ctx
+  == some (.list (.option .int))
+#guard (Expression.listMap (.lnil (.struct "Point"))
+  (.lam [("p", .struct "Point")] (.structGet (.varRef "p") "x"))).infer types ctx
+  == some (.list .int)
+
+-- The function takes one parameter, at the list's element type: one of the wrong arity or at the
+-- wrong type is turned down by the same comparison `app` makes of an argument list, and a hashmap's
+-- two-parameter function is exactly what that turns down here.
+#guard (Expression.listMap (.varRef "xs") (.lam [("x", .string)] (.varRef "x"))).infer types ctx
+  == none
+#guard (Expression.listMap (.varRef "xs") (.lam [] (.intLit 1))).infer types ctx == none
+#guard (Expression.listMap (.varRef "xs")
+  (.lam [("x", .int), ("y", .int)] (.varRef "x"))).infer types ctx == none
+#guard (Expression.listMap (.varRef "xs") (.varRef "f")).infer types ctx == none
+
+-- Either operand being the wrong kind of thing is enough: the first has to be a list and the second
+-- a function.  A hashmap under a list's mapping is turned down here rather than by the tag the
+-- surface syntax writes.
+#guard (Expression.listMap (.varRef "m") (.lam [("x", .int)] (.varRef "x"))).infer types ctx == none
+#guard (Expression.listMap (.varRef "n") (.lam [("x", .int)] (.varRef "x"))).infer types ctx == none
+#guard (Expression.listMap (.varRef "nope")
+  (.lam [("x", .int)] (.varRef "x"))).infer types ctx == none
+#guard (Expression.listMap (.varRef "xs") (.varRef "n")).infer types ctx == none
+
+-- An element type nothing can be compared at is no obstacle, unlike under the hashmap forms: a list
+-- compares nothing, so a function type on either side of a mapping is as mappable as any other.
+#guard (Expression.listMap (.lnil (.fn [.int] .int))
+  (.lam [("g", .fn [.int] .int)] (.intLit 1))).infer types ctx == some (.list .int)
+#guard (Expression.listMap (.varRef "xs")
+  (.lam [("x", .int)] (.lam [("y", .int)] (.varRef "x")))).infer types ctx
+  == some (.list (.fn [.int] .int))
+
+-- What it produces is a list like any other, so the list forms nest into each other — and a
+-- conversion's list of tuples is one it reads as well.
+#guard (Expression.listMap (.listMap (.varRef "xs") (.lam [("x", .int)] (.stringLit "a")))
+  (.lam [("s", .string)] (.intLit 0))).infer types ctx == some (.list .int)
+#guard (Expression.listLength (.listMap (.varRef "xs")
+  (.lam [("x", .int)] (.stringLit "a")))).infer types ctx == some .int
+#guard (Expression.listReverse (.listMap (.varRef "xs")
+  (.lam [("x", .int)] (.stringLit "a")))).infer types ctx == some (.list .string)
+#guard (Expression.listMap (.hashmapToList (.varRef "m"))
+  (.lam [("p", .tuple [.string, .int])] (.tupleGet (.varRef "p") 1))).infer types ctx
+  == some (.list .int)
+#guard (Expression.listMap (.varRef "xs")
+  (.lam [("x", .int)] (.varRef "x"))).check types ctx (.list .int)
+#guard !(Expression.listMap (.varRef "xs")
+  (.lam [("x", .int)] (.varRef "x"))).check types ctx (.list .string)
+
 -- A `lam` takes its parameter types from its annotation and its result type from its body.
 #guard (Expression.lam [("x", .int)] (.varRef "x")).infer types ctx == some (.fn [.int] .int)
 #guard (Expression.lam [("x", .int), ("y", .string)] (.varRef "y")).infer types ctx
@@ -322,6 +381,52 @@ which is what one is for. -/
 #guard (Expression.indMatch (.varRef "c")
   [("Red", [], .ite (.varRef "flag") (.intLit 0) (.intLit 1)), ("Green", [], .intLit 1),
     ("Blue", [], .intLit 2)]).infer types ctx == some .int
+
+-- The two boolean operators are `plus` and `minus` over `bool`: one type on both sides and the same
+-- type out.  Which of the two it is makes no difference to typing — that is a question about
+-- evaluating them — so every case below holds of both.
+#guard (Expression.boolAnd (.varRef "flag") (.varRef "flag")).infer types ctx == some .bool
+#guard (Expression.boolOr (.varRef "flag") (.varRef "flag")).infer types ctx == some .bool
+#guard (Expression.boolAnd (.boolLit true) (.boolLit false)).infer types ctx == some .bool
+#guard (Expression.boolOr (.boolLit true) (.boolLit false)).infer types ctx == some .bool
+#guard (Expression.boolAnd (.boolLit true) (.boolLit false)).infer {} [] == some .bool
+#guard (Expression.boolAnd (.varRef "flag") (.boolLit true)).check types ctx .bool
+#guard !(Expression.boolAnd (.varRef "flag") (.boolLit true)).check types ctx .int
+
+-- Both operands have to be `bool`s, on either side and whatever else they are: there is no
+-- truthiness, so nothing else will do, exactly as for a conditional's condition.
+#guard (Expression.boolAnd (.intLit 1) (.boolLit true)).infer types ctx == none
+#guard (Expression.boolAnd (.boolLit true) (.intLit 1)).infer types ctx == none
+#guard (Expression.boolOr (.varRef "n") (.varRef "flag")).infer types ctx == none
+#guard (Expression.boolOr (.varRef "flag") (.varRef "s")).infer types ctx == none
+#guard (Expression.boolAnd (.varRef "xs") (.varRef "flag")).infer types ctx == none
+#guard (Expression.boolAnd (.varRef "flag") (.varRef "c")).infer types ctx == none
+#guard (Expression.boolOr (.varRef "flag") (.lnil .bool)).infer types ctx == none
+
+-- An ill-typed operand makes the whole thing ill typed, the operand that would not have been
+-- evaluated included: typing says nothing about which of them settles the answer.
+#guard (Expression.boolAnd (.varRef "nope") (.varRef "flag")).infer types ctx == none
+#guard (Expression.boolAnd (.boolLit false) (.varRef "nope")).infer types ctx == none
+#guard (Expression.boolOr (.boolLit true) (.varRef "nope")).infer types ctx == none
+
+-- What they produce is a `bool`, so they nest in each other and in every other form that takes one
+-- — and a comparison is what most of their operands are, since that is where a `bool` comes from.
+#guard (Expression.boolAnd (.boolAnd (.varRef "flag") (.varRef "flag"))
+  (.boolOr (.varRef "flag") (.boolLit true))).infer types ctx == some .bool
+#guard (Expression.boolAnd (.equals (.varRef "n") (.intLit 1))
+  (.equals (.varRef "s") (.stringLit "a"))).infer types ctx == some .bool
+#guard (Expression.boolOr (.equals (.varRef "xs") (.lnil .int))
+  (.equals (.varRef "p") (.varRef "p"))).infer types ctx == some .bool
+#guard (Expression.ite (.boolOr (.varRef "flag") (.boolLit false))
+  (.intLit 1) (.intLit 2)).infer types ctx == some .int
+#guard (Expression.lam [("q", .bool)] (.boolAnd (.varRef "q") (.varRef "flag"))).infer types ctx
+  == some (.fn [.bool] .bool)
+#guard (Expression.lcons (.boolAnd (.varRef "flag") (.boolLit true)) (.lnil .bool)).infer types ctx
+  == some (.list .bool)
+#guard (Expression.equals (.boolAnd (.varRef "flag") (.boolLit true))
+  (.boolLit false)).infer types ctx == some .bool
+#guard (Expression.plus (.boolAnd (.varRef "flag") (.boolLit true)) (.intLit 1)).infer types ctx
+  == none
 
 /-! ### Equality
 

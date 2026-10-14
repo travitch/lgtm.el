@@ -175,6 +175,132 @@ private theorem lengthOfReverse.eq_length {vs : List Value} {res : Value}
         simp [lengthOfReverse, FuncDecl.callEnv, Env.extend, Globals.env, Env.lookup] at hlx
         grind
 
+/-! A mapping over a list is a call per element: the element is the one argument, `ArgsHaveType` is
+what holds it to the closure's parameter, and the body is evaluated in the environment the closure
+captured rather than in the one the mapping was written in.
+
+`EHashmapMap` with the key taken away — one argument where that has two, and the lengths agreeing
+where that has the keys agreeing.  What can go wrong is what a call can: a second operand that is not
+a function at all, and a function the element does not fit. -/
+
+-- An empty list maps to an empty list: there is no element for the function to be applied to, so
+-- both premises over the elements are vacuous and the function is never entered.
+example : Eval {} ∅ [lgtm| map list [: int] (fun (x : int) => x + 1)] (.list []) :=
+  .EListMap (vs' := []) _ _ (.ENil _) (.ELam _ _) rfl (by simp) (by simp)
+
+-- One element is one call, and what it produced takes that element's place: the result is as long as
+-- the list it came from, which is the whole of what a mapping says about the shape of either.
+example : Eval {} ∅ [lgtm| map list [1 : int] (fun (x : int) => x + 1)] (.list [.int 2]) :=
+  .EListMap (vs' := [.int 2]) _ _ (.ECons _ _ (.EIntLit 1) (.ENil _)) (.ELam _ _) rfl
+    (by rintro p hp
+        simp at hp
+        obtain ⟨rfl, rfl⟩ := hp
+        exact .cons "x" (.int 1) .nil)
+    (by rintro p hp
+        simp at hp
+        obtain ⟨rfl, rfl⟩ := hp
+        exact .EPlus (n₁ := 1) (n₂ := 1) _ _ (.EVarRef "x" rfl) (.EIntLit 1))
+
+-- The function's result is what the elements become, so a mapping can produce a list of a type
+-- nothing in the list it was given had — which is the one thing a list's mapping does that a
+-- hashmap's cannot do to its keys.
+example : Eval {} ∅ [lgtm| map list [1 : int] (fun (x : int) => "a")] (.list [.string "a"]) :=
+  .EListMap (vs' := [.string "a"]) _ _ (.ECons _ _ (.EIntLit 1) (.ENil _)) (.ELam _ _) rfl
+    (by rintro p hp
+        simp at hp
+        obtain ⟨rfl, rfl⟩ := hp
+        exact .cons "x" (.int 1) .nil)
+    (by rintro p hp
+        simp at hp
+        obtain ⟨rfl, rfl⟩ := hp
+        exact .EStringLit "a")
+
+-- A second operand that is not a function leaves this stuck, which is one of the two things that
+-- can go wrong here and is exactly what typing rules out.
+example (v : Value) : ¬ Eval {} ∅ [lgtm| map list [: int] 1] v := by
+  intro h
+  cases h with
+  | EListMap _ _ _ hf _ _ _ => cases hf
+
+/-- Every element of `xs` with one added to it: the shortest declaration the form is in, and the one
+place a list is read element by element rather than whole. -/
+lgtm private def bumpAll as "bump-all" (xs : list int) : list int :=
+  map list xs (fun (x : int) => x + 1)
+
+#guard bumpAll.check {} []
+
+-- The closure the function evaluates to captures the call's environment, so the body runs over the
+-- parameter of the `fun` in front of `xs` — the same way a call into a closure runs it.
+example : FuncDecl.Apply bumpAll {} [] [.list [.int 1, .int 2]] (.list [.int 2, .int 3]) :=
+  .EApply _ (.cons "xs" (hasType_intList (is := [1, 2])) .nil)
+    (.EListMap (vs' := [.int 2, .int 3]) _ _ (.EVarRef "xs" rfl) (.ELam _ _) rfl
+      (by rintro p hp
+          simp at hp
+          rcases hp with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ <;>
+            exact .cons "x" (by constructor) .nil)
+      (by rintro p hp
+          simp at hp
+          rcases hp with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩
+          · exact .EPlus (n₁ := 1) (n₂ := 1) _ _ (.EVarRef "x" rfl) (.EIntLit 1)
+          · exact .EPlus (n₁ := 2) (n₂ := 1) _ _ (.EVarRef "x" rfl) (.EIntLit 1)))
+
+-- An empty list is the one argument that needs neither premise, since there is no element to apply
+-- the function to.
+example : FuncDecl.Apply bumpAll {} [] [.list []] (.list []) :=
+  .EApply _ (.cons "xs" (hasType_intList (is := [])) .nil)
+    (.EListMap (vs' := []) _ _ (.EVarRef "xs" rfl) (.ELam _ _) rfl (by simp) (by simp))
+
+-- Soundness covers the form: the declared list type comes back whatever the list held, with the
+-- element type read off the function's body rather than carried through from the argument.
+example (vs : List Value) (v : Value) (h : FuncDecl.Apply bumpAll {} [] [.list vs] v) :
+    v.HasType {} (.list .int) :=
+  h.hasType Globals.wellTyped_nil (by simp [bumpAll])
+
+-- A function the element does not fit is the other thing that can go wrong: the element is the one
+-- argument, so `ArgsHaveType` turns down a function expecting a `string` exactly as a call with the
+-- wrong argument type is turned down.
+example (v : Value) :
+    ¬ Eval {} ⟨[("xs", .list [.int 1])], []⟩ [lgtm| map list xs (fun (x : string) => x)] v := by
+  intro h
+  cases h with
+  | @EListMap _ _ _ _ _ _ vs' _ _ hl hf hlen hat _ =>
+      cases hl with
+      | EVarRef _ hlx =>
+          cases hf with
+          | ELam _ _ =>
+              simp [Env.lookup, List.lookup] at hlx
+              subst hlx
+              -- The result is as long as the list it was given, so it has one element, and the
+              -- argument that element is passed as is an `int` the function has no parameter for.
+              obtain ⟨w, rfl⟩ : ∃ w, vs' = [w] := by
+                cases vs' with
+                | nil => simp at hlen
+                | cons w rest =>
+                    cases rest with
+                    | nil => exact ⟨w, rfl⟩
+                    | cons _ _ => simp at hlen
+              cases hat (.int 1, w) (by simp) with
+              | cons _ hv _ => cases hv
+
+/-- What a mapping over a list means, for every list rather than for one: the list it produces is as
+long as the list it was given.
+
+This is the fact a proof about a mapped list carries on with, the way `bump.keys_of_eval` is for a
+mapped map — and it is the counterpart of that one, since a length is what a list has in place of a
+set of keys.  Inverting the rule leaves exactly that equality: the elements are what the calls
+produced, and the length is what no call was made about. -/
+private theorem bumpAll.length_of_eval {vs vs' : List Value}
+    (h : Eval {} ⟨[("xs", .list vs)], []⟩
+      [lgtm| map list xs (fun (x : int) => x + 1)] (.list vs')) :
+    vs.length = vs'.length := by
+  cases h with
+  | EListMap _ _ hl _ hlen _ _ =>
+      cases hl with
+      | EVarRef _ hlx =>
+          simp [Env.lookup, List.lookup] at hlx
+          subst hlx
+          exact hlen
+
 /-- The body of the inner lambda of `adderExpr`, `x + n`, which needs an `n` from outside itself. -/
 private def adderInner : Expression := [lgtm| x + n]
 
@@ -475,6 +601,167 @@ example : FuncDecl.Apply yes {} [] [] (.bool true) := .EApply _ .nil (.EBoolLit 
 -- `Value.HasType.bool` reached through the catch-all case of `Eval.hasType` the other literals use.
 example (v : Value) (h : FuncDecl.Apply yes {} [] [] v) : v.HasType {} .bool :=
   h.hasType Globals.wellTyped_nil (by simp [yes])
+
+/-! The two boolean operators are the conditional again, with the operand that did not settle the
+answer in the place of the branch that did not run: `EBoolAndFalse` and `EBoolOrTrue` mention their
+second operand not at all, and the other two are the case where it is what the result came from.
+
+What can go wrong is what a condition can: an operand that comes out something other than a `bool`
+leaves this stuck, and that is exactly what typing rules out. -/
+
+-- Which rule applies is decided by the first operand, and where that settles the answer the second
+-- is never mentioned.
+example : Eval {} ∅ [lgtm| false && true] (.bool false) := .EBoolAndFalse _ _ (.EBoolLit false)
+example : Eval {} ∅ [lgtm| true && false] (.bool false) :=
+  .EBoolAndTrue _ _ (.EBoolLit true) (.EBoolLit false)
+example : Eval {} ∅ [lgtm| true && true] (.bool true) :=
+  .EBoolAndTrue _ _ (.EBoolLit true) (.EBoolLit true)
+example : Eval {} ∅ [lgtm| true || false] (.bool true) := .EBoolOrTrue _ _ (.EBoolLit true)
+example : Eval {} ∅ [lgtm| false || true] (.bool true) :=
+  .EBoolOrFalse _ _ (.EBoolLit false) (.EBoolLit true)
+example : Eval {} ∅ [lgtm| false || false] (.bool false) :=
+  .EBoolOrFalse _ _ (.EBoolLit false) (.EBoolLit false)
+
+-- And to nothing else: a literal operand decides the rule outright, so the other value is one no
+-- rule produces.
+example : ¬ Eval {} ∅ [lgtm| false && true] (.bool true) := by
+  intro h
+  cases h with
+  | EBoolAndTrue _ _ hl _ => cases hl
+
+example : ¬ Eval {} ∅ [lgtm| true || false] (.bool false) := by
+  intro h
+  cases h with
+  | EBoolOrFalse _ _ hl _ => cases hl
+
+-- An operand that is not a `bool` leaves this stuck, which is the only thing that can go wrong
+-- here: there is no truthiness, the way a conditional's condition has none.
+example (v : Value) : ¬ Eval {} ∅ [lgtm| 1 && true] v := by
+  intro h
+  cases h with
+  | EBoolAndFalse _ _ hl => cases hl
+  | EBoolAndTrue _ _ hl _ => cases hl
+
+example (v : Value) : ¬ Eval {} ∅ [lgtm| true && 1] v := by
+  intro h
+  cases h with
+  | EBoolAndFalse _ _ hl => cases hl
+  | EBoolAndTrue _ _ _ hr => cases hr
+
+/-- Whether `b` and `c` both hold: the shortest declaration a conjunction is in. -/
+lgtm private def both (b : bool) (c : bool) : bool :=
+  b && c
+
+#guard both.check {} []
+
+example : FuncDecl.Apply both {} [] [.bool false, .bool true] (.bool false) :=
+  .EApply _ (.cons "b" (.bool false) (.cons "c" (.bool true) .nil))
+    (.EBoolAndFalse _ _ (.EVarRef "b" rfl))
+
+example : FuncDecl.Apply both {} [] [.bool true, .bool false] (.bool false) :=
+  .EApply _ (.cons "b" (.bool true) (.cons "c" (.bool false) .nil))
+    (.EBoolAndTrue _ _ (.EVarRef "b" rfl) (.EVarRef "c" rfl))
+
+example : FuncDecl.Apply both {} [] [.bool true, .bool true] (.bool true) :=
+  .EApply _ (.cons "b" (.bool true) (.cons "c" (.bool true) .nil))
+    (.EBoolAndTrue _ _ (.EVarRef "b" rfl) (.EVarRef "c" rfl))
+
+-- Soundness covers the form: a `bool` comes back whatever the operands came out, through the
+-- catch-all case of `Eval.hasType` that `EEquals` and the literals go through.
+example (v : Value) (b c : Bool) (h : FuncDecl.Apply both {} [] [.bool b, .bool c] v) :
+    v.HasType {} .bool :=
+  h.hasType Globals.wellTyped_nil (by simp [both, List.lookup])
+
+-- An operand of any other type is stuck at the call, the way a conditional's condition is.
+example (v : Value) : ¬ FuncDecl.Apply both {} [] [.int 0, .bool true] v := by
+  rintro ⟨-, hargs, -⟩
+  cases hargs with
+  | cons _ hv _ => cases hv
+
+/-- What a conjunction means, for every pair of operands rather than for one: Lean's own `&&` of the
+two values.
+
+Inverting it is two cases rather than one because there are two rules, and the first of them never
+heard of `c` — which is what makes this the fact short-circuiting has to be proved compatible with:
+`false && c` is `false` in Lean whatever `c` is, and it is `false` here without `c` having a value
+at all. -/
+private theorem both.eq_and {b c : Bool} {res : Value}
+    (h : FuncDecl.Apply both {} [] [.bool b, .bool c] res) : res = .bool (b && c) := by
+  obtain ⟨-, -, hbody⟩ := h
+  cases hbody with
+  | EBoolAndFalse _ _ hl =>
+    cases hl with
+    | EVarRef _ hlb =>
+      simp [both, FuncDecl.callEnv, Env.extend, Globals.env, Env.lookup] at hlb
+      grind
+  | EBoolAndTrue _ _ hl hr =>
+    cases hl with
+    | EVarRef _ hlb =>
+      cases hr with
+      | EVarRef _ hlc =>
+        simp [both, FuncDecl.callEnv, Env.extend, Globals.env, Env.lookup, List.lookup] at hlb hlc
+        grind
+
+/-- Whether either of `b` and `c` holds, which is `both` with the values the two rules turn on
+exchanged. -/
+lgtm private def either (b : bool) (c : bool) : bool :=
+  b || c
+
+#guard either.check {} []
+
+example : FuncDecl.Apply either {} [] [.bool true, .bool false] (.bool true) :=
+  .EApply _ (.cons "b" (.bool true) (.cons "c" (.bool false) .nil))
+    (.EBoolOrTrue _ _ (.EVarRef "b" rfl))
+
+example : FuncDecl.Apply either {} [] [.bool false, .bool true] (.bool true) :=
+  .EApply _ (.cons "b" (.bool false) (.cons "c" (.bool true) .nil))
+    (.EBoolOrFalse _ _ (.EVarRef "b" rfl) (.EVarRef "c" rfl))
+
+example : FuncDecl.Apply either {} [] [.bool false, .bool false] (.bool false) :=
+  .EApply _ (.cons "b" (.bool false) (.cons "c" (.bool false) .nil))
+    (.EBoolOrFalse _ _ (.EVarRef "b" rfl) (.EVarRef "c" rfl))
+
+private theorem either.eq_or {b c : Bool} {res : Value}
+    (h : FuncDecl.Apply either {} [] [.bool b, .bool c] res) : res = .bool (b || c) := by
+  obtain ⟨-, -, hbody⟩ := h
+  cases hbody with
+  | EBoolOrTrue _ _ hl =>
+    cases hl with
+    | EVarRef _ hlb =>
+      simp [either, FuncDecl.callEnv, Env.extend, Globals.env, Env.lookup] at hlb
+      grind
+  | EBoolOrFalse _ _ hl hr =>
+    cases hl with
+    | EVarRef _ hlb =>
+      cases hr with
+      | EVarRef _ hlc =>
+        simp [either, FuncDecl.callEnv, Env.extend, Globals.env, Env.lookup, List.lookup] at hlb hlc
+        grind
+
+-- The operand that did not settle the answer is never evaluated, which is what these forms do that
+-- a two-argument function could not: the `missing()` below has no value at all, and the call still
+-- has one — the same thing the branch of an `ite` that did not run demonstrates.
+#guard !({ both with body := [lgtm| b && missing()] } : FuncDecl).check {} []
+
+example : FuncDecl.Apply { both with body := [lgtm| b && missing()] } {} []
+    [.bool false, .bool true] (.bool false) :=
+  .EApply _ (.cons "b" (.bool false) (.cons "c" (.bool true) .nil))
+    (.EBoolAndFalse _ _ (.EVarRef "b" rfl))
+
+example : FuncDecl.Apply { either with body := [lgtm| b || missing()] } {} []
+    [.bool true, .bool false] (.bool true) :=
+  .EApply _ (.cons "b" (.bool true) (.cons "c" (.bool false) .nil))
+    (.EBoolOrTrue _ _ (.EVarRef "b" rfl))
+
+-- And the operand that did settle it is evaluated, so a first operand with no value leaves the
+-- whole of either form with none: `missing()` on the left is stuck under both rules.
+example (v : Value) : ¬ Eval {} ∅ [lgtm| missing() && true] v := by
+  intro h
+  cases h with
+  | EBoolAndFalse _ _ hl => cases hl with | EApp _ _ hf _ _ _ _ => cases hf with
+    | EVarRef _ hlf => simp [Env.lookup] at hlf
+  | EBoolAndTrue _ _ hl _ => cases hl with | EApp _ _ hf _ _ _ _ => cases hf with
+    | EVarRef _ hlf => simp [Env.lookup] at hlf
 
 /-! ## Globals
 
@@ -1863,13 +2150,14 @@ function at all, and a function the key and the value do not fit. -/
 -- An empty map maps to an empty map: there is no binding for the function to be applied to, so both
 -- premises over the bindings are vacuous and the function is never entered.
 example : Eval {} ∅
-    [lgtm| map hashmap(string, int) (fun (k : string) (v : int) => v + 1)] (.hashmap []) :=
+    [lgtm| map hashmap hashmap(string, int) (fun (k : string) (v : int) => v + 1)] (.hashmap []) :=
   .EHashmapMap (kvs' := []) _ _ (.EHashmapEmpty _ _) (.ELam _ _) rfl (by simp) (by simp)
 
 -- One binding is one call, and the key it was bound under is the key it comes back under: the
 -- function is handed both halves of the binding and only the value half is replaced.
 example : Eval {} ∅
-    [lgtm| map ({ hashmap(string, int) with ["a"] = 1 }) (fun (k : string) (v : int) => v + 1)]
+    [lgtm| map hashmap ({ hashmap(string, int) with ["a"] = 1 })
+      (fun (k : string) (v : int) => v + 1)]
     (.hashmap [(.string "a", .int 2)]) :=
   .EHashmapMap (kvs' := [(.string "a", .int 2)]) _ _
     (.EHashmapPut _ _ _ (.EHashmapEmpty _ _) (.EStringLit "a") (.EIntLit 1) rfl)
@@ -1886,7 +2174,8 @@ example : Eval {} ∅
 -- The function sees the key as well, so a mapping can produce a map whose values are its keys —
 -- which is the one way a map's value type changes while its keys stay what they were.
 example : Eval {} ∅
-    [lgtm| map ({ hashmap(string, int) with ["a"] = 1 }) (fun (k : string) (v : int) => k)]
+    [lgtm| map hashmap ({ hashmap(string, int) with ["a"] = 1 })
+      (fun (k : string) (v : int) => k)]
     (.hashmap [(.string "a", .string "a")]) :=
   .EHashmapMap (kvs' := [(.string "a", .string "a")]) _ _
     (.EHashmapPut _ _ _ (.EHashmapEmpty _ _) (.EStringLit "a") (.EIntLit 1) rfl)
@@ -1902,7 +2191,7 @@ example : Eval {} ∅
 
 -- A second operand that is not a function leaves this stuck, which is one of the two things that
 -- can go wrong here and is exactly what typing rules out.
-example (v : Value) : ¬ Eval {} ∅ [lgtm| map hashmap(string, int) 1] v := by
+example (v : Value) : ¬ Eval {} ∅ [lgtm| map hashmap hashmap(string, int) 1] v := by
   intro h
   cases h with
   | EHashmapMap _ _ _ hf _ _ _ => cases hf
@@ -1910,7 +2199,7 @@ example (v : Value) : ¬ Eval {} ∅ [lgtm| map hashmap(string, int) 1] v := by
 /-- Every value of `m` with one added to it, the keys left as they were: the shortest declaration
 the form is in, and the one place a map is read by something other than a key. -/
 lgtm private def bump (m : hashmap string int) : hashmap string int :=
-  map m (fun (k : string) (v : int) => v + 1)
+  map hashmap m (fun (k : string) (v : int) => v + 1)
 
 #guard bump.check {} []
 
@@ -1950,7 +2239,7 @@ example (kvs : KeyValues) (v : Value) (h : FuncDecl.Apply bump {} [] [.hashmap k
 -- with the wrong argument types is turned down.
 example (v : Value) :
     ¬ Eval {} ⟨[("m", .hashmap [(.string "a", .int 1)])], []⟩
-      [lgtm| map m (fun (k : int) (v : int) => v)] v := by
+      [lgtm| map hashmap m (fun (k : int) (v : int) => v)] v := by
   intro h
   cases h with
   | @EHashmapMap _ _ _ _ _ _ kvs' _ _ hm hf hkeys hat _ =>
@@ -1980,7 +2269,7 @@ converted one.  Inverting the rule leaves exactly that equality — the values a
 produced, and the keys are what no call was made about. -/
 private theorem bump.keys_of_eval {kvs kvs' : KeyValues}
     (h : Eval {} ⟨[("m", .hashmap kvs)], []⟩
-      [lgtm| map m (fun (k : string) (v : int) => v + 1)] (.hashmap kvs')) :
+      [lgtm| map hashmap m (fun (k : string) (v : int) => v + 1)] (.hashmap kvs')) :
     kvs.map Prod.fst = kvs'.map Prod.fst := by
   cases h with
   | EHashmapMap _ _ hm _ hkeys _ _ =>
