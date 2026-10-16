@@ -653,8 +653,7 @@ private def pair : StructDecl where
   == some (.list (.struct "Point"))
 #guard (Expression.lcons (.varRef "p") (.lnil (.struct "Pair"))).infer types ctx == none
 
--- A `structNew` initializing every declared field, in the declared order and at the declared types,
--- has the struct's type.
+-- A `structNew` initializing every declared field at the declared type has the struct's type.
 #guard (Expression.structNew "Point" [("x", .intLit 1), ("y", .intLit 2)]).infer types ctx
   == some (.struct "Point")
 #guard (Expression.structNew "Point"
@@ -664,14 +663,30 @@ private def pair : StructDecl where
   [("label", .stringLit "b"), ("items", .varRef "xs"), ("origin", .varRef "p")]).infer types ctx
   == some (.struct "Box")
 
--- Every field has to be there, once, at the right type, and in the order the declaration wrote them.
+-- In any order: the fields are matched up by name, so where they are written is not part of it.
+#guard (Expression.structNew "Point" [("y", .intLit 2), ("x", .intLit 1)]).infer types ctx
+  == some (.struct "Point")
+#guard (Expression.structNew "Box"
+  [("origin", .varRef "p"), ("label", .stringLit "b"), ("items", .varRef "xs")]).infer types ctx
+  == some (.struct "Box")
+
+-- The type each field is held to is the one declared under its own name rather than the one at its
+-- position, which is what a reordering has to keep right to be accepted at all.
+#guard (Expression.structNew "Box"
+  [("items", .stringLit "b"), ("label", .varRef "xs"), ("origin", .varRef "p")]).infer types ctx
+  == none
+
+-- Every field still has to be there, once, and at the right type.
 #guard (Expression.structNew "Point" [("x", .intLit 1)]).infer types ctx == none
 #guard (Expression.structNew "Point" []).infer types ctx == none
-#guard (Expression.structNew "Point" [("y", .intLit 2), ("x", .intLit 1)]).infer types ctx == none
 #guard (Expression.structNew "Point" [("x", .intLit 1), ("y", .intLit 2), ("z", .intLit 3)]).infer
+  types ctx == none
+#guard (Expression.structNew "Point" [("z", .intLit 3), ("x", .intLit 1), ("y", .intLit 2)]).infer
   types ctx == none
 #guard (Expression.structNew "Point" [("x", .intLit 1), ("x", .intLit 2)]).infer types ctx == none
 #guard (Expression.structNew "Point" [("x", .intLit 1), ("y", .stringLit "a")]).infer types ctx
+  == none
+#guard (Expression.structNew "Point" [("y", .stringLit "a"), ("x", .intLit 1)]).infer types ctx
   == none
 #guard (Expression.structNew "Point" [("x", .intLit 1), ("y", .varRef "nope")]).infer types ctx
   == none
@@ -776,17 +791,18 @@ example : ¬ twoXs.FieldNamesUnique := by decide
 
 private def twoXTypes : TypeDecls := { ss := Structs.ofDecls [twoXs] }
 
--- `structNew` compares its own keys against the declaration's positionally, so a value of `TwoXs`
--- can be built, and it has to initialize the name twice, at both declared types in order.
+-- `structNew` asks for one field per field the declaration lists, so a value of `TwoXs` can be
+-- built, and it has to initialize the name twice.  Both at `int`: a field's type is the one its own
+-- name resolves to, and the name resolves to the first.
 #guard (Expression.structNew "TwoXs" [("x", .intLit 1)]).infer twoXTypes [] == none
-#guard (Expression.structNew "TwoXs" [("x", .intLit 1), ("x", .stringLit "a")]).infer twoXTypes []
-  == some (.struct "TwoXs")
 #guard (Expression.structNew "TwoXs" [("x", .intLit 1), ("x", .intLit 2)]).infer twoXTypes []
+  == some (.struct "TwoXs")
+#guard (Expression.structNew "TwoXs" [("x", .intLit 1), ("x", .stringLit "a")]).infer twoXTypes []
   == none
 
--- What is dead is the second field itself: `structGet` and `structUpdate` resolve the name with
--- `List.lookup`, which stops at the first, so the `string` half of every `TwoXs` is written when
--- one is built and can never be read back or rebound.
+-- What is dead is the second field itself, and its declared type with it: every form resolves the
+-- name with `List.lookup`, which stops at the first, so the `string` half of `twoXs` is a type
+-- nothing is ever held to and the value written for it can never be read back or rebound.
 #guard (Expression.structGet (.varRef "t") "x").infer twoXTypes [("t", .struct "TwoXs")]
   == some .int
 #guard (Expression.structUpdate (.varRef "t") [("x", .stringLit "a")]).infer twoXTypes

@@ -100,7 +100,11 @@ It cannot be used in `Value.closure`, which is where the first such list appears
 mentioning `Value` has to come after it to avoid a `mutual` group that makes proofs more difficult. -/
 public abbrev Bindings := List (String × Value)
 
-/-- What a struct's fields are bound to, in the order its declaration lists them.
+/-- What a struct's fields are bound to, in the order the expression that built it wrote them.
+
+Which is not necessarily its declaration's order: a `structNew` may name the declaration's fields in
+any order, and the value keeps the order it was written in.  Every rule that relates a struct value
+to its declaration therefore goes by name — see `Value.HasType`'s struct case.
 
 The `Value`-level counterpart of a `StructDecl`'s `fields`, and, like `Bindings`, an abbreviation
 that cannot be used in the constructor it describes: it mentions `Value`, so it has to come after
@@ -122,10 +126,10 @@ public abbrev KeyValues := List (Value × Value)
 produces.
 
 Rebinding in place rather than pushing the new values in front is what keeps a struct value's fields
-exactly its declaration's, in its declaration's order, however many times it is updated — so an
-update changes what a field is bound to and nothing else.  That is also what makes it obviously
-type-preserving: the two halves of `Value.HasType`'s struct case that talk about *which* fields there
-are survive it untouched.
+exactly the ones it was built with, in the order it was built with, however many times it is updated
+— so an update changes what a field is bound to and nothing else.  That is also what makes it
+obviously type-preserving: the two halves of `Value.HasType`'s struct case that talk about *which*
+fields there are survive it untouched.
 
 A field `us` names that `fvs` does not have is dropped, which is a case the type checker has already
 ruled out. -/
@@ -218,11 +222,19 @@ when it could look everywhere it would have had to. -/
 /-- Whether two struct values' fields hold the same values: the same fields, in the same order, each
 with equal values.
 
-Positional, because two values of one struct type carry that declaration's fields in that
-declaration's order — `structNew` builds them so and `FieldValues.update` rebinds without reordering
-— so there is no case here where the names agree and the order does not.  Fields that disagree on a
-name, or lists of different lengths, are therefore not two values of one struct type at all, and get
-`none` for the reason mismatched value constructors do.
+Positional, because a comparison that said `true` of two values that differ in field order would be
+saying `true` of two values Lean's `=` holds apart, and `Value.eq_of_beq?` — which is what makes the
+form usable in a proof — would not survive it.  So two values of one struct type written in
+different orders get `none` here, the answer a closure gets: not a claim that they differ, but no
+claim either way.  Fields that disagree on a name, or lists of different lengths, get `none` for the
+same reason mismatched value constructors do.
+
+That `none` is reachable for a well-typed `equals`, since a `structNew` may write the declaration's
+fields in any order (see `Expression.fieldsComplete`) and the value keeps the order it was written
+in.  Two struct values compare only when they were built the same way round — which every value a
+single `structNew` or a chain of updates over one produces is.  Deciding equality up to field order
+would need `beq?` to answer about an equivalence coarser than `=`, which is a change to what this
+whole mutual block means rather than to this one case.
 
 The field names are spelled `String` rather than `FieldName` for the reason `Value.struct` spells
 them that way. -/
@@ -563,7 +575,7 @@ bundle runs through the entire relation as a parameter.
 
 `td.ss` is where the value and the declaration are compared field by field, always by `lookup` and
 never by position, so that an update — which rebinds fields without reordering them — and a
-`structNew` — which writes them in the declared order — are typed by the same clauses. -/
+`structNew` — which may write them in any order — are typed by the same clauses. -/
 public inductive Value.HasType (td : TypeDecls) : Value → Ty → Prop where
 | bool (b : Bool) : HasType td (.bool b) .bool
 | int (i : Int) : HasType td (.int i) .int
@@ -870,10 +882,11 @@ public theorem Value.hasType_zip_of_inferList {td : TypeDecls} {ctx : Context}
 /-- A struct value whose fields are the declaration's fields, name for name and in order, each with a
 value of its declared type, has that declaration's struct type.
 
-This is the positional view of the struct case, and the form to build one with.  The rule itself is
-stated over `lookup` so that an update — which rebinds fields without reordering them — is typed by
-the same clauses as a `structNew`; but a `structNew` produces its fields in the declaration's order,
-so this is the shape a concrete struct value comes in. -/
+This is the positional view of the struct case, and the form to build one with where the orders do
+line up — which a value written out as a literal beside the declaration it is of generally does.
+Where they do not, the rule itself is the thing to use: it is stated over `lookup` throughout, so a
+`structNew` that named the fields in another order, like an update that rebinds some of them, is
+covered by the same clauses. -/
 public theorem Value.hasType_struct_of_fields {td : TypeDecls} {name : String} {sd : StructDecl}
     {fvs : FieldValues} (hsd : td.ss.lookup name = some sd)
     (hnames : fvs.map Prod.fst = sd.fields.map Prod.fst)

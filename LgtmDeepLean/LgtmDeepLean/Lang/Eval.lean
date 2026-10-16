@@ -342,14 +342,24 @@ public theorem Eval.hasType {td : TypeDecls} {env : Env} {ctx : Context} {e : Ex
       obtain ⟨t', ht', htbody⟩ := Expression.infer_let_eq_some.mp ht
       exact ihbody (Env.hasType_cons (ih₁ henv ht') henv) htbody
   | EStructNew name fes hnames hev ihev =>
-      obtain ⟨sd, hsd, hfts, rfl⟩ := Expression.infer_structNew_eq_some.mp ht
-      have hkeys : sd.fields.map Prod.fst = fes.map Prod.fst :=
-        Expression.map_fst_of_inferFields hfts
-      refine .struct hsd (List.lookup_isSome_congr (hkeys.trans hnames)) fun f t' v' hft hfv => ?_
+      obtain ⟨sd, fts, hsd, hfts, hcomplete, rfl⟩ := Expression.infer_structNew_eq_some.mp ht
+      -- Three lists with one set of names between them: the declaration's fields, the types
+      -- inference gave the expressions, and the values those evaluated to.  The last two are in the
+      -- order the fields were written and the first need not be, so the declaration is reached
+      -- through `fieldsComplete` and the other two through the keys they share.
+      have hkeys : fts.map Prod.fst = fes.map Prod.fst := Expression.map_fst_of_inferFields hfts
+      have hdom : ∀ f, (sd.fields.lookup f).isSome = (fes.lookup f).isSome := fun f =>
+        (Expression.lookup_isSome_of_fieldsComplete hcomplete f).trans
+          (List.lookup_isSome_congr hkeys f)
+      refine .struct hsd (fun f => (hdom f).trans (List.lookup_isSome_congr hnames f))
+        fun f t' v' hft hfv => ?_
       obtain ⟨e, he⟩ : ∃ e, fes.lookup f = some e :=
-        Option.isSome_iff_exists.mp (by rw [← List.lookup_isSome_congr hkeys f]; simp [hft])
+        Option.isSome_iff_exists.mp (by rw [← hdom f]; simp [hft])
       obtain ⟨t'', hft'', hinfer⟩ := Expression.lookup_of_inferFields hfts he
-      obtain rfl : t'' = t' := by grind
+      obtain rfl : t'' = t' := by
+        have := (Expression.fieldsComplete_eq_true.mp hcomplete).2 (f, t'')
+          (List.mem_of_lookup hft'')
+        grind
       exact ihev _ (List.mem_zip_of_lookup hnames he hfv) henv hinfer
   | EStructGet e f _ hfv ihe =>
       obtain ⟨name', sd, he, hsd, hft⟩ := Expression.infer_structGet_eq_some.mp ht

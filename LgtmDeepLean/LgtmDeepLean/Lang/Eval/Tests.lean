@@ -990,7 +990,8 @@ private theorem eval_swap {gs : Globals} : FuncDecl.Apply swap points gs
 example (v : Value)
     (h : FuncDecl.Apply swap points [] [.struct "Point" [("x", .int 1), ("y", .int 2)]] v) :
     v.HasType points (.struct "Point") :=
-  h.hasType Globals.wellTyped_nil (by simp [swap, Point, points, List.lookup])
+  h.hasType Globals.wellTyped_nil
+    (by simp [swap, Point, points, List.lookup, Expression.fieldsComplete_eq_true] <;> grind)
 
 /-- One more than `p`'s `x`, which is the field read on its own. -/
 lgtm private def getX as "get-x" (p : struct Point) : int :=
@@ -1145,7 +1146,9 @@ private theorem pointProgram.wellTyped : pointProgram.WellTyped := by
     List.mem_cons, List.not_mem_nil, or_false] at hp
   rcases hp with rfl | rfl | rfl <;>
     simp [swap, getX, shiftX, Point, Program.globals, Program.typeDecls, Program.structs,
-      pointProgram, Globals.ofDecls, Structs.ofDecls, FuncDecl.ty, List.lookup]
+      pointProgram, Globals.ofDecls, Structs.ofDecls, FuncDecl.ty, List.lookup,
+      Expression.fieldsComplete_eq_true] <;>
+    grind
 
 -- Running it is calling one of its names, and soundness at the top covers a struct result type like
 -- any other.

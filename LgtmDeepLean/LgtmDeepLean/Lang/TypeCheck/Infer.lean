@@ -192,6 +192,46 @@ public theorem Expression.alts_nodup_of_altsExhaustive {cs : List (CtorName × L
     (h : Expression.altsExhaustive cs alts = true) : (alts.map Prod.fst).Nodup :=
   (Expression.altsExhaustive_eq_true.mp h).nodup_iff.mpr hu
 
+/-! ## Completeness
+
+What the fields of a `structNew` have to be, as a condition on the two lists rather than on any one
+field.  It is separate from `Expression.inferFields` for the reason `Expression.altsExhaustive` is
+separate from `Expression.inferAlts`: the walk sees one field at a time, and no field knows whether
+the others between them covered the rest of the declaration. -/
+
+/-- The fields given must be the declaration's fields, each of them once and at the type declared
+for it, in any order.
+
+Two conditions where a comparison of the two lists would have been one, which is what accepting any
+order costs: the names are a permutation of the declared names, the way a match's constructors are a
+permutation of the declared ones, and then every field's type is the type the declaration gives it
+*under its own name* rather than the type standing at its position.
+
+Together they are as strong as that comparison was.  A field named twice makes the names no
+permutation of a declaration's — which name each `lookup` would have found does not arise — and a
+field the declaration does not have fails both halves at once. -/
+@[expose] public def Expression.fieldsComplete (fs fts : List (FieldName × Ty)) : Bool :=
+  (fts.map Prod.fst).isPerm (fs.map Prod.fst) && fts.all fun p => fs.lookup p.1 == some p.2
+
+/-- `Expression.fieldsComplete` is correct. -/
+public theorem Expression.fieldsComplete_eq_true {fs fts : List (FieldName × Ty)} :
+    Expression.fieldsComplete fs fts = true ↔
+      (fts.map Prod.fst).Perm (fs.map Prod.fst) ∧ ∀ p ∈ fts, fs.lookup p.1 = some p.2 := by
+  simp [Expression.fieldsComplete, List.isPerm_iff]
+
+/-- A complete field list is defined at exactly the names the declaration is (a derived fact from
+the permutation half).
+
+This is `Expression.lookup_isSome_of_altsExhaustive` for fields, and it is what the order-insensitive
+half of `Value.HasType`'s struct case is discharged with: the declaration and the value agree on
+*which* fields there are, which is a fact about the names alone. -/
+public theorem Expression.lookup_isSome_of_fieldsComplete {fs fts : List (FieldName × Ty)}
+    (h : Expression.fieldsComplete fs fts = true) (f : FieldName) :
+    (fs.lookup f).isSome = (fts.lookup f).isSome :=
+  Bool.eq_iff_iff.mpr <| by
+    rw [List.lookup_isSome_iff_mem_keys, List.lookup_isSome_iff_mem_keys]
+    exact ((Expression.fieldsComplete_eq_true.mp h).1.mem_iff).symm
+
 mutual
 
 /-- Infer the type of `e` under `ctx`, or `none` if `e` is ill typed. -/
@@ -221,10 +261,10 @@ public def Expression.infer (td : TypeDecls) (ctx : Context) : Expression → Op
     body.infer td ((x, t) :: ctx)
   | .varRef x => ctx.lookup x
   | .structNew name fes =>
-    match td.ss.lookup name with
-    | some sd =>
-      if Expression.inferFields td ctx fes == some sd.fields then some (.struct name) else none
-    | none => none
+    match td.ss.lookup name, Expression.inferFields td ctx fes with
+    | some sd, some fts =>
+      if Expression.fieldsComplete sd.fields fts then some (.struct name) else none
+    | _, _ => none
   | .structGet e f =>
     match e.infer td ctx with
     | some (.struct name) =>
@@ -570,13 +610,17 @@ that type, and then it has the body's type. -/
       ∃ t', e.infer td ctx = some t' ∧ body.infer td ((x, t') :: ctx) = some t := by
   simp [Expression.infer, Option.bind_eq_some_iff]
 
-/-- A `structNew` is typeable when the name it gives is declared and the fields it gives are
-that declaration's fields, in that order, at those types. -/
+/-- A `structNew` is typeable when the name it gives is declared and the fields it gives are that
+declaration's fields, at those types, in any order.
+
+Any order, because the fields are matched up by name: `Expression.fieldsComplete` is what says the
+two lists are the same fields, and it is the only thing between this and `structUpdate`'s rule —
+which is the same condition over *some* of the declaration's fields rather than all of them. -/
 @[simp, grind =] public theorem Expression.infer_structNew_eq_some {td : TypeDecls} {ctx : Context}
     {name : String} {fes : List (FieldName × Expression)} {t : Ty} :
     (Expression.structNew name fes).infer td ctx = some t ↔
-      ∃ sd, td.ss.lookup name = some sd ∧ Expression.inferFields td ctx fes = some sd.fields
-        ∧ t = .struct name := by
+      ∃ sd fts, td.ss.lookup name = some sd ∧ Expression.inferFields td ctx fes = some fts
+        ∧ Expression.fieldsComplete sd.fields fts = true ∧ t = .struct name := by
   simp only [Expression.infer]
   split <;> grind
 
