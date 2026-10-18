@@ -252,7 +252,7 @@ example : addPred =
       resultType := .int } := rfl
 
 -- And what it builds type checks, which is the point of writing it this way.
-#guard addPred.check {} []
+#guard (addPred.check {} []).isOk
 
 /-- Put `s` after an exclamation mark. -/
 lgtm def bang (s : string) : list string :=
@@ -260,51 +260,51 @@ lgtm def bang (s : string) : list string :=
 
 -- With no `as`, the IR name is the Lean name.
 example : bang.name = "bang" := rfl
-#guard bang.check {} []
+#guard (bang.check {} []).isOk
 
 lgtm def applyTo as "apply-to" (g : (int) -> int) (x : int) : int :=
   g(x)
 
-#guard applyTo.check {} []
+#guard (applyTo.check {} []).isOk
 
 /-- Build a function that adds `n` to its argument. -/
 lgtm def adder (n : int) : (int) -> int :=
   fun (m : int) => n + m
 
-#guard adder.check {} []
+#guard (adder.check {} []).isOk
 
 /-- Reverse `xs` with `x` on the front. -/
 lgtm def revCons as "rev-cons" (x : int) (xs : list int) : list int :=
   reverse (x :: xs)
 
-#guard revCons.check {} []
+#guard (revCons.check {} []).isOk
 
 /-- Every element of `xs` with one added to it.  The function takes one parameter, at the list's
 element type, which is what the `list` tag on the `map` is standing in for. -/
 lgtm def bumpAll as "bump-all" (xs : list int) : list int :=
   map list xs (fun (x : int) => x + 1)
 
-#guard bumpAll.check {} []
+#guard (bumpAll.check {} []).isOk
 
 -- The element type is the one thing a mapping over a list does not carry through, so what the
 -- function returns is what the result is a list of and the declaration has to say so.
-#guard ({ bumpAll with
+#guard (({ bumpAll with
   body := [lgtm| map list xs (fun (x : int) => "a")]
-  resultType := [lgtm_ty| list string] } : FuncDecl).check {} []
-#guard !({ bumpAll with body := [lgtm| map list xs (fun (x : int) => "a")] } : FuncDecl).check {} []
+  resultType := [lgtm_ty| list string] } : FuncDecl).check {} []).isOk
+#guard !(({ bumpAll with body := [lgtm| map list xs (fun (x : int) => "a")] } : FuncDecl).check {} []).isOk
 
 -- The function is held to the element type, and to taking one parameter: a hashmap's two-parameter
 -- function is what the other tag is for, and no `list` mapping accepts one.
-#guard !({ bumpAll with body := [lgtm| map list xs (fun (x : string) => 1)] } : FuncDecl).check {} []
-#guard !({ bumpAll with body := [lgtm| map list xs (fun (x : int) (y : int) => 1)] }
-  : FuncDecl).check {} []
+#guard !(({ bumpAll with body := [lgtm| map list xs (fun (x : string) => 1)] } : FuncDecl).check {} []).isOk
+#guard !(({ bumpAll with body := [lgtm| map list xs (fun (x : int) (y : int) => 1)] }
+  : FuncDecl).check {} []).isOk
 
 -- And the tag decides nothing about the types: a `list` mapping over a hashmap is ill typed, as a
 -- `hashmap` mapping over a list is.
-#guard !({ bumpAll with body := [lgtm| map list hashmap(string, int) (fun (x : int) => 1)] }
-  : FuncDecl).check {} []
-#guard !({ bumpAll with body := [lgtm| map hashmap xs (fun (x : int) (y : int) => 1)] }
-  : FuncDecl).check {} []
+#guard !(({ bumpAll with body := [lgtm| map list hashmap(string, int) (fun (x : int) => 1)] }
+  : FuncDecl).check {} []).isOk
+#guard !(({ bumpAll with body := [lgtm| map hashmap xs (fun (x : int) (y : int) => 1)] }
+  : FuncDecl).check {} []).isOk
 
 /-- Whether `xs` is empty or is `ys`: the shortest declaration the two boolean operators are in,
 and the one place their being looser than `==` is what keeps a comparison on either side
@@ -312,64 +312,64 @@ unparenthesized. -/
 lgtm def emptyOrEqual as "empty-or-equal" (xs : list int) (ys : list int) : bool :=
   length xs == 0 || xs == ys
 
-#guard emptyOrEqual.check {} []
-#guard ({ emptyOrEqual with body := [lgtm| length xs == 0 && xs == ys] } : FuncDecl).check {} []
+#guard (emptyOrEqual.check {} []).isOk
+#guard (({ emptyOrEqual with body := [lgtm| length xs == 0 && xs == ys] } : FuncDecl).check {} []).isOk
 
 -- Both operands have to be `bool`s, and what comes out is one whatever they were about: there is no
 -- truthiness to read an `int` as, the same way a conditional's condition has none.
-#guard !({ emptyOrEqual with body := [lgtm| length xs || xs == ys] } : FuncDecl).check {} []
-#guard !({ emptyOrEqual with body := [lgtm| xs == ys && length xs] } : FuncDecl).check {} []
-#guard !({ emptyOrEqual with resultType := [lgtm_ty| int] } : FuncDecl).check {} []
+#guard !(({ emptyOrEqual with body := [lgtm| length xs || xs == ys] } : FuncDecl).check {} []).isOk
+#guard !(({ emptyOrEqual with body := [lgtm| xs == ys && length xs] } : FuncDecl).check {} []).isOk
+#guard !(({ emptyOrEqual with resultType := [lgtm_ty| int] } : FuncDecl).check {} []).isOk
 
 /-- Twice one more than `n`. -/
 lgtm def letDouble as "let-double" (n : int) : int :=
   let m = n + 1 in m + m
 
-#guard letDouble.check {} []
+#guard (letDouble.check {} []).isOk
 
 /-- `x` when `b`, and `y` otherwise. -/
 lgtm def pick (b : bool) (x : int) (y : int) : int :=
   if b then { x } else { y }
 
-#guard pick.check {} []
+#guard (pick.check {} []).isOk
 
 -- A `bool` is a type like any other, so a declaration can return one and a list can hold them, and
 -- a literal is where one comes from when no parameter has one.
 lgtm def firstOf as "first-of" (b : bool) (bs : list bool) : list bool :=
   b :: bs
 
-#guard firstOf.check {} []
+#guard (firstOf.check {} []).isOk
 
 /-- The two literals, which is the shortest declaration that returns a `bool`. -/
 lgtm def yes : bool := true
 
-#guard yes.check {} []
-#guard !({ yes with body := [lgtm| 1] } : FuncDecl).check {} []
-#guard !({ yes with resultType := [lgtm_ty| int] } : FuncDecl).check {} []
+#guard (yes.check {} []).isOk
+#guard !(({ yes with body := [lgtm| 1] } : FuncDecl).check {} []).isOk
+#guard !(({ yes with resultType := [lgtm_ty| int] } : FuncDecl).check {} []).isOk
 
 -- So a `bool` no longer has to be passed in: a conditional can be written with its condition spelled
 -- out, and a list of them needs no parameter either.
 lgtm def flags : list bool := [true, false, true : bool]
 
-#guard flags.check {} []
+#guard (flags.check {} []).isOk
 
 lgtm def pickFirst as "pick-first" (x : int) (y : int) : int :=
   if true then { x } else { y }
 
-#guard pickFirst.check {} []
-#guard !({ pickFirst with body := [lgtm| if 1 then { x } else { y }] } : FuncDecl).check {} []
+#guard (pickFirst.check {} []).isOk
+#guard !(({ pickFirst with body := [lgtm| if 1 then { x } else { y }] } : FuncDecl).check {} []).isOk
 
 /-- Whether `x` and `y` are the same, which is the other way a declaration returns a `bool`. -/
 lgtm def same (x : int) (y : int) : bool :=
   x == y
 
-#guard same.check {} []
+#guard (same.check {} []).isOk
 
 -- The operands have to share a type, the result is a `bool` and not the type compared, and a
 -- function is the one thing there is no comparing: a parameter of function type cannot be an operand
 -- and neither can a list of them.
-#guard !({ same with body := [lgtm| x == "a"] } : FuncDecl).check {} []
-#guard !({ same with resultType := [lgtm_ty| int] } : FuncDecl).check {} []
+#guard !(({ same with body := [lgtm| x == "a"] } : FuncDecl).check {} []).isOk
+#guard !(({ same with resultType := [lgtm_ty| int] } : FuncDecl).check {} []).isOk
 
 private def fnTy : Ty := [lgtm_ty| (int) -> int]
 
@@ -381,19 +381,19 @@ private def sameFns : FuncDecl :=
 private def sameFnLists : FuncDecl :=
   { sameFns with parameters := [("g", .list fnTy), ("h", .list fnTy)] }
 
-#guard !sameFns.check {} []
-#guard !sameFnLists.check {} []
+#guard !(sameFns.check {} []).isOk
+#guard !(sameFnLists.check {} []).isOk
 
 -- Every other type is comparable, declared ones included, and a comparison goes where a `bool` goes.
-#guard ({ same with parameters := [("x", [lgtm_ty| list string]), ("y", [lgtm_ty| list string])] }
-  : FuncDecl).check {} []
-#guard ({ same with parameters := [("x", [lgtm_ty| bool]), ("y", [lgtm_ty| bool])] }
-  : FuncDecl).check {} []
-#guard ({ pick with body := [lgtm| if x == y then { x } else { y }] } : FuncDecl).check {} []
+#guard (({ same with parameters := [("x", [lgtm_ty| list string]), ("y", [lgtm_ty| list string])] }
+  : FuncDecl).check {} []).isOk
+#guard (({ same with parameters := [("x", [lgtm_ty| bool]), ("y", [lgtm_ty| bool])] }
+  : FuncDecl).check {} []).isOk
+#guard (({ pick with body := [lgtm| if x == y then { x } else { y }] } : FuncDecl).check {} []).isOk
 
 -- A declaration with no parameters is fine, and so is one that returns a function.
 lgtm def three : int := 3
-#guard three.check {} []
+#guard (three.check {} []).isOk
 
 -- A declaration is called by its IR name, and a dotted one is the whole name rather than a field
 -- read: `Nested.one` is the declaration below, which is how one declaration calls another.  A
@@ -401,8 +401,10 @@ lgtm def three : int := 3
 lgtm def Nested.one : int := 1
 example : [lgtm| Nested.one] = Expression.varRef "Nested.one" := rfl
 example : [lgtm| Nested.one()] = Expression.app (.varRef "Nested.one") [] := rfl
-#guard ({ three with body := [lgtm| Nested.one()] } : FuncDecl).check {} [("Nested.one", Nested.one)]
-#guard !({ three with body := [lgtm| Nested.one] } : FuncDecl).check {} [("Nested.one", Nested.one)]
+#guard (({ three with body := [lgtm| Nested.one()] } : FuncDecl).check {} [("Nested.one",
+  Nested.one)]).isOk
+#guard !(({ three with body := [lgtm| Nested.one] } : FuncDecl).check {} [("Nested.one",
+  Nested.one)]).isOk
 
 -- A dotted name no declaration has taken is a variable and one field read per component, and the
 -- postfix `.` is what reads a field off a name that is taken.
@@ -414,14 +416,14 @@ example : [lgtm| (var "Nested.one").x] = Expression.structGet (.varRef "Nested.o
 lgtm private def succ as "succ-one" (x : int) : int := x + 1
 example : succ.name = "succ-one" := rfl
 example : succ.docstring = "One more than `x`." := rfl
-#guard succ.check {} []
+#guard (succ.check {} []).isOk
 
 -- The DSL builds ill-typed programs as readily as well-typed ones; checking is still what rejects
 -- them.
-#guard !({ three with body := [lgtm| 1 + "a"] } : FuncDecl).check {} []
-#guard !({ revCons with body := [lgtm| reverse x] } : FuncDecl).check {} []
-#guard !({ pick with body := [lgtm| if x then { x } else { y }] } : FuncDecl).check {} []
-#guard !({ pick with body := [lgtm| if b then { x } else { "a" }] } : FuncDecl).check {} []
+#guard !(({ three with body := [lgtm| 1 + "a"] } : FuncDecl).check {} []).isOk
+#guard !(({ revCons with body := [lgtm| reverse x] } : FuncDecl).check {} []).isOk
+#guard !(({ pick with body := [lgtm| if x then { x } else { y }] } : FuncDecl).check {} []).isOk
+#guard !(({ pick with body := [lgtm| if b then { x } else { "a" }] } : FuncDecl).check {} []).isOk
 
 /-! ### Structs -/
 
@@ -510,20 +512,20 @@ lgtm def swap (p : struct Point) : struct Point :=
   new Point { x = p.y, y = p.x }
 
 -- And what the two commands build together type checks, which is the point of writing it this way.
-#guard swap.check { ss := Structs.ofDecls [Point] } []
-#guard !swap.check {} []
+#guard (swap.check { ss := Structs.ofDecls [Point] } []).isOk
+#guard !(swap.check {} []).isOk
 
 lgtm def shift (p : struct Point) (d : int) : struct Point :=
   { p with x = p.x + d }
 
-#guard shift.check { ss := Structs.ofDecls [Point] } []
+#guard (shift.check { ss := Structs.ofDecls [Point] } []).isOk
 
 /-- Whether two points are the same point, which is field for field. -/
 lgtm def samePoint as "same-point" (p : struct Point) (q : struct Point) : bool :=
   p == q
 
-#guard samePoint.check { ss := Structs.ofDecls [Point] } []
-#guard !samePoint.check {} []
+#guard (samePoint.check { ss := Structs.ofDecls [Point] } []).isOk
+#guard !(samePoint.check {} []).isOk
 
 /-- The same comparison on `Box`es, which carry a `step` of function type. -/
 private def sameBox : FuncDecl :=
@@ -531,7 +533,7 @@ private def sameBox : FuncDecl :=
 
 -- A struct is comparable when everything it carries is, so a `Box` is not — however ordinary its
 -- other two fields are, and although every struct form other than `==` still works on one.
-#guard !sameBox.check { ss := Structs.ofDecls [Point, Box] } []
+#guard !(sameBox.check { ss := Structs.ofDecls [Point, Box] } []).isOk
 
 /-! ### Inductive types -/
 
@@ -625,14 +627,14 @@ lgtm def perimeter (s : inductive Shape) : int :=
   match s with | Circle(r) => r + r + r + r + r + r | Rect(w, h) => w + w + h + h
 
 -- And what the two commands build together type checks, which is the point of writing it this way.
-#guard perimeter.check { is := Inductives.ofDecls [Shape] } []
-#guard !perimeter.check {} []
+#guard (perimeter.check { is := Inductives.ofDecls [Shape] } []).isOk
+#guard !(perimeter.check {} []).isOk
 
 /-- `Rect` with both sides `n`, which is the other half: a constructor applied to values. -/
 lgtm def square (n : int) : inductive Shape :=
   new Shape.Rect(n, n)
 
-#guard square.check { is := Inductives.ofDecls [Shape] } []
+#guard (square.check { is := Inductives.ofDecls [Shape] } []).isOk
 
 /-- Whether two trees are the same tree: the same constructors all the way down, carrying the same
 data.  A type being recursive is no obstacle to comparing two values of it — each value is finite —
@@ -640,14 +642,15 @@ which is what makes this check. -/
 lgtm def sameTree as "same-tree" (a : inductive Tree) (b : inductive Tree) : bool :=
   a == b
 
-#guard sameTree.check { is := Inductives.ofDecls [Tree] } []
-#guard !sameTree.check {} []
+#guard (sameTree.check { is := Inductives.ofDecls [Tree] } []).isOk
+#guard !(sameTree.check {} []).isOk
 
 /-- The same comparison on `Wrapped`, whose one constructor carries a function among its data. -/
 private def sameWrapped : FuncDecl :=
   { sameTree with parameters := [("a", .ind "Wrapped"), ("b", .ind "Wrapped")] }
 
-#guard !sameWrapped.check { ss := Structs.ofDecls [Point], is := Inductives.ofDecls [Wrapped] } []
+#guard !(sameWrapped.check { ss := Structs.ofDecls [Point], is := Inductives.ofDecls [Wrapped] }
+  []).isOk
 
 /-! ### Options -/
 
@@ -731,44 +734,44 @@ lgtm def succOrZero as "succ-or-zero" (o : option int) : int :=
   match o with | none => 0 | some(x) => x + 1
 
 -- An option needs no declaration to be well formed, so this checks against no `TypeDecls` at all.
-#guard succOrZero.check {} []
+#guard (succOrZero.check {} []).isOk
 
 -- The two cases have to share a type, and the name bound is the type the option holds — so `x + 1`
 -- is an `int` because the parameter is an `option int`.
-#guard !({ succOrZero with
-  body := [lgtm| match o with | none => 0 | some(x) => "a"] } : FuncDecl).check {} []
-#guard !({ succOrZero with
-  parameters := [("o", [lgtm_ty| option string])] } : FuncDecl).check {} []
+#guard !(({ succOrZero with
+  body := [lgtm| match o with | none => 0 | some(x) => "a"] } : FuncDecl).check {} []).isOk
+#guard !(({ succOrZero with
+  parameters := [("o", [lgtm_ty| option string])] } : FuncDecl).check {} []).isOk
 
 -- And the scrutinee has to be an option: a list is not one, however much the match looks like it
 -- could take one apart.
-#guard !({ succOrZero with
-  parameters := [("o", [lgtm_ty| list int])] } : FuncDecl).check {} []
+#guard !(({ succOrZero with
+  parameters := [("o", [lgtm_ty| list int])] } : FuncDecl).check {} []).isOk
 
 /-- `n`, held in an option, which is the other half: a value put into one rather than taken out. -/
 lgtm def justInt as "just-int" (n : int) : option int :=
   some(n)
 
-#guard justInt.check {} []
-#guard !({ justInt with resultType := [lgtm_ty| option string] } : FuncDecl).check {} []
+#guard (justInt.check {} []).isOk
+#guard !(({ justInt with resultType := [lgtm_ty| option string] } : FuncDecl).check {} []).isOk
 
 /-- Nothing, at `int`: the shortest declaration returning an option, and the one place the
 annotation is all there is to go on. -/
 lgtm def noInt as "no-int" : option int :=
   none : int
 
-#guard noInt.check {} []
-#guard !({ noInt with resultType := [lgtm_ty| option string] } : FuncDecl).check {} []
+#guard (noInt.check {} []).isOk
+#guard !(({ noInt with resultType := [lgtm_ty| option string] } : FuncDecl).check {} []).isOk
 
 /-- Whether two options are the same option, which an option is as comparable as what it holds. -/
 lgtm def sameOpt as "same-opt" (a : option int) (b : option int) : bool :=
   a == b
 
-#guard sameOpt.check {} []
+#guard (sameOpt.check {} []).isOk
 
 -- So an option of function type is no more comparable than the functions it holds.
-#guard !({ sameOpt with
-  parameters := [("a", .option fnTy), ("b", .option fnTy)] } : FuncDecl).check {} []
+#guard !(({ sameOpt with
+  parameters := [("a", .option fnTy), ("b", .option fnTy)] } : FuncDecl).check {} []).isOk
 
 -- Both alternatives are required and in the order `optionMatch` holds them, since there is nothing
 -- else a `match` naming `none` could have meant.
@@ -986,63 +989,63 @@ lgtm def noneBound as "none-bound" : hashmap string int :=
   hashmap(string, int)
 
 -- A hashmap needs no declaration to be well formed, so this checks against no `TypeDecls` at all.
-#guard noneBound.check {} []
-#guard !({ noneBound with resultType := [lgtm_ty| hashmap int string] } : FuncDecl).check {} []
+#guard (noneBound.check {} []).isOk
+#guard !(({ noneBound with resultType := [lgtm_ty| hashmap int string] } : FuncDecl).check {} []).isOk
 
 /-- `m` with `k` bound to `v`, which is the other half: a binding put into a map rather than read
 out of one. -/
 lgtm def bind (m : hashmap string int) (k : string) (v : int) : hashmap string int :=
   { m with [k] = v }
 
-#guard bind.check {} []
-#guard !({ bind with body := [lgtm| { m with [v] = k }] } : FuncDecl).check {} []
-#guard !({ bind with resultType := [lgtm_ty| hashmap string string] } : FuncDecl).check {} []
+#guard (bind.check {} []).isOk
+#guard !(({ bind with body := [lgtm| { m with [v] = k }] } : FuncDecl).check {} []).isOk
+#guard !(({ bind with resultType := [lgtm_ty| hashmap string string] } : FuncDecl).check {} []).isOk
 
 /-- What `k` is bound to in `m`, and zero when it is bound to nothing: the two halves of a lookup,
 which is what an option result is for. -/
 lgtm def getOr as "get-or" (m : hashmap string int) (k : string) : int :=
   match m[k] with | none => 0 | some(x) => x
 
-#guard getOr.check {} []
-#guard !({ getOr with resultType := [lgtm_ty| option int] } : FuncDecl).check {} []
-#guard !({ getOr with parameters := [("m", [lgtm_ty| hashmap string string]), ("k", .string)] }
-  : FuncDecl).check {} []
+#guard (getOr.check {} []).isOk
+#guard !(({ getOr with resultType := [lgtm_ty| option int] } : FuncDecl).check {} []).isOk
+#guard !(({ getOr with parameters := [("m", [lgtm_ty| hashmap string string]), ("k", .string)] }
+  : FuncDecl).check {} []).isOk
 
 /-- Every value of `m` with one added to it, the keys left as they were.  The function takes the key
 as well as the value, so its parameters are the map's two types in that order. -/
 lgtm def bump (m : hashmap string int) : hashmap string int :=
   map hashmap m (fun (k : string) (v : int) => v + 1)
 
-#guard bump.check {} []
-#guard !({ bump with body := [lgtm| map hashmap m (fun (v : int) (k : string) => v + 1)] }
-  : FuncDecl).check {} []
-#guard !({ bump with resultType := [lgtm_ty| hashmap string string] } : FuncDecl).check {} []
+#guard (bump.check {} []).isOk
+#guard !(({ bump with body := [lgtm| map hashmap m (fun (v : int) (k : string) => v + 1)] }
+  : FuncDecl).check {} []).isOk
+#guard !(({ bump with resultType := [lgtm_ty| hashmap string string] } : FuncDecl).check {} []).isOk
 
 -- A mapping is what makes the value type the one thing about a map that can change, since the keys
 -- it hands back are the ones it was given: a map to `string` comes out of a map to `int` and the
 -- declaration says so.
-#guard ({ bump with
+#guard (({ bump with
   body := [lgtm| map hashmap m (fun (k : string) (v : int) => k)]
-  resultType := [lgtm_ty| hashmap string string] } : FuncDecl).check {} []
+  resultType := [lgtm_ty| hashmap string string] } : FuncDecl).check {} []).isOk
 
 -- The key type has to be one a comparison can reach the bottom of, which is the one condition every
 -- one of the forms shares and the one way an annotation alone makes a map ill typed.
-#guard !({ noneBound with
+#guard !(({ noneBound with
   body := [lgtm| hashmap((int) -> int, int)]
-  resultType := [lgtm_ty| hashmap ((int) -> int) int] } : FuncDecl).check {} []
+  resultType := [lgtm_ty| hashmap ((int) -> int) int] } : FuncDecl).check {} []).isOk
 
 -- The *value* type is under no such condition: nothing compares a value a map holds.
-#guard ({ noneBound with
+#guard (({ noneBound with
   body := [lgtm| hashmap(string, (int) -> int)]
-  resultType := [lgtm_ty| hashmap string ((int) -> int)] } : FuncDecl).check {} []
+  resultType := [lgtm_ty| hashmap string ((int) -> int)] } : FuncDecl).check {} []).isOk
 
 -- And a hashmap is itself not comparable, whatever it relates, where a list of the same things
 -- would be: an association list has no canonical form, so a structural comparison would answer
 -- something other than whether the two are the same map.
-#guard !({ getOr with body := [lgtm| if m == m then { 1 } else { 0 }] } : FuncDecl).check {} []
-#guard !({ noneBound with
+#guard !(({ getOr with body := [lgtm| if m == m then { 1 } else { 0 }] } : FuncDecl).check {} []).isOk
+#guard !(({ noneBound with
   body := [lgtm| hashmap(hashmap string int, int)]
-  resultType := [lgtm_ty| hashmap (hashmap string int) int] } : FuncDecl).check {} []
+  resultType := [lgtm_ty| hashmap (hashmap string int) int] } : FuncDecl).check {} []).isOk
 
 -- A tuple expression lists its elements in one group in parentheses, the way the *type* lists its
 -- types: the group is what says how many there are, so there is an empty one to write and no
@@ -1092,37 +1095,37 @@ lgtm def pair (s : string) (n : int) : tuple(string, int) :=
   tuple(s, n)
 
 -- A tuple needs no declaration to be well formed, so this checks against no `TypeDecls` at all.
-#guard pair.check {} []
-#guard !({ pair with resultType := [lgtm_ty| tuple(int, string)] } : FuncDecl).check {} []
-#guard !({ pair with resultType := [lgtm_ty| tuple(string)] } : FuncDecl).check {} []
-#guard !({ pair with resultType := [lgtm_ty| list string] } : FuncDecl).check {} []
+#guard (pair.check {} []).isOk
+#guard !(({ pair with resultType := [lgtm_ty| tuple(int, string)] } : FuncDecl).check {} []).isOk
+#guard !(({ pair with resultType := [lgtm_ty| tuple(string)] } : FuncDecl).check {} []).isOk
+#guard !(({ pair with resultType := [lgtm_ty| list string] } : FuncDecl).check {} []).isOk
 
 /-- The first half of a pair, which is the other half: a value read out of a tuple rather than put
 into one. -/
 lgtm def fst (t : tuple(string, int)) : string :=
   t.0
 
-#guard fst.check {} []
-#guard ({ fst with body := [lgtm| t.1], resultType := .int } : FuncDecl).check {} []
+#guard (fst.check {} []).isOk
+#guard (({ fst with body := [lgtm| t.1], resultType := .int } : FuncDecl).check {} []).isOk
 
 -- An index past the end is ill typed, which is what makes the index a literal: the type at a
 -- position that is not known until something runs is a type nothing could report.
-#guard !({ fst with body := [lgtm| t.2] } : FuncDecl).check {} []
-#guard !({ fst with body := [lgtm| t.1] } : FuncDecl).check {} []
+#guard !(({ fst with body := [lgtm| t.2] } : FuncDecl).check {} []).isOk
+#guard !(({ fst with body := [lgtm| t.1] } : FuncDecl).check {} []).isOk
 
 -- A tuple is comparable exactly when everything in it is, so a pair of a map is not and a pair of
 -- its two types is: what `Ty.comparable` turns a hashmap down for is the order its bindings are
 -- carried in, which converting does not escape.
-#guard ({ fst with
-  body := [lgtm| if t == t then { t.0 } else { t.0 }] } : FuncDecl).check {} []
-#guard !({ fst with
+#guard (({ fst with
+  body := [lgtm| if t == t then { t.0 } else { t.0 }] } : FuncDecl).check {} []).isOk
+#guard !(({ fst with
   parameters := [("t", [lgtm_ty| tuple(string, hashmap string int)])]
-  body := [lgtm| if t == t then { t.0 } else { t.0 }] } : FuncDecl).check {} []
+  body := [lgtm| if t == t then { t.0 } else { t.0 }] } : FuncDecl).check {} []).isOk
 
 /-- The bindings of a map as a list of pairs, which is the type `toList` gives one: the form a
 `tuple` is in the IR for. -/
 lgtm def bindings (m : hashmap string int) : list tuple(string, int) :=
   toList m
 
-#guard bindings.check {} []
-#guard !({ bindings with resultType := [lgtm_ty| list tuple(int, string)] } : FuncDecl).check {} []
+#guard (bindings.check {} []).isOk
+#guard !(({ bindings with resultType := [lgtm_ty| list tuple(int, string)] } : FuncDecl).check {} []).isOk

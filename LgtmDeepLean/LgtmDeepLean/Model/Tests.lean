@@ -6,44 +6,19 @@ meta import Lean
 
 /-! # The type checker run over the model
 
-The driver for the model: every declaration the model makes, checked against the tables all of them
-are checked against.  It runs at build time — a `#guard` that fails is a build error — so a
-declaration the checker turns down cannot be committed, and neither can one that two modules
-declare under the same name.
+Checks three things:
 
-Three things are checked, and the third is why the first two keep covering the model as it grows:
+1. Every declaration type checks.
+2. Declaration names are unique
+3. All declarations in the model are included in the program (using metaprogramming)
 
-1. Every declaration type checks, which is `Program.check`.
-2. No two declarations share a name, which `Program.check` says nothing about: a name declared twice
-   is a condition across declarations rather than anything a body could be wrong about.
-3. Every IR declaration the model's modules define is one `modelProgram` collects.  Without this the
-   first two would still pass over a model a module had quietly stopped contributing to.
+-/
 
-Nothing here mentions a module of the model, so a module added to `modelProgram` is checked by all
-three without this one changing. -/
+/-! ## Every declaration type checks -/
 
-/-! ## Every declaration type checks
+#guard (modelProgram.check).isOk
 
-`Program.check` runs `Expression.infer` over each declaration's body in the context of its own
-parameters and the signatures of every global, and also decides the two conditions on declared types
-that no expression could be wrong about: no structure type repeats a field name, no inductive type
-repeats a constructor.
-
-`#guard` rather than `by decide`: `Expression.infer` is not exposed, so the kernel cannot reduce the
-application, where `#guard` evaluates it compiled.  Which is the same reason this module takes a
-`meta import` of the model as well as a plain one — the `#guard` runs the model's declarations as
-code at elaboration time. -/
-
-#guard modelProgram.check
-
-/-! ## No two declarations share a name
-
-One condition per kind of declaration, each a `Nodup` over the names declared, and each decided by
-the kernel: these are about the names in the lists, not about anything a body says.
-
-These are what make a declaration of the model callable — `Program.lookup_self` and its two
-counterparts turn "`d` is one of the program's declarations" into "`d` is what its own name
-resolves to", which is what carries `Program.WellTyped` down to a particular declaration. -/
+/-! ## No two declarations share a name -/
 
 example : modelProgram.NamesUnique := by decide
 example : modelProgram.StructNamesUnique := by decide
@@ -51,15 +26,8 @@ example : modelProgram.InductiveNamesUnique := by decide
 
 /-! ## Every declaration is one `modelProgram` collects
 
-`lgtm` builds one Lean constant per IR declaration and nothing that collects them, so what
-`modelProgram` contains is what the per-module lists say it contains, and a declaration left out of
-those lists is one the checks above never see.  What follows is the check against that: the IR
-declarations the model's modules define, against the ones `modelProgram` reaches.
-
-Both sides are read off the environment rather than written down, which is the point — a module
-added to the model is covered by this as it stands.  The one thing it cannot see is a module
-`Model.Program` does not import at all: its constants are not in this environment either.  That is
-the import in step 2 of `Model.Program`'s instructions, and the reason the step exists. -/
+Use metaprogramming to ensure that there are no definitions that were elided
+from the program declaration. -/
 
 open Lean
 

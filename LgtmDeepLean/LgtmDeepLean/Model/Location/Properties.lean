@@ -57,8 +57,8 @@ def locationTypes : TypeDecls :=
   { ss := Structs.ofDecls [CommentFileLocation]
     is := Inductives.ofDecls [ThreadLocation, CommentLocation] }
 
-#guard CommentLocation.asThreadLocation.check locationTypes []
-#guard ThreadLocation.isTopLevel.check locationTypes []
+#guard (CommentLocation.asThreadLocation.check locationTypes []).isOk
+#guard (ThreadLocation.isTopLevel.check locationTypes []).isOk
 
 /-- A `TopLevel` carrying nothing has the type of whichever declaration in `locationTypes` declares
 that constructor — which is both of them: the constructor is one the declaration has, and there is

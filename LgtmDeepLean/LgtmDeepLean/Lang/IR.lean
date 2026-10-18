@@ -104,6 +104,33 @@ public instance : LawfulBEq Ty where
 handle the mutually-recursive `.fn` case. -/
 public instance : DecidableEq Ty := fun a b => decidable_of_iff _ (Ty.beq_iff_eq a b)
 
+mutual
+
+public def Ty.renderWith (parens : Bool) : Ty → String
+  | .bool => "bool"
+  | .int => "int"
+  | .string => "string"
+  | .option t => s!"option {Ty.renderWith true t}"
+  | .list t => s!"list {Ty.renderWith true t}"
+  | .hashmap k v => s!"hashmap {Ty.renderWith true k} {Ty.renderWith true v}"
+  | .tuple ts => s!"tuple({Ty.renderGroup ts})"
+  | .fn ps r =>
+    let s := s!"({Ty.renderGroup ps}) -> {Ty.renderWith false r}"
+    if parens then s!"({s})" else s
+  | .struct name => s!"struct {name}"
+  | .ind name => s!"inductive {name}"
+
+public def Ty.renderGroup : List Ty → String
+  | [] => ""
+  | [t] => Ty.renderWith false t
+  | t :: ts => s!"{Ty.renderWith false t}, {Ty.renderGroup ts}"
+
+end
+
+public def Ty.render (t : Ty) : String := Ty.renderWith false t
+
+public instance : ToString Ty := ⟨Ty.render⟩
+
 public inductive Expression where
 /-- A function, annotated with the name and type of each of its parameters. -/
 | lam : List (String × Ty) → Expression → Expression

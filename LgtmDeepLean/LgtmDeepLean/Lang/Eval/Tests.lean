@@ -227,7 +227,7 @@ place a list is read element by element rather than whole. -/
 lgtm private def bumpAll as "bump-all" (xs : list int) : list int :=
   map list xs (fun (x : int) => x + 1)
 
-#guard bumpAll.check {} []
+#guard (bumpAll.check {} []).isOk
 
 -- The closure the function evaluates to captures the call's environment, so the body runs over the
 -- parameter of the `fun` in front of `xs` — the same way a call into a closure runs it.
@@ -388,7 +388,7 @@ example : Eval {} ∅ [lgtm| let x = 1 in let y = x + 1 in x + y] (.int 3) :=
 lgtm private def letDouble as "let-double" (n : int) : int :=
   let m = n + 1 in m + m
 
-#guard letDouble.check {} []
+#guard (letDouble.check {} []).isOk
 
 -- The binding goes in front of the call environment, so a `let` in a declaration's body sees the
 -- parameters and the body sees the binding.
@@ -481,7 +481,7 @@ example : ¬ Eval {} ∅ [lgtm| true] (.int 1) := by
 lgtm private def pick (b : bool) (x : int) (y : int) : int :=
   if b then { x } else { y }
 
-#guard pick.check {} []
+#guard (pick.check {} []).isOk
 
 -- Which branch runs is decided by the condition, and it is `EIteTrue` or `EIteFalse` that says so.
 example : FuncDecl.Apply pick {} [] [.bool true, .int 1, .int 2] (.int 1) :=
@@ -532,7 +532,7 @@ private theorem pick.eq_ite {b : Bool} {x y : Int} {res : Value}
 
 -- The branch not taken is never evaluated, which is the whole of what a conditional does that a
 -- two-argument function could not: the `else` below has no value at all, and the call still has one.
-#guard !({ pick with body := [lgtm| if b then { x } else { missing() }] } : FuncDecl).check {} []
+#guard !(({ pick with body := [lgtm| if b then { x } else { missing() }] } : FuncDecl).check {} []).isOk
 
 example : FuncDecl.Apply { pick with body := [lgtm| if b then { x } else { missing() }] } {} []
     [.bool true, .int 1, .int 2] (.int 1) :=
@@ -544,7 +544,7 @@ which is what the form being polymorphic comes to: a conditional produces whatev
 lgtm private def maybeReverse as "maybe-reverse" (b : bool) (xs : list int) : list int :=
   if b then { reverse xs } else { xs }
 
-#guard maybeReverse.check {} []
+#guard (maybeReverse.check {} []).isOk
 
 example : FuncDecl.Apply maybeReverse {} [] [.bool true, .list [.int 1, .int 2]]
     (.list [.int 2, .int 1]) :=
@@ -566,7 +566,7 @@ example (v : Value) (b : Bool) (vs : List Value)
 lgtm private def pickFirst as "pick-first" (x : int) (y : int) : int :=
   if true then { x } else { y }
 
-#guard pickFirst.check {} []
+#guard (pickFirst.check {} []).isOk
 
 example : FuncDecl.Apply pickFirst {} [] [.int 1, .int 2] (.int 1) :=
   .EApply _ (.cons "x" (.int 1) (.cons "y" (.int 2) .nil))
@@ -593,7 +593,7 @@ example (v : Value) (x y : Int) (h : FuncDecl.Apply pickFirst {} [] [.int x, .in
 /-- The literal on its own, which is the shortest declaration that returns a `bool`. -/
 lgtm private def yes : bool := true
 
-#guard yes.check {} []
+#guard (yes.check {} []).isOk
 
 example : FuncDecl.Apply yes {} [] [] (.bool true) := .EApply _ .nil (.EBoolLit true)
 
@@ -652,7 +652,7 @@ example (v : Value) : ¬ Eval {} ∅ [lgtm| true && 1] v := by
 lgtm private def both (b : bool) (c : bool) : bool :=
   b && c
 
-#guard both.check {} []
+#guard (both.check {} []).isOk
 
 example : FuncDecl.Apply both {} [] [.bool false, .bool true] (.bool false) :=
   .EApply _ (.cons "b" (.bool false) (.cons "c" (.bool true) .nil))
@@ -707,7 +707,7 @@ exchanged. -/
 lgtm private def either (b : bool) (c : bool) : bool :=
   b || c
 
-#guard either.check {} []
+#guard (either.check {} []).isOk
 
 example : FuncDecl.Apply either {} [] [.bool true, .bool false] (.bool true) :=
   .EApply _ (.cons "b" (.bool true) (.cons "c" (.bool false) .nil))
@@ -741,7 +741,7 @@ private theorem either.eq_or {b c : Bool} {res : Value}
 -- The operand that did not settle the answer is never evaluated, which is what these forms do that
 -- a two-argument function could not: the `missing()` below has no value at all, and the call still
 -- has one — the same thing the branch of an `ite` that did not run demonstrates.
-#guard !({ both with body := [lgtm| b && missing()] } : FuncDecl).check {} []
+#guard !(({ both with body := [lgtm| b && missing()] } : FuncDecl).check {} []).isOk
 
 example : FuncDecl.Apply { both with body := [lgtm| b && missing()] } {} []
     [.bool false, .bool true] (.bool false) :=
@@ -792,30 +792,30 @@ lgtm private def answerPlus as "answer-plus" : int :=
 private def arith : Globals := Globals.ofDecls [double, quad, doublePlus, answer, answerPlus]
 
 -- A body may mention a global, and `FuncDecl.check` finds it at the type its declaration gives.
-#guard quad.check {} arith
-#guard answerPlus.check {} arith
-#guard Globals.check {} arith
+#guard (quad.check {} arith).isOk
+#guard (answerPlus.check {} arith).isOk
+#guard (Globals.check {} arith).isOk
 
 -- Without the table the same name is free, and the body does not check.  This is all `Globals` adds
 -- to the checker: `double` has a type in `quad`'s body only because `arith` says so.
-#guard !quad.check {} []
-#guard !answerPlus.check {} []
+#guard !(quad.check {} []).isOk
+#guard !(answerPlus.check {} []).isOk
 
 -- The arity is the declaration's, so a global is as picky about how many arguments it gets as any
 -- other function, and a nullary global has to be called rather than just named.
-#guard !({ quad with body := [lgtm| double(1, 2)] } : FuncDecl).check {} arith
-#guard !({ answerPlus with body := [lgtm| answer + 1] } : FuncDecl).check {} arith
+#guard !(({ quad with body := [lgtm| double(1, 2)] } : FuncDecl).check {} arith).isOk
+#guard !(({ answerPlus with body := [lgtm| answer + 1] } : FuncDecl).check {} arith).isOk
 
 -- A parameter shadows a global of the same name, in the checker and in `Env.lookup` alike.
-#guard ({ quad with parameters := [("double", .int)], body := [lgtm| double] }
-  : FuncDecl).check {} arith
-#guard !({ quad with parameters := [("double", .int)], body := [lgtm| double(1)] }
-  : FuncDecl).check {} arith
+#guard (({ quad with parameters := [("double", .int)], body := [lgtm| double] }
+  : FuncDecl).check {} arith).isOk
+#guard !(({ quad with parameters := [("double", .int)], body := [lgtm| double(1)] }
+  : FuncDecl).check {} arith).isOk
 
 -- A `let` shadows a global the same way a parameter does, so the name becomes a value rather than
 -- something to call.
-#guard ({ quad with body := [lgtm| let double = n in double] } : FuncDecl).check {} arith
-#guard !({ quad with body := [lgtm| let double = n in double(1)] } : FuncDecl).check {} arith
+#guard (({ quad with body := [lgtm| let double = n in double] } : FuncDecl).check {} arith).isOk
+#guard !(({ quad with body := [lgtm| let double = n in double(1)] } : FuncDecl).check {} arith).isOk
 
 -- And `Env.lookup` reads it the same way round: the binding is found before the globals are
 -- consulted, so the closure `double` would have resolved to is never built.
@@ -824,7 +824,7 @@ example : FuncDecl.Apply { quad with body := [lgtm| let double = n in double] } 
   .EApply _ (.cons "n" (.int 3) .nil) (.ELet _ _ _ (.EVarRef "n" rfl) (.EVarRef "double" rfl))
 
 -- A name that is neither a parameter nor a global is still free.
-#guard !({ double with body := [lgtm| missing(n)] } : FuncDecl).check {} arith
+#guard !(({ double with body := [lgtm| missing(n)] } : FuncDecl).check {} arith).isOk
 
 /-- Every declaration in `arith` checks, which is what a call to any of them needs. -/
 private theorem arith.wellTyped : Globals.WellTyped {} arith := by
@@ -864,8 +864,8 @@ a context that already holds `countdown`, so it may call itself. -/
 lgtm private def countdown (n : int) : int :=
   countdown(n - 1)
 
-#guard Globals.check {} (Globals.ofDecls [countdown])
-#guard !countdown.check {} []
+#guard (Globals.check {} (Globals.ofDecls [countdown])).isOk
+#guard !(countdown.check {} []).isOk
 
 /-- Mutual recursion needs nothing further: both are in the context both are checked against. -/
 lgtm private def ping (n : int) : int :=
@@ -874,13 +874,13 @@ lgtm private def ping (n : int) : int :=
 lgtm private def pong (n : int) : int :=
   ping(n - 1)
 
-#guard Globals.check {} (Globals.ofDecls [ping, pong])
+#guard (Globals.check {} (Globals.ofDecls [ping, pong])).isOk
 
 -- Neither checks alone, and neither checks with only itself in scope: it is the table that ties
 -- them together.
-#guard !ping.check {} []
-#guard !ping.check {} (Globals.ofDecls [ping])
-#guard !Globals.check {} (Globals.ofDecls [ping])
+#guard !(ping.check {} []).isOk
+#guard !(ping.check {} (Globals.ofDecls [ping])).isOk
+#guard !(Globals.check {} (Globals.ofDecls [ping])).isOk
 
 /-! ## Programs
 
@@ -892,7 +892,7 @@ private def arithProgram : Program :=
 
 example : arithProgram.globals = arith := rfl
 
-#guard arithProgram.check
+#guard (arithProgram.check).isOk
 
 -- A program resolves the names its declarations declare, so `as` is what shows up here and the Lean
 -- name does not.
@@ -909,7 +909,7 @@ example : arithProgram.lookup quad.name = some quad :=
   arithProgram.lookup_self (by decide) (by simp [arithProgram])
 
 -- A duplicate name is not unsound, just dead: the second declaration is checked and unreachable.
-#guard ({ funcDecls := [double, { double with resultType := .int }] } : Program).check
+#guard (({ funcDecls := [double, { double with resultType := .int }] } : Program).check).isOk
 example : ({ funcDecls := [answer, { answer with resultType := .string }] }
     : Program).lookup "answer" = some answer := rfl
 
@@ -964,12 +964,12 @@ private theorem hasType_point {a b : Int} :
 lgtm private def swap (p : struct Point) : struct Point :=
   new Point { x = p.y, y = p.x }
 
-#guard swap.check points []
+#guard (swap.check points []).isOk
 
 -- Without the struct table the body does not check: `new Point { … }` has nothing to check its
 -- fields against, and the result type names nothing.  This is all `Structs` adds to the checker, and
 -- it is the same thing `Globals` adds for names.
-#guard !swap.check {} []
+#guard !(swap.check {} []).isOk
 
 /-- `EStructNew` evaluates one expression per field and keeps each result under that field's name, so
 building a struct out of another one's fields is two `EStructGet`s under an `EStructNew`.
@@ -997,7 +997,7 @@ example (v : Value)
 lgtm private def getX as "get-x" (p : struct Point) : int :=
   p.x + 1
 
-#guard getX.check points []
+#guard (getX.check points []).isOk
 
 -- `EStructGet` reads the field out of the value, so it is the `EVarRef` that found the struct that
 -- decides what comes back.
@@ -1007,7 +1007,7 @@ example : FuncDecl.Apply getX points [] [.struct "Point" [("x", .int 1), ("y", .
 
 -- A field the declaration does not list is not a field, so a body reading one does not check even
 -- though the value it would be handed at run time carries only declared fields.
-#guard !({ getX with body := [lgtm| p.z + 1] } : FuncDecl).check points []
+#guard !(({ getX with body := [lgtm| p.z + 1] } : FuncDecl).check points []).isOk
 
 /-- Reading a field gives what the value has bound to it, which is the property `structGet` exists to
 express: the point's other fields, and whatever else it carries, do not come into it. -/
@@ -1031,7 +1031,7 @@ private theorem getX.eq_succ_x {fvs : FieldValues} {a : Int} {res : Value}
 lgtm private def shiftX as "shift-x" (p : struct Point) (d : int) : struct Point :=
   { p with x = p.x + d }
 
-#guard shiftX.check points []
+#guard (shiftX.check points []).isOk
 
 -- An update rebinds the fields it names in place, so `y` comes through untouched and the fields stay
 -- in the order `Point` declares them.
@@ -1051,10 +1051,10 @@ example : FuncDecl.Apply shiftX points [] [.struct "Point" [("x", .int 1), ("y",
 
 -- An empty update is rejected, as `Expression.structUpdate` says it must be: it would be the
 -- expression it updates, written so as to suggest otherwise.
-#guard !({ shiftX with body := [lgtm| { p with }] } : FuncDecl).check points []
+#guard !(({ shiftX with body := [lgtm| { p with }] } : FuncDecl).check points []).isOk
 
 -- And a field the declaration does not have cannot be introduced by one.
-#guard !({ shiftX with body := [lgtm| { p with z = d }] } : FuncDecl).check points []
+#guard !(({ shiftX with body := [lgtm| { p with z = d }] } : FuncDecl).check points []).isOk
 
 /-- What an update leaves alone is the property it exists to express: `shift-x` moves `x` by `d` and
 hands `y` back as it found it, for every point and every distance.
@@ -1110,11 +1110,11 @@ private def pointProgram : Program where
 
 example : pointProgram.typeDecls = points := rfl
 
-#guard pointProgram.check
+#guard (pointProgram.check).isOk
 
 -- The struct declaration is what makes it check: without it the three bodies mention a type that
 -- names nothing.
-#guard !({ pointProgram with structDecls := [] } : Program).check
+#guard !(({ pointProgram with structDecls := [] } : Program).check).isOk
 
 -- A program resolves the struct names it declares, and no two of them share a name — the counterpart
 -- of `NamesUnique` for types rather than for declarations.
@@ -1133,11 +1133,11 @@ example : pointProgram.lookupStruct Point.name = some Point :=
 -- declaration below is one no body mentions, so the three bodies check exactly as before and it is
 -- the repeated field alone that turns the program down.
 example : pointProgram.FieldNamesUnique := by decide
-#guard !({ pointProgram with
+#guard !(({ pointProgram with
   structDecls := [Point, { name := "Dup", fields := [("x", .int), ("x", .string)] }] }
-  : Program).check
-#guard ({ pointProgram with structDecls := [Point, { name := "Dup", fields := [("x", .int)] }] }
-  : Program).check
+  : Program).check).isOk
+#guard (({ pointProgram with structDecls := [Point, { name := "Dup", fields := [("x", .int)] }] }
+  : Program).check).isOk
 
 /-- `pointProgram` checks, which is a property of the program alone. -/
 private theorem pointProgram.wellTyped : pointProgram.WellTyped := by
@@ -1197,12 +1197,12 @@ private theorem hasType_red : Value.HasType shapes (.ind "Color" "Red" []) (.ind
 lgtm private def area (s : inductive Shape) : int :=
   match s with | Circle(r) => r + r | Rect(w, h) => w + h
 
-#guard area.check shapes []
+#guard (area.check shapes []).isOk
 
 -- Without the inductive table the body does not check: the alternatives have no constructors to be
 -- exhaustive over, and the parameter's type names nothing.  This is all `Inductives` adds to the
 -- checker, and it is the same thing `Structs` adds for the other kind of type.
-#guard !area.check {} []
+#guard !(area.check {} []).isOk
 
 /-- The same function with its alternatives the other way round from the declaration's constructors.
 
@@ -1212,7 +1212,7 @@ written. -/
 lgtm private def areaSwapped as "area-swapped" (s : inductive Shape) : int :=
   match s with | Rect(w, h) => w + h | Circle(r) => r + r
 
-#guard areaSwapped.check shapes []
+#guard (areaSwapped.check shapes []).isOk
 
 example : FuncDecl.Apply areaSwapped shapes [] [.ind "Shape" "Rect" [.int 3, .int 4]] (.int 7) :=
   .EApply _ (.cons "s" hasType_rect .nil)
@@ -1226,10 +1226,11 @@ example : FuncDecl.Apply areaSwapped shapes [] [.ind "Shape" "Circle" [.int 5]] 
 
 -- Reordering is all the alternatives are free to do: a constructor left out is still not exhaustive,
 -- and neither is one named twice in place of the one that is missing.
-#guard !({ areaSwapped with body := [lgtm| match s with | Rect(w, h) => w + h] }
-  : FuncDecl).check shapes []
-#guard !({ areaSwapped with
-  body := [lgtm| match s with | Rect(w, h) => w + h | Rect(w, h) => w] } : FuncDecl).check shapes []
+#guard !(({ areaSwapped with body := [lgtm| match s with | Rect(w, h) => w + h] }
+  : FuncDecl).check shapes []).isOk
+#guard !(({ areaSwapped with
+  body := [lgtm| match s with | Rect(w, h) => w + h | Rect(w, h) => w] } : FuncDecl).check shapes
+  []).isOk
 
 /-- `EIndMatch` takes the alternative for the constructor the value carries and binds that
 alternative's names to what the constructor holds, so a call comes down to the arithmetic in one
@@ -1282,7 +1283,7 @@ private theorem area.rect {w h : Int} {res : Value}
 lgtm private def square (n : int) : inductive Shape :=
   new Shape.Rect(n, n)
 
-#guard square.check shapes []
+#guard (square.check shapes []).isOk
 
 -- `EIndNew` evaluates one expression per thing the constructor carries and keeps the values in that
 -- order, under the two names it was given.
@@ -1316,8 +1317,8 @@ private def forest : Globals := Globals.ofDecls [total]
 -- The declaration checks against a context holding itself, exactly as `countdown` does: it is the
 -- table that makes the recursive call resolve, and the recursive *type* needs nothing at all, since
 -- `Tree` is resolved where it is mentioned rather than where it was declared.
-#guard Globals.check trees forest
-#guard !total.check trees []
+#guard (Globals.check trees forest).isOk
+#guard !(total.check trees []).isOk
 
 /-- `Leaf` carries nothing, so the empty alternative runs and the recursion stops. -/
 private theorem hasType_leaf : Value.HasType trees (.ind "Tree" "Leaf" []) (.ind "Tree") :=
@@ -1351,11 +1352,11 @@ private def shapeProgram : Program where
 
 example : shapeProgram.typeDecls = shapes := rfl
 
-#guard shapeProgram.check
+#guard (shapeProgram.check).isOk
 
 -- The type declarations are what make it check: without them both bodies mention a type that names
 -- nothing.
-#guard !({ shapeProgram with inductiveDecls := [] } : Program).check
+#guard !(({ shapeProgram with inductiveDecls := [] } : Program).check).isOk
 
 -- A program resolves the inductive names it declares, and no two of them share a name — the
 -- counterpart of `StructNamesUnique` for the other kind of type.
@@ -1377,10 +1378,10 @@ example : ¬ ({ shapeProgram with
 
 -- `check` is where that is enforced, as it is for a repeated field: the extra type below is one no
 -- body mentions, so what turns the program down is the repeated constructor and nothing else.
-#guard !({ shapeProgram with inductiveDecls := [Color, Shape,
-  { name := "Dup", constructors := [("Red", []), ("Red", [.int])] }] } : Program).check
-#guard ({ shapeProgram with inductiveDecls := [Color, Shape,
-  { name := "Dup", constructors := [("Red", []), ("Crimson", [.int])] }] } : Program).check
+#guard !(({ shapeProgram with inductiveDecls := [Color, Shape,
+  { name := "Dup", constructors := [("Red", []), ("Red", [.int])] }] } : Program).check).isOk
+#guard (({ shapeProgram with inductiveDecls := [Color, Shape,
+  { name := "Dup", constructors := [("Red", []), ("Crimson", [.int])] }] } : Program).check).isOk
 
 /-- `shapeProgram` checks, which is a property of the program alone. -/
 private theorem shapeProgram.wellTyped : shapeProgram.WellTyped := by
@@ -1442,7 +1443,7 @@ example : Eval {} ∅ [lgtm| [1 : int] == [: int]] (.bool false) :=
 lgtm private def same (x : int) (y : int) : bool :=
   x == y
 
-#guard same.check {} []
+#guard (same.check {} []).isOk
 
 example : FuncDecl.Apply same {} [] [.int 1, .int 1] (.bool true) :=
   .EApply _ (.cons "x" (.int 1) (.cons "y" (.int 1) .nil))
@@ -1489,7 +1490,7 @@ the way down. -/
 lgtm private def sameTree as "same-tree" (a : inductive Tree) (b : inductive Tree) : bool :=
   a == b
 
-#guard sameTree.check trees []
+#guard (sameTree.check trees []).isOk
 
 -- The same constructors all the way down, carrying the same data, is what `true` comes from.
 example : FuncDecl.Apply sameTree trees [] [.ind "Tree" "Leaf" [], .ind "Tree" "Leaf" []]
@@ -1557,7 +1558,7 @@ struct type carries them in. -/
 lgtm private def samePoint as "same-point" (p : struct Point) (q : struct Point) : bool :=
   p == q
 
-#guard samePoint.check points []
+#guard (samePoint.check points []).isOk
 
 example : FuncDecl.Apply samePoint points []
     [.struct "Point" [("x", .int 1), ("y", .int 2)],
@@ -1617,7 +1618,7 @@ private def sameFns : FuncDecl :=
 
 -- And it does turn it down, so the stuck case is one a well-typed program never reaches: it is
 -- `Ty.comparable` that rules it out, on the type the two operands share.
-#guard !sameFns.check {} []
+#guard !(sameFns.check {} []).isOk
 
 
 /-! ## Options
@@ -1664,7 +1665,7 @@ example : Value.HasType ({} : TypeDecls) (.option none) (.option (.fn [.int] .in
 lgtm private def succOr as "succ-or" (o : ~(Ty.option .int)) : int :=
   ~(Expression.optionMatch (.varRef "o") (.intLit 0) "x" [lgtm| x + 1])
 
-#guard succOr.check {} []
+#guard (succOr.check {} []).isOk
 
 -- Which case runs is decided by the value the scrutinee produced, and it is `EOptionMatchSome` or
 -- `EOptionMatchNone` that says so — the two rules `ite` has two of for the same reason.
@@ -1764,7 +1765,7 @@ example (v : Value) :
 lgtm private def justIt as "just-it" (n : int) : ~(Ty.option .int) :=
   ~(Expression.optionSome [lgtm| n])
 
-#guard justIt.check {} []
+#guard (justIt.check {} []).isOk
 
 example : FuncDecl.Apply justIt {} [] [.int 7] (.option (some (.int 7))) :=
   .EApply _ (.cons "n" (.int 7) .nil) (.ESome _ (.EVarRef "n" rfl))
@@ -1778,7 +1779,7 @@ annotation is all there is to go on. -/
 lgtm private def nothing : ~(Ty.option .int) :=
   ~(Expression.optionNone .int)
 
-#guard nothing.check {} []
+#guard (nothing.check {} []).isOk
 
 example : FuncDecl.Apply nothing {} [] [] (.option none) := .EApply _ .nil (.ENone .int)
 
@@ -1814,7 +1815,7 @@ private def sameOpt : FuncDecl where
   body := .equals (.varRef "a") (.varRef "b")
   resultType := .bool
 
-#guard sameOpt.check {} []
+#guard (sameOpt.check {} []).isOk
 
 -- And what a comparison coming out `true` *means* holds for options like any other comparable type:
 -- it is the two values being equal, which is what `Value.beq?_eq_some_iff` is for.
@@ -1849,8 +1850,8 @@ example (v : Value) : ¬ Eval {} ∅ (Expression.equals
           cases hr
           simp [Env.closure, Value.beq?] at hb
 
-#guard !({ sameOpt with parameters := [("a", .option (.fn [.int] .int)),
-  ("b", .option (.fn [.int] .int))] } : FuncDecl).check {} []
+#guard !(({ sameOpt with parameters := [("a", .option (.fn [.int] .int)),
+  ("b", .option (.fn [.int] .int))] } : FuncDecl).check {} []).isOk
 
 /-! ## Hashmaps
 
@@ -1950,7 +1951,7 @@ private theorem hasType_mapEmpty {td : TypeDecls} {kt vt : Ty} :
 lgtm private def getOr as "get-or" (m : hashmap string int) (k : string) : int :=
   match m[k] with | none => 0 | some(x) => x
 
-#guard getOr.check {} []
+#guard (getOr.check {} []).isOk
 
 -- Which case of the match runs is decided by what the lookup produced, so a key the map binds and
 -- a key it does not are the two option rules, exactly as for any other option.
@@ -1991,7 +1992,7 @@ out of one. -/
 lgtm private def bind (m : hashmap string int) (k : string) (v : int) : hashmap string int :=
   { m with [k] = v }
 
-#guard bind.check {} []
+#guard (bind.check {} []).isOk
 
 example : FuncDecl.Apply bind {} [] [.hashmap [], .string "a", .int 1]
     (.hashmap [(.string "a", .int 1)]) :=
@@ -2097,7 +2098,7 @@ one. -/
 lgtm private def isEmpty as "is-empty" (m : hashmap string int) : bool :=
   toList m == [: tuple(string, int)]
 
-#guard isEmpty.check {} []
+#guard (isEmpty.check {} []).isOk
 
 -- The comparison is `Value.beq?` on two lists, so the empty map answers `true` and a map binding
 -- something answers `false` — on the length alone, with nothing underneath compared.
@@ -2204,7 +2205,7 @@ the form is in, and the one place a map is read by something other than a key. -
 lgtm private def bump (m : hashmap string int) : hashmap string int :=
   map hashmap m (fun (k : string) (v : int) => v + 1)
 
-#guard bump.check {} []
+#guard (bump.check {} []).isOk
 
 -- The closure the function evaluates to captures the call's environment, so the body runs over the
 -- parameters of the `fun` in front of `m` — the same way a call into a closure runs it.
@@ -2364,8 +2365,8 @@ lgtm private def pair (s : string) (n : int) : tuple(string, int) :=
   tuple(s, n)
 
 -- A tuple names nothing, so both check against no `TypeDecls` at all.
-#guard fst.check {} []
-#guard pair.check {} []
+#guard (fst.check {} []).isOk
+#guard (pair.check {} []).isOk
 
 /-- A pair of a `string` and an `int` has the tuple type of those two, which is as much as a tuple
 value's type ever needs: there is no declaration to resolve, so the length and the two positions are

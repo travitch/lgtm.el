@@ -7,7 +7,8 @@ meta import LgtmDeepLean.Lang.TypeCheck
 
 What `Expression.infer`, `FuncDecl.check`, and `Program.check` accept and turn down, worked over a
 fixed table of struct and inductive declarations: each type former in turn, the uniqueness
-conditions on the names a program declares, and `TypeDecls.budget` at its boundary. -/
+conditions on the names a program declares, and `TypeDecls.budget` at its boundary.  What a check
+that did not pass *says* is the last section. -/
 
 /-- `struct Point { x : int, y : int }` -/
 private def point : StructDecl where
@@ -199,10 +200,10 @@ private def ctx : Context :=
 #guard (Expression.listMap (.hashmapToList (.varRef "m"))
   (.lam [("p", .tuple [.string, .int])] (.tupleGet (.varRef "p") 1))).infer types ctx
   == some (.list .int)
-#guard (Expression.listMap (.varRef "xs")
-  (.lam [("x", .int)] (.varRef "x"))).check types ctx (.list .int)
-#guard !(Expression.listMap (.varRef "xs")
-  (.lam [("x", .int)] (.varRef "x"))).check types ctx (.list .string)
+#guard ((Expression.listMap (.varRef "xs")
+  (.lam [("x", .int)] (.varRef "x"))).check types ctx (.list .int)).isOk
+#guard !((Expression.listMap (.varRef "xs")
+  (.lam [("x", .int)] (.varRef "x"))).check types ctx (.list .string)).isOk
 
 -- A `lam` takes its parameter types from its annotation and its result type from its body.
 #guard (Expression.lam [("x", .int)] (.varRef "x")).infer types ctx == some (.fn [.int] .int)
@@ -308,9 +309,9 @@ which is what one is for. -/
 #guard (Expression.boolLit true).infer types ctx == some .bool
 #guard (Expression.boolLit false).infer types ctx == some .bool
 #guard (Expression.boolLit true).infer {} [] == some .bool
-#guard (Expression.boolLit true).check types ctx .bool
-#guard !(Expression.boolLit true).check types ctx .int
-#guard !(Expression.boolLit false).check types ctx (.list .bool)
+#guard ((Expression.boolLit true).check types ctx .bool).isOk
+#guard !((Expression.boolLit true).check types ctx .int).isOk
+#guard !((Expression.boolLit false).check types ctx (.list .bool)).isOk
 
 -- So a literal goes wherever a `bool` goes: into a list of them, into a conditional's branches, and
 -- into a call expecting one.
@@ -390,8 +391,8 @@ which is what one is for. -/
 #guard (Expression.boolAnd (.boolLit true) (.boolLit false)).infer types ctx == some .bool
 #guard (Expression.boolOr (.boolLit true) (.boolLit false)).infer types ctx == some .bool
 #guard (Expression.boolAnd (.boolLit true) (.boolLit false)).infer {} [] == some .bool
-#guard (Expression.boolAnd (.varRef "flag") (.boolLit true)).check types ctx .bool
-#guard !(Expression.boolAnd (.varRef "flag") (.boolLit true)).check types ctx .int
+#guard ((Expression.boolAnd (.varRef "flag") (.boolLit true)).check types ctx .bool).isOk
+#guard !((Expression.boolAnd (.varRef "flag") (.boolLit true)).check types ctx .int).isOk
 
 -- Both operands have to be `bool`s, on either side and whatever else they are: there is no
 -- truthiness, so nothing else will do, exactly as for a conditional's condition.
@@ -566,16 +567,16 @@ private def cycles : TypeDecls :=
   == some .bool
 
 -- Checking agrees with inference.
-#guard (Expression.lnil .int).check types ctx (.list .int)
-#guard !(Expression.lnil .int).check types ctx .int
-#guard (Expression.plus (.varRef "n") (.intLit 1)).check types ctx .int
-#guard !(Expression.plus (.varRef "n") (.intLit 1)).check types ctx (.list .int)
-#guard !(Expression.plus (.varRef "n") (.lnil .int)).check types ctx .int
-#guard (Expression.stringLit "hi").check types ctx .string
-#guard !(Expression.stringLit "hi").check types ctx .int
-#guard (Expression.lam [("x", .int)] (.varRef "x")).check types ctx (.fn [.int] .int)
-#guard !(Expression.lam [("x", .int)] (.varRef "x")).check types ctx (.fn [.string] .string)
-#guard !(Expression.lam [("x", .int)] (.varRef "x")).check types ctx .int
+#guard ((Expression.lnil .int).check types ctx (.list .int)).isOk
+#guard !((Expression.lnil .int).check types ctx .int).isOk
+#guard ((Expression.plus (.varRef "n") (.intLit 1)).check types ctx .int).isOk
+#guard !((Expression.plus (.varRef "n") (.intLit 1)).check types ctx (.list .int)).isOk
+#guard !((Expression.plus (.varRef "n") (.lnil .int)).check types ctx .int).isOk
+#guard ((Expression.stringLit "hi").check types ctx .string).isOk
+#guard !((Expression.stringLit "hi").check types ctx .int).isOk
+#guard ((Expression.lam [("x", .int)] (.varRef "x")).check types ctx (.fn [.int] .int)).isOk
+#guard !((Expression.lam [("x", .int)] (.varRef "x")).check types ctx (.fn [.string] .string)).isOk
+#guard !((Expression.lam [("x", .int)] (.varRef "x")).check types ctx .int).isOk
 
 /-- `fun (x : int) (y : int) => x + (y - 1)` -/
 private def addPred : FuncDecl where
@@ -586,12 +587,12 @@ private def addPred : FuncDecl where
   resultType := .int
 
 -- A declaration checks when its body agrees with the result type it declares.
-#guard addPred.check {} []
-#guard !({ addPred with resultType := .list .int } : FuncDecl).check {} []
+#guard (addPred.check {} []).isOk
+#guard !(({ addPred with resultType := .list .int } : FuncDecl).check {} []).isOk
 
 -- The parameter list is all the body has to work with, and it is checked at the types it gives.
-#guard !({ addPred with parameters := [("x", .int)] } : FuncDecl).check {} []
-#guard !({ addPred with parameters := [("x", .int), ("y", .list .int)] } : FuncDecl).check {} []
+#guard !(({ addPred with parameters := [("x", .int)] } : FuncDecl).check {} []).isOk
+#guard !(({ addPred with parameters := [("x", .int), ("y", .list .int)] } : FuncDecl).check {} []).isOk
 
 /-- `fun (s : string) => ["!", s]` -/
 private def bang : FuncDecl where
@@ -601,9 +602,9 @@ private def bang : FuncDecl where
   body := .lcons (.stringLit "!") (.lcons (.varRef "s") (.lnil .string))
   resultType := .list .string
 
-#guard bang.check {} []
-#guard !({ bang with resultType := .list .int } : FuncDecl).check {} []
-#guard !({ bang with parameters := [("s", .int)] } : FuncDecl).check {} []
+#guard (bang.check {} []).isOk
+#guard !(({ bang with resultType := .list .int } : FuncDecl).check {} []).isOk
+#guard !(({ bang with parameters := [("s", .int)] } : FuncDecl).check {} []).isOk
 
 /-- `fun (g : (int) -> int) (x : int) => g(x)` -/
 private def applyTo : FuncDecl where
@@ -614,12 +615,12 @@ private def applyTo : FuncDecl where
   resultType := .int
 
 -- A parameter of function type is callable, at the arity and types its type gives.
-#guard applyTo.check {} []
-#guard !({ applyTo with parameters := [("g", .fn [.string] .int), ("x", .int)] }
-  : FuncDecl).check {} []
-#guard !({ applyTo with parameters := [("g", .fn [.int, .int] .int), ("x", .int)] }
-  : FuncDecl).check {} []
-#guard !({ applyTo with resultType := .string } : FuncDecl).check {} []
+#guard (applyTo.check {} []).isOk
+#guard !(({ applyTo with parameters := [("g", .fn [.string] .int), ("x", .int)] }
+  : FuncDecl).check {} []).isOk
+#guard !(({ applyTo with parameters := [("g", .fn [.int, .int] .int), ("x", .int)] }
+  : FuncDecl).check {} []).isOk
+#guard !(({ applyTo with resultType := .string } : FuncDecl).check {} []).isOk
 
 /-- `fun (n : int) => fun (m : int) => n + m` -/
 private def adder : FuncDecl where
@@ -630,9 +631,9 @@ private def adder : FuncDecl where
   resultType := .fn [.int] .int
 
 -- A declaration can return a function, and its result type is checked like any other.
-#guard adder.check {} []
-#guard !({ adder with resultType := .int } : FuncDecl).check {} []
-#guard !({ adder with resultType := .fn [.string] .int } : FuncDecl).check {} []
+#guard (adder.check {} []).isOk
+#guard !(({ adder with resultType := .int } : FuncDecl).check {} []).isOk
+#guard !(({ adder with resultType := .fn [.string] .int } : FuncDecl).check {} []).isOk
 
 /-! ### Structs
 
@@ -753,9 +754,9 @@ private def swap : FuncDecl where
 
 -- A declaration takes and returns types like any other type, and it is the struct table rather
 -- than the globals that has to supply the declaration its parameter names.
-#guard swap.check types []
-#guard !swap.check {} []
-#guard !({ swap with resultType := .struct "Pair" } : FuncDecl).check types []
+#guard (swap.check types []).isOk
+#guard !(swap.check {} []).isOk
+#guard !(({ swap with resultType := .struct "Pair" } : FuncDecl).check types []).isOk
 
 /-- `fun (p : Point) => { p with x = p.x + 1 }` -/
 private def shift : FuncDecl where
@@ -765,8 +766,8 @@ private def shift : FuncDecl where
   body := .structUpdate (.varRef "p") [("x", .plus (.structGet (.varRef "p") "x") (.intLit 1))]
   resultType := .struct "Point"
 
-#guard shift.check types []
-#guard !shift.check {} []
+#guard (shift.check types []).isOk
+#guard !(shift.check {} []).isOk
 
 /-! ### Distinct field names
 
@@ -983,20 +984,20 @@ private def size : FuncDecl where
 -- A declaration takes and returns an inductive type like any other type, and it is the inductive
 -- table that has to supply the declaration its parameter names — `At` also needs the struct table,
 -- so `size` checks only against the bundle holding both.
-#guard size.check types []
-#guard !size.check {} []
-#guard !size.check { is := Inductives.ofDecls [color, shape, tree] } []
-#guard !({ size with resultType := .string } : FuncDecl).check types []
+#guard (size.check types []).isOk
+#guard !(size.check {} []).isOk
+#guard !(size.check { is := Inductives.ofDecls [color, shape, tree] } []).isOk
+#guard !(({ size with resultType := .string } : FuncDecl).check types []).isOk
 
 -- The same declaration with its alternatives written in another order is the same declaration as far
 -- as checking is concerned, and one of them left out is still not.
-#guard ({ size with body := (Expression.indMatch (.varRef "s")
+#guard (({ size with body := (Expression.indMatch (.varRef "s")
   [("At", ["q"], .structGet (.varRef "q") "x"),
     ("Rect", ["w", "h"], .plus (.varRef "w") (.varRef "h")),
-    ("Circle", ["r"], .plus (.varRef "r") (.varRef "r"))]) } : FuncDecl).check types []
-#guard !({ size with body := (Expression.indMatch (.varRef "s")
+    ("Circle", ["r"], .plus (.varRef "r") (.varRef "r"))]) } : FuncDecl).check types []).isOk
+#guard !(({ size with body := (Expression.indMatch (.varRef "s")
   [("At", ["q"], .structGet (.varRef "q") "x"),
-    ("Circle", ["r"], .plus (.varRef "r") (.varRef "r"))]) } : FuncDecl).check types []
+    ("Circle", ["r"], .plus (.varRef "r") (.varRef "r"))]) } : FuncDecl).check types []).isOk
 
 /-- `fun (n : int) => Shape.Rect(n, n)` -/
 private def square : FuncDecl where
@@ -1006,9 +1007,9 @@ private def square : FuncDecl where
   body := .indNew "Shape" "Rect" [.varRef "n", .varRef "n"]
   resultType := .ind "Shape"
 
-#guard square.check types []
-#guard !square.check {} []
-#guard !({ square with resultType := .ind "Color" } : FuncDecl).check types []
+#guard (square.check types []).isOk
+#guard !(square.check {} []).isOk
+#guard !(({ square with resultType := .ind "Color" } : FuncDecl).check types []).isOk
 
 /-! ### Distinct constructor names
 
@@ -1192,10 +1193,10 @@ private def succOr : FuncDecl where
 
 -- A declaration over the new forms checks like any other, and against no table at all: an option
 -- names nothing for a `TypeDecls` to resolve.
-#guard succOr.check {} []
-#guard !({ succOr with resultType := .option .int } : FuncDecl).check {} []
-#guard !({ succOr with parameters := [("o", .int)] } : FuncDecl).check {} []
-#guard !({ succOr with parameters := [("o", .option .string)] } : FuncDecl).check {} []
+#guard (succOr.check {} []).isOk
+#guard !(({ succOr with resultType := .option .int } : FuncDecl).check {} []).isOk
+#guard !(({ succOr with parameters := [("o", .int)] } : FuncDecl).check {} []).isOk
+#guard !(({ succOr with parameters := [("o", .option .string)] } : FuncDecl).check {} []).isOk
 
 /-- `fun (n : int) => some(n)` -/
 private def justIt : FuncDecl where
@@ -1205,9 +1206,9 @@ private def justIt : FuncDecl where
   body := .optionSome (.varRef "n")
   resultType := .option .int
 
-#guard justIt.check {} []
-#guard !({ justIt with resultType := .option .string } : FuncDecl).check {} []
-#guard !({ justIt with resultType := .int } : FuncDecl).check {} []
+#guard (justIt.check {} []).isOk
+#guard !(({ justIt with resultType := .option .string } : FuncDecl).check {} []).isOk
+#guard !(({ justIt with resultType := .int } : FuncDecl).check {} []).isOk
 
 /-- `fun => none : int`, which is the shortest declaration that returns an option: the annotation is
 the only thing that says which one. -/
@@ -1218,17 +1219,17 @@ private def nothing : FuncDecl where
   body := .optionNone .int
   resultType := .option .int
 
-#guard nothing.check {} []
-#guard !({ nothing with resultType := .option .string } : FuncDecl).check {} []
-#guard !({ nothing with body := Expression.optionNone .string } : FuncDecl).check {} []
+#guard (nothing.check {} []).isOk
+#guard !(({ nothing with resultType := .option .string } : FuncDecl).check {} []).isOk
+#guard !(({ nothing with body := Expression.optionNone .string } : FuncDecl).check {} []).isOk
 
 -- Checking agrees with inference on the new forms too.
-#guard (Expression.optionNone .int).check types ctx (.option .int)
-#guard !(Expression.optionNone .int).check types ctx (.option .string)
-#guard !(Expression.optionNone .int).check types ctx .int
-#guard (Expression.optionSome (.intLit 1)).check types ctx (.option .int)
-#guard !(Expression.optionSome (.intLit 1)).check types ctx .int
-#guard (Expression.optionMatch (.varRef "o") (.intLit 0) "x" (.varRef "x")).check types ctx .int
+#guard ((Expression.optionNone .int).check types ctx (.option .int)).isOk
+#guard !((Expression.optionNone .int).check types ctx (.option .string)).isOk
+#guard !((Expression.optionNone .int).check types ctx .int).isOk
+#guard ((Expression.optionSome (.intLit 1)).check types ctx (.option .int)).isOk
+#guard !((Expression.optionSome (.intLit 1)).check types ctx .int).isOk
+#guard ((Expression.optionMatch (.varRef "o") (.intLit 0) "x" (.varRef "x")).check types ctx .int).isOk
 
 /-! ### Hashmaps
 
@@ -1387,10 +1388,10 @@ function type, which is the case the condition is for. -/
     (.lam [("k", .string), ("v", .int)] (.varRef "k")))
   (.lam [("k", .string), ("v", .string)] (.intLit 0))).infer types ctx
   == some (.hashmap .string .int)
-#guard (Expression.hashmapMap (.varRef "m")
-  (.lam [("k", .string), ("v", .int)] (.varRef "v"))).check types ctx (.hashmap .string .int)
-#guard !(Expression.hashmapMap (.varRef "m")
-  (.lam [("k", .string), ("v", .int)] (.varRef "k"))).check types ctx (.hashmap .string .int)
+#guard ((Expression.hashmapMap (.varRef "m")
+  (.lam [("k", .string), ("v", .int)] (.varRef "v"))).check types ctx (.hashmap .string .int)).isOk
+#guard !((Expression.hashmapMap (.varRef "m")
+  (.lam [("k", .string), ("v", .int)] (.varRef "k"))).check types ctx (.hashmap .string .int)).isOk
 
 -- A tuple type is the types it lists, in their order, and nothing else.  It is comparable exactly
 -- when all of them are: a tuple value is as canonical as a list value, so nothing of the kind that
@@ -1438,10 +1439,10 @@ function type, which is the case the condition is for. -/
   (.lnil (.tuple [.string, .int]))).infer types ctx == some .bool
 #guard (Expression.equals (.hashmapToList (.varRef "mfn"))
   (.lnil (.tuple [.string, .fn [.int] .int]))).infer types ctx == none
-#guard (Expression.hashmapToList (.varRef "m")).check types ctx
-  (.list (.tuple [.string, .int]))
-#guard !(Expression.hashmapToList (.varRef "m")).check types ctx
-  (.list (.tuple [.int, .string]))
+#guard ((Expression.hashmapToList (.varRef "m")).check types ctx
+  (.list (.tuple [.string, .int]))).isOk
+#guard !((Expression.hashmapToList (.varRef "m")).check types ctx
+  (.list (.tuple [.int, .string]))).isOk
 
 /-- `fun (m : hashmap string int) => toList m == [: tuple(string, int)]` -/
 private def isEmpty : FuncDecl where
@@ -1453,9 +1454,9 @@ private def isEmpty : FuncDecl where
 
 -- Converting is what makes this writable at all: a map has no comparison, and the list of its
 -- bindings does.
-#guard isEmpty.check {} []
-#guard !({ isEmpty with body := Expression.equals (.varRef "m") (.hashmapEmpty .string .int) }
-  : FuncDecl).check {} []
+#guard (isEmpty.check {} []).isOk
+#guard !(({ isEmpty with body := Expression.equals (.varRef "m") (.hashmapEmpty .string .int) }
+  : FuncDecl).check {} []).isOk
 
 -- The forms nest into each other and into everything else: what each produces is an operand of
 -- whatever its type is an operand of.
@@ -1482,13 +1483,13 @@ private def getOr : FuncDecl where
 
 -- A declaration over the new forms checks like any other, and against no table at all: a hashmap
 -- names nothing for a `TypeDecls` to resolve.
-#guard getOr.check {} []
-#guard !({ getOr with resultType := .option .int } : FuncDecl).check {} []
-#guard !({ getOr with parameters := [("m", .hashmap .string .string), ("k", .string)] }
-  : FuncDecl).check {} []
-#guard !({ getOr with parameters := [("m", .hashmap .int .int), ("k", .string)] }
-  : FuncDecl).check {} []
-#guard !({ getOr with parameters := [("m", .list .int), ("k", .string)] } : FuncDecl).check {} []
+#guard (getOr.check {} []).isOk
+#guard !(({ getOr with resultType := .option .int } : FuncDecl).check {} []).isOk
+#guard !(({ getOr with parameters := [("m", .hashmap .string .string), ("k", .string)] }
+  : FuncDecl).check {} []).isOk
+#guard !(({ getOr with parameters := [("m", .hashmap .int .int), ("k", .string)] }
+  : FuncDecl).check {} []).isOk
+#guard !(({ getOr with parameters := [("m", .list .int), ("k", .string)] } : FuncDecl).check {} []).isOk
 
 /-- `fun (m : hashmap string int) (k : string) (v : int) => { m with [k] = v }` -/
 private def bind : FuncDecl where
@@ -1498,20 +1499,20 @@ private def bind : FuncDecl where
   body := .hashmapPut (.varRef "m") (.varRef "k") (.varRef "v")
   resultType := .hashmap .string .int
 
-#guard bind.check {} []
-#guard !({ bind with resultType := .hashmap .string .string } : FuncDecl).check {} []
-#guard !({ bind with body := Expression.hashmapPut (.varRef "m") (.varRef "v") (.varRef "k") }
-  : FuncDecl).check {} []
+#guard (bind.check {} []).isOk
+#guard !(({ bind with resultType := .hashmap .string .string } : FuncDecl).check {} []).isOk
+#guard !(({ bind with body := Expression.hashmapPut (.varRef "m") (.varRef "v") (.varRef "k") }
+  : FuncDecl).check {} []).isOk
 
 -- Checking agrees with inference on the new forms too.
-#guard (Expression.hashmapEmpty .string .int).check types ctx (.hashmap .string .int)
-#guard !(Expression.hashmapEmpty .string .int).check types ctx (.hashmap .int .string)
-#guard !(Expression.hashmapEmpty (.fn [.int] .int) .int).check types ctx
-  (.hashmap (.fn [.int] .int) .int)
-#guard (Expression.hashmapGet (.varRef "m") (.varRef "s")).check types ctx (.option .int)
-#guard !(Expression.hashmapGet (.varRef "m") (.varRef "s")).check types ctx .int
-#guard (Expression.hashmapPut (.varRef "m") (.varRef "s") (.varRef "n")).check types ctx
-  (.hashmap .string .int)
+#guard ((Expression.hashmapEmpty .string .int).check types ctx (.hashmap .string .int)).isOk
+#guard !((Expression.hashmapEmpty .string .int).check types ctx (.hashmap .int .string)).isOk
+#guard !((Expression.hashmapEmpty (.fn [.int] .int) .int).check types ctx
+  (.hashmap (.fn [.int] .int) .int)).isOk
+#guard ((Expression.hashmapGet (.varRef "m") (.varRef "s")).check types ctx (.option .int)).isOk
+#guard !((Expression.hashmapGet (.varRef "m") (.varRef "s")).check types ctx .int).isOk
+#guard ((Expression.hashmapPut (.varRef "m") (.varRef "s") (.varRef "n")).check types ctx
+  (.hashmap .string .int)).isOk
 
 /-! ## The two tuple forms
 
@@ -1610,16 +1611,147 @@ private def roundTrip : FuncDecl where
 
 -- A declaration over the new forms checks like any other, and against no table at all: a tuple
 -- names nothing for a `TypeDecls` to resolve.
-#guard roundTrip.check {} []
-#guard !({ roundTrip with resultType := .int } : FuncDecl).check {} []
-#guard !({ roundTrip with
+#guard (roundTrip.check {} []).isOk
+#guard !(({ roundTrip with resultType := .int } : FuncDecl).check {} []).isOk
+#guard !(({ roundTrip with
   body := .let_ "pair" (.tupleNew [.varRef "k", .varRef "m"])
-    (.hashmapGet (.tupleGet (.varRef "pair") 0) (.tupleGet (.varRef "pair") 1)) } : FuncDecl).check
-  {} []
+    (.hashmapGet (.tupleGet (.varRef "pair") 0)
+      (.tupleGet (.varRef "pair") 1)) } : FuncDecl).check {} []).isOk
 
 -- Checking agrees with inference on the tuple forms too.
-#guard (Expression.tupleNew [.varRef "s", .varRef "n"]).check types ctx (.tuple [.string, .int])
-#guard !(Expression.tupleNew [.varRef "s", .varRef "n"]).check types ctx (.tuple [.int, .string])
-#guard !(Expression.tupleNew [.varRef "s", .varRef "n"]).check types ctx (.tuple [.string])
-#guard (Expression.tupleGet (.varRef "tu") 0).check types ctx .string
-#guard !(Expression.tupleGet (.varRef "tu") 0).check types ctx .int
+#guard ((Expression.tupleNew [.varRef "s", .varRef "n"]).check types ctx (.tuple [.string, .int])).isOk
+#guard !((Expression.tupleNew [.varRef "s", .varRef "n"]).check types ctx (.tuple [.int, .string])).isOk
+#guard !((Expression.tupleNew [.varRef "s", .varRef "n"]).check types ctx (.tuple [.string])).isOk
+#guard ((Expression.tupleGet (.varRef "tu") 0).check types ctx .string).isOk
+#guard !((Expression.tupleGet (.varRef "tu") 0).check types ctx .int).isOk
+
+/-! ### Messages
+
+What a check that did not pass says about it.  Everything above asks only whether a program checks,
+which is what the rest of the development is stated over; these are about the other half of the
+answer.
+
+Two things make up a message: the rule that turned an expression down, and the path the expression
+was reached by.  The rule is the innermost one that failed — a nest of forms reports the one
+subexpression nothing could be done with, not the whole of it — and the path is what each enclosing
+form adds on the way back out, a field or an alternative or a declaration at a time. -/
+
+/-- The message a check reported, or `"ok"` where it reported none.
+
+`Except.isOk` is what the guards above ask, since none of them is about a message; this is what the
+ones below compare. -/
+private def message (r : Except String Unit) : String :=
+  match r with
+  | .ok _ => "ok"
+  | .error m => m
+
+-- A name nothing in scope has, which is the one failure no type can be read off at all.
+#guard message ((Expression.varRef "nope").check types ctx .int)
+  == "no variable named 'nope' is in scope"
+
+-- An operand of the wrong type is reported at the position it was in, with both types named.
+#guard message ((Expression.plus (.varRef "s") (.intLit 1)).check types ctx .int)
+  == "the left operand of `+` has type string where int was expected"
+#guard message ((Expression.plus (.intLit 1) (.varRef "s")).check types ctx .int)
+  == "the right operand of `+` has type string where int was expected"
+#guard message ((Expression.ite (.varRef "n") (.intLit 1) (.intLit 2)).check types ctx .int)
+  == "the condition of an `if` has type int where bool was expected"
+#guard message ((Expression.ite (.varRef "flag") (.intLit 1) (.varRef "s")).check types ctx .int)
+  == "the `else` branch of an `if` has type string where int was expected"
+
+-- An expression that is well typed at a type other than the expected one is the one failure
+-- `Expression.check` reports itself, rather than passing along what inference found.
+#guard message ((Expression.intLit 1).check types ctx .string)
+  == "this expression has type int where string was expected"
+
+-- A call reports its arity and the position of a mismatched argument separately: `Ty.fn` records
+-- every parameter at once, so too few arguments is a different thing to say than a wrong one.
+#guard message ((Expression.app (.varRef "f") [.intLit 1]).check types ctx .int)
+  == "this call takes 2 argument(s), but was given 1"
+#guard message ((Expression.app (.varRef "f") [.intLit 1, .intLit 2]).check types ctx .int)
+  == "argument 2 of this call has type int where string was expected"
+#guard message ((Expression.app (.varRef "n") [.intLit 1]).check types ctx .int)
+  == "a call needs a function, but what is applied here has type int"
+
+-- A form that needs a particular kind of operand names the kind and the type it was given.
+#guard message ((Expression.listLength (.varRef "n")).check types ctx .int)
+  == "`length` needs a list, but its operand has type int"
+#guard message ((Expression.listMap (.varRef "xs")
+    (.lam [("x", .string)] (.varRef "x"))).check types ctx (.list .string))
+  == "`map list` over a list of int needs a function of one int parameter, \
+      but this one takes (string)"
+#guard message ((Expression.hashmapGet (.varRef "n") (.stringLit "k")).check types ctx
+    (.option .int)) == "`m[k]` needs a hashmap, but what is looked up in here has type int"
+#guard message ((Expression.tupleGet (.varRef "tu") 5).check types ctx .int)
+  == "a tuple of type tuple(string, int) has no element at index 5"
+
+-- The struct forms report the declaration and the field, whichever of the two is wrong.
+#guard message ((Expression.structNew "Pointe" [("x", .intLit 1), ("y", .intLit 2)]).check types ctx
+    (.struct "Pointe")) == "no struct named 'Pointe' is declared"
+#guard message ((Expression.structNew "Point" [("x", .intLit 1)]).check types ctx (.struct "Point"))
+  == "struct 'Point' is missing field 'y'"
+#guard message ((Expression.structNew "Point"
+    [("x", .intLit 1), ("y", .stringLit "a")]).check types ctx (.struct "Point"))
+  == "field 'y' of struct 'Point' has type int, but was given string"
+#guard message ((Expression.structNew "Point"
+    [("x", .intLit 1), ("z", .intLit 2)]).check types ctx (.struct "Point"))
+  == "struct 'Point' has no field named 'z'"
+#guard message ((Expression.structGet (.varRef "p") "z").check types ctx .int)
+  == "struct 'Point' has no field named 'z'"
+#guard message ((Expression.structGet (.varRef "n") "x").check types ctx .int)
+  == "a field read needs a struct, but what is read here has type int"
+#guard message ((Expression.structUpdate (.varRef "p") []).check types ctx (.struct "Point"))
+  == "a struct update must rebind at least one field of struct 'Point'"
+
+-- An inductive type's forms report the declaration and the constructor the same way, and a match
+-- reports the constructor it has no alternative for and the types it could not reconcile.
+#guard message ((Expression.indNew "Shape" "Square" [.intLit 1]).check types ctx (.ind "Shape"))
+  == "inductive 'Shape' has no constructor named 'Square'"
+#guard message ((Expression.indNew "Shape" "Circle" [.intLit 1, .intLit 2]).check types ctx
+    (.ind "Shape"))
+  == "constructor 'Circle' of inductive 'Shape' takes 1 argument(s), but was given 2"
+#guard message ((Expression.indMatch (.varRef "c") [("Red", [], .intLit 0)]).check types ctx .int)
+  == "this match has no alternative for constructor 'Green' of inductive 'Color'"
+#guard message ((Expression.indMatch (.varRef "c")
+    [("Red", [], .intLit 0), ("Green", [], .varRef "s"),
+      ("Blue", [], .intLit 1)]).check types ctx .int)
+  == "the alternatives of this match have types int, string, int, which differ"
+#guard message ((Expression.indMatch (.varRef "sh")
+    [("Circle", ["r", "q"], .varRef "r"), ("Rect", ["w", "h"], .varRef "w"),
+      ("At", ["q"], .intLit 0)]).check types ctx .int)
+  == "the alternative for 'Circle' binds 2 name(s), but 'Circle' carries 1 value(s)"
+#guard message ((Expression.indMatch (.varRef "n") [("Red", [], .intLit 0)]).check types ctx .int)
+  == "a match needs a value of an inductive type, but its scrutinee has type int"
+
+-- A type no comparison reaches the bottom of is reported where it is asked for, which is the one
+-- condition no shape of expression could have shown.
+#guard message ((Expression.equals (.varRef "f") (.varRef "f")).check types ctx .bool)
+  == "values of type (int, string) -> int cannot be compared, so `==` does not apply to them"
+#guard message ((Expression.hashmapEmpty (.fn [.int] .int) .int).check types ctx
+    (.hashmap (.fn [.int] .int) .int))
+  == "(int) -> int cannot be a hashmap's key type, since values of it cannot be compared"
+
+-- A failure inside a field or an alternative keeps the path it was reached by.
+#guard message ((Expression.structNew "Point"
+    [("x", .intLit 1), ("y", .varRef "nope")]).check types ctx (.struct "Point"))
+  == "in field 'y': no variable named 'nope' is in scope"
+#guard message ((Expression.indMatch (.varRef "c")
+    [("Red", [], .varRef "nope"), ("Green", [], .intLit 0),
+      ("Blue", [], .intLit 1)]).check types ctx .int)
+  == "in the alternative for 'Red': no variable named 'nope' is in scope"
+
+-- A declaration names itself, and a table or a program reports the first entry that did not check.
+#guard message (({ addPred with resultType := .list .int } : FuncDecl).check {} [])
+  == "in the body of 'add-pred': this expression has type int where list int was expected"
+#guard message (Globals.check {} (Globals.ofDecls
+    [{ addPred with resultType := .list .int }, bang]))
+  == "in the body of 'add-pred': this expression has type int where list int was expected"
+#guard message (({ funcDecls := [{ addPred with resultType := .list .int }] } : Program).check)
+  == "in the body of 'add-pred': this expression has type int where list int was expected"
+
+-- A program is turned down for a declaration that names a field or a constructor twice before any
+-- of its bodies are looked at, so that is what a message about one says.
+#guard message (({ funcDecls := [addPred], structDecls := [twoXs] } : Program).check)
+  == "struct 'TwoXs' declares the field 'x' twice"
+#guard message (({ funcDecls := [addPred], inductiveDecls := [twoReds] } : Program).check)
+  == "inductive 'TwoReds' declares the constructor 'Red' twice"
