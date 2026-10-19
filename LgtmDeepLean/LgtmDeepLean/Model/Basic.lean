@@ -142,10 +142,6 @@ lgtm struct ModifiedFileManager {
   modifiedFiles : list (struct ModifiedFileRef)
 }
 
--- lgtm def ModifiedFileState.resetFileState (fileState : struct ModifiedFileState) : struct ModifiedFileState
-
--- lgtm def ModifiedFileManager.resetCommentState (fileState : struct ModifiedFileManager) : struct ModifiedFileManager
-
 lgtm struct ChangesetStatus {
   status : string
 }
