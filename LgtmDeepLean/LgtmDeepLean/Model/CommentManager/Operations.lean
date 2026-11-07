@@ -1,10 +1,8 @@
 module
 
 public import LgtmDeepLean.Model.Basic
-public import LgtmDeepLean.Model.CommentThreads.Operations
 meta import LgtmDeepLean.Lang.Syntax
 meta import LgtmDeepLean.Model.Basic
-meta import LgtmDeepLean.Model.CommentThreads.Operations
 
 @[expose] public section
 
