@@ -106,6 +106,12 @@ lgtm struct CommentThreads {
   locationRoots : hashmap (inductive ThreadLocation) (list (struct CommentRef))
 }
 
+lgtm def CommentThreads.empty : struct CommentThreads :=
+   new CommentThreads { commentTreeNodes = hashmap(struct CommentRef, struct CommentThread),
+                        serverCommentIds = hashmap(struct ServerId, struct CommentRef),
+                        locationRoots = hashmap(inductive ThreadLocation, list (struct CommentRef))
+                      }
+
 lgtm struct SelectedComment {
   version : inductive FileVersion,
   thread : struct CommentThread,
@@ -188,6 +194,6 @@ def Model.Basic.inductiveDecls : List InductiveDecl :=
 
 /-- The functions this module declares, in the order they are declared above. -/
 def Model.Basic.funcDecls : List FuncDecl :=
-  [ThreadLocation.isTopLevel, Comment.isPersistedToServer]
+  [CommentThreads.empty, ThreadLocation.isTopLevel, Comment.isPersistedToServer]
 
 end

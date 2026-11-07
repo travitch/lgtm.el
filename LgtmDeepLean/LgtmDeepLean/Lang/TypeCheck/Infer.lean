@@ -24,7 +24,8 @@ Checking an expression against an expected type is `Expression.check`, in
 comparison. -/
 
 /-- The types of the variables in scope, innermost binding first. -/
-public abbrev Context := List (String × Ty)
+public abbrev Context :=
+  List (String × Ty)
 
 /-- A name is looked up in the left half of an appended context first, so what is on the left
 shadows what is on the right. -/
@@ -36,8 +37,8 @@ public theorem Context.lookup_append {ctx₁ ctx₂ : Context} {x : String} :
   induction ctx₁ with
   | nil => rfl
   | cons p ps ih =>
-      obtain ⟨k, t⟩ := p
-      by_cases h : x == k <;> simp [List.lookup_cons, h, ih]
+    obtain ⟨k, t⟩ := p
+    by_cases h : x == k <;> simp [List.lookup_cons, h, ih]
 
 /-- If all of the given types are the same, return that type.  Otherwise `none`.
 
@@ -48,27 +49,28 @@ public def Ty.common : List Ty → Option Ty
   | t :: ts => if ts.all (· == t) then some t else none
 
 /-- `Ty.common` satisfies its documented behavior. -/
-@[simp, grind =] public theorem Ty.common_eq_some {ts : List Ty} {t : Ty} :
+@[simp, grind =]
+public theorem Ty.common_eq_some {ts : List Ty} {t : Ty} :
     Ty.common ts = some t ↔ ts ≠ [] ∧ ∀ t' ∈ ts, t' = t := by
   cases ts with
   | nil => simp [Ty.common]
   | cons t₀ ts =>
-      constructor
-      · intro h
-        simp only [Ty.common] at h
-        split at h
-        · next hall =>
-            obtain rfl : t₀ = t := Option.some.inj h
-            refine ⟨by simp, fun t' ht' => ?_⟩
-            rcases List.mem_cons.mp ht' with rfl | ht'
-            · rfl
-            · simpa using List.all_eq_true.mp hall t' ht'
-        · simp at h
-      · rintro ⟨-, hall⟩
-        obtain rfl : t₀ = t := hall t₀ (by simp)
-        have hcond : (ts.all (· == t₀)) = true :=
-          List.all_eq_true.mpr fun t' ht' => by simp [hall t' (List.mem_cons_of_mem _ ht')]
-        simp [Ty.common, hcond]
+    constructor
+    · intro h
+      simp only [Ty.common] at h
+      split at h
+      · next hall =>
+          obtain rfl : t₀ = t := Option.some.inj h
+          refine ⟨by simp, fun t' ht' => ?_⟩
+          rcases List.mem_cons.mp ht' with rfl | ht'
+          · rfl
+          · simpa using List.all_eq_true.mp hall t' ht'
+      · simp at h
+    · rintro ⟨-, hall⟩
+      obtain rfl : t₀ = t := hall t₀ (by simp)
+      have hcond : (ts.all (· == t₀)) = true :=
+        List.all_eq_true.mpr fun t' ht' => by simp [hall t' (List.mem_cons_of_mem _ ht')]
+      simp [Ty.common, hcond]
 
 /-! Two facts about `List.lookup` over a pair of association lists carrying the same keys in the
 same order.  Every rule about a struct is stated with `lookup`, and these are what carry a fact
@@ -83,14 +85,14 @@ public theorem List.lookup_isSome_congr {α β γ : Type} [BEq α] {as : List (�
   induction as generalizing bs with
   | nil => cases bs <;> simp_all
   | cons p as ih =>
-      cases bs with
-      | nil => simp at h
-      | cons q bs =>
-          obtain ⟨ka, a⟩ := p
-          obtain ⟨kb, b⟩ := q
-          simp only [List.map_cons, List.cons.injEq] at h
-          obtain ⟨rfl, h⟩ := h
-          by_cases hk : k == ka <;> simp [List.lookup_cons, hk, ih h]
+    cases bs with
+    | nil => simp at h
+    | cons q bs =>
+      obtain ⟨ka, a⟩ := p
+      obtain ⟨kb, b⟩ := q
+      simp only [List.map_cons, List.cons.injEq] at h
+      obtain ⟨rfl, h⟩ := h
+      by_cases hk : k == ka <;> simp [List.lookup_cons, hk, ih h]
 
 /-- A lookup succeeds exactly for the names the list carries.
 
@@ -113,20 +115,20 @@ public theorem List.mem_zip_of_lookup {α β γ : Type} [BEq α] [LawfulBEq α] 
   induction as generalizing bs with
   | nil => simp at hb
   | cons p as ih =>
-      cases bs with
-      | nil => simp at h
-      | cons q bs =>
-          obtain ⟨ka, a⟩ := p
-          obtain ⟨kb, b'⟩ := q
-          simp only [List.map_cons, List.cons.injEq] at h
-          obtain ⟨rfl, h⟩ := h
-          rw [List.lookup_cons] at hb hc
-          by_cases hk : k == ka
-          · obtain rfl : k = ka := by grind
-            simp only [hk] at hb hc
-            simp_all
-          · simp only [hk] at hb hc
-            exact List.mem_cons_of_mem _ (ih h hb hc)
+    cases bs with
+    | nil => simp at h
+    | cons q bs =>
+      obtain ⟨ka, a⟩ := p
+      obtain ⟨kb, b'⟩ := q
+      simp only [List.map_cons, List.cons.injEq] at h
+      obtain ⟨rfl, h⟩ := h
+      rw [List.lookup_cons] at hb hc
+      by_cases hk : k == ka
+      · obtain rfl : k = ka := by grind
+        simp only [hk] at hb hc
+        simp_all
+      · simp only [hk] at hb hc
+        exact List.mem_cons_of_mem _ (ih h hb hc)
 
 /-- The positional counterpart of `List.mem_zip_of_lookup`: where two lists both have an entry at
 one index, those two entries are paired in the zip.
@@ -147,13 +149,13 @@ public theorem List.mem_of_lookup {α β : Type} [BEq α] [LawfulBEq α] {l : Li
   induction l with
   | nil => simp at h
   | cons p l ih =>
-      obtain ⟨k', b'⟩ := p
-      rw [List.lookup_cons] at h
-      split at h
-      · obtain rfl : k = k' := by grind
-        obtain rfl : b = b' := by grind
-        exact List.mem_cons_self ..
-      · exact List.mem_cons_of_mem _ (ih h)
+    obtain ⟨k', b'⟩ := p
+    rw [List.lookup_cons] at h
+    split at h
+    · obtain rfl : k = k' := by grind
+      obtain rfl : b = b' := by grind
+      exact List.mem_cons_self ..
+    · exact List.mem_cons_of_mem _ (ih h)
 
 /-! ## Exhaustiveness
 
@@ -166,7 +168,8 @@ knows whether the others between them covered the rest. -/
 
 This is checked by validating that the constructor names of the cases are a permutation of
 the constructor names in the inductive declaration. -/
-@[expose] public def Expression.altsExhaustive (cs : List (CtorName × List Ty))
+@[expose]
+public def Expression.altsExhaustive (cs : List (CtorName × List Ty))
     (alts : List (CtorName × List String × Expression)) : Bool :=
   (alts.map Prod.fst).isPerm (cs.map Prod.fst)
 
@@ -212,7 +215,8 @@ permutation of the declared ones, and then every field's type is the type the de
 Together they are as strong as that comparison was.  A field named twice makes the names no
 permutation of a declaration's — which name each `lookup` would have found does not arise — and a
 field the declaration does not have fails both halves at once. -/
-@[expose] public def Expression.fieldsComplete (fs fts : List (FieldName × Ty)) : Bool :=
+@[expose]
+public def Expression.fieldsComplete (fs fts : List (FieldName × Ty)) : Bool :=
   (fts.map Prod.fst).isPerm (fs.map Prod.fst) && fts.all fun p => fs.lookup p.1 == some p.2
 
 /-- `Expression.fieldsComplete` is correct. -/
@@ -276,11 +280,11 @@ private theorem Ty.firstMismatch_eq_none {ts ts' : List Ty} (h : ts'.length = ts
   induction ts generalizing ts' i with
   | nil => cases ts' <;> simp_all [Ty.firstMismatch]
   | cons t ts ih =>
-      cases ts' with
-      | nil => simp at h
-      | cons t' ts' =>
-          simp only [List.length_cons, Nat.add_right_cancel_iff] at h
-          by_cases ht : t' == t <;> simp [Ty.firstMismatch, ht, ih h] <;> grind
+    cases ts' with
+    | nil => simp at h
+    | cons t' ts' =>
+      simp only [List.length_cons, Nat.add_right_cancel_iff] at h
+      by_cases ht : t' == t <;> simp [Ty.firstMismatch, ht, ih h] <;> grind
 
 /-- Inferred types required to be `ts`, in order.
 
@@ -303,53 +307,58 @@ public def Except.expectAll (r : Except String (List Ty)) (ts : List Ty) (what :
 /-! What success comes to for each of them, which is what every inversion principle below is read
 through: the message an `Except` carries says nothing about whether it carries one. -/
 
-@[simp, grind =] public theorem Except.toOption_eq_some_iff {ε α : Type} {x : Except ε α} {a : α} :
-    x.toOption = some a ↔ x = .ok a := by
-  cases x <;> simp [Except.toOption]
+@[simp, grind =]
+public theorem Except.toOption_eq_some_iff {ε α : Type} {x : Except ε α} {a : α} :
+    x.toOption = some a ↔ x = .ok a := by cases x <;> simp [Except.toOption]
 
-@[simp, grind =] public theorem Except.toOption_ok {ε α : Type} {a : α} :
-    (Except.ok a : Except ε α).toOption = some a := rfl
+@[simp, grind =]
+public theorem Except.toOption_ok {ε α : Type} {a : α} :
+    (Except.ok a : Except ε α).toOption = some a :=
+  rfl
 
-@[simp, grind =] public theorem Except.toOption_error {ε α : Type} {err : ε} :
-    (Except.error err : Except ε α).toOption = (none : Option α) := rfl
+@[simp, grind =]
+public theorem Except.toOption_error {ε α : Type} {err : ε} :
+    (Except.error err : Except ε α).toOption = (none : Option α) :=
+  rfl
 
-@[simp, grind =] public theorem Except.toOption_ofOption {α : Type} {o : Option α}
-    {err : Unit → String} : (Except.ofOption o err).toOption = o := by
-  cases o <;> rfl
+@[simp, grind =]
+public theorem Except.toOption_ofOption {α : Type} {o : Option α} {err : Unit → String} :
+    (Except.ofOption o err).toOption = o := by cases o <;> rfl
 
-@[simp, grind =] public theorem Except.ofOption_eq_ok {α : Type} {o : Option α}
-    {err : Unit → String} {a : α} : Except.ofOption o err = .ok a ↔ o = some a := by
-  cases o <;> simp [Except.ofOption]
+@[simp, grind =]
+public theorem Except.ofOption_eq_ok {α : Type} {o : Option α} {err : Unit → String} {a : α} :
+    Except.ofOption o err = .ok a ↔ o = some a := by cases o <;> simp [Except.ofOption]
 
-@[simp, grind =] public theorem Except.mapError_eq_ok {ε ε' α : Type} {f : ε → ε'}
-    {x : Except ε α} {a : α} : x.mapError f = .ok a ↔ x = .ok a := by
-  cases x <;> simp [Except.mapError]
+@[simp, grind =]
+public theorem Except.mapError_eq_ok {ε ε' α : Type} {f : ε → ε'} {x : Except ε α} {a : α} :
+    x.mapError f = .ok a ↔ x = .ok a := by cases x <;> simp [Except.mapError]
 
-@[simp, grind =] public theorem Except.bind_eq_ok {ε α β : Type} {x : Except ε α}
-    {f : α → Except ε β} {b : β} : (x >>= f) = .ok b ↔ ∃ a, x = .ok a ∧ f a = .ok b := by
-  cases x <;> simp [Bind.bind, Except.bind]
+@[simp, grind =]
+public theorem Except.bind_eq_ok {ε α β : Type} {x : Except ε α} {f : α → Except ε β} {b : β} :
+    (x >>= f) = .ok b ↔ ∃ a, x = .ok a ∧ f a = .ok b := by cases x <;> simp [Bind.bind, Except.bind]
 
 /-- A `Unit` answer carries nothing, so all there is to know about one that succeeded is that it
 did: this is what collapses the `∃` a `do` over the combinators leaves behind. -/
-@[simp] public theorem Except.exists_eq_ok_unit {ε : Type} {x : Except ε Unit} :
-    (∃ u, x = .ok u) ↔ x = .ok () := by
-  grind
+@[simp]
+public theorem Except.exists_eq_ok_unit {ε : Type} {x : Except ε Unit} :
+    (∃ u, x = .ok u) ↔ x = .ok () := by grind
 
-@[simp, grind =] public theorem Except.expect_eq_ok {r : Except String Ty} {t : Ty} {what : String}
-    {u : Unit} : r.expect t what = .ok u ↔ r = .ok t := by
-  cases r <;> simp [Except.expect]
+@[simp, grind =]
+public theorem Except.expect_eq_ok {r : Except String Ty} {t : Ty} {what : String} {u : Unit} :
+    r.expect t what = .ok u ↔ r = .ok t := by cases r <;> simp [Except.expect]
 
-@[simp, grind =] public theorem Except.expectAll_eq_ok {r : Except String (List Ty)} {ts : List Ty}
-    {what : String} {u : Unit} : r.expectAll ts what = .ok u ↔ r = .ok ts := by
+@[simp, grind =]
+public theorem Except.expectAll_eq_ok {r : Except String (List Ty)} {ts : List Ty} {what : String}
+    {u : Unit} : r.expectAll ts what = .ok u ↔ r = .ok ts := by
   cases r with
   | error m => simp [Except.expectAll]
   | ok ts' =>
-      simp only [Except.expectAll, Except.ok.injEq]
-      split
-      · grind
-      · next h =>
-          have hlen : ts'.length = ts.length := by grind
-          split <;> grind [Ty.firstMismatch_eq_none]
+    simp only [Except.expectAll, Except.ok.injEq]
+    split
+    · grind
+    · next h =>
+        have hlen : ts'.length = ts.length := by grind
+        split <;> grind [Ty.firstMismatch_eq_none]
 
 /-! ## What went wrong
 
@@ -371,8 +380,7 @@ private def Expression.fieldProblem (name : String) (fs fts : List (FieldName ×
 /-- Why the fields given are not the declaration's: one of them is wrong, or one is missing, or one
 is given twice — the three things `Expression.fieldsComplete` turns down. -/
 private def Expression.fieldsProblem (name : String) (fs fts : List (FieldName × Ty)) : String :=
-  if fts.any fun p => fs.lookup p.1 != some p.2 then
-    Expression.fieldProblem name fs fts
+  if fts.any fun p => fs.lookup p.1 != some p.2 then Expression.fieldProblem name fs fts
   else
     match fs.find? fun p => !(fts.map Prod.fst).contains p.1 with
     | some (f, _) => s!"struct '{name}' is missing field '{f}'"
@@ -402,7 +410,6 @@ private def Ty.keyProblem (kt : Ty) : String :=
   s!"{kt} cannot be a hashmap's key type, since values of it cannot be compared"
 
 mutual
-
 /-- Infer the type of `e` under `ctx`, or describe why it has none.
 
 Every rule either reports its own condition or passes along what a subexpression reported, so what
@@ -435,18 +442,24 @@ public def Expression.inferE (td : TypeDecls) (ctx : Context) : Expression → E
   | .equals l r => do
     let t ← l.inferE td ctx
     (r.inferE td ctx).expect t "the right operand of `==`"
-    if Ty.comparable td t then .ok .bool
-    else .error s!"values of type {t} cannot be compared, so `==` does not apply to them"
+    if Ty.comparable td t then
+      .ok .bool
+    else
+      .error s!"values of type {t} cannot be compared, so `==` does not apply to them"
   | .lt l r => do
     let t ← l.inferE td ctx
     (r.inferE td ctx).expect t "the right operand of `<`"
-    if Ty.orderable t then .ok .bool
-    else .error s!"values of type {t} cannot be ordered, so `<` does not apply to them"
+    if Ty.orderable t then
+      .ok .bool
+    else
+      .error s!"values of type {t} cannot be ordered, so `<` does not apply to them"
   | .le l r => do
     let t ← l.inferE td ctx
     (r.inferE td ctx).expect t "the right operand of `<=`"
-    if Ty.orderable t then .ok .bool
-    else .error s!"values of type {t} cannot be ordered, so `<=` does not apply to them"
+    if Ty.orderable t then
+      .ok .bool
+    else
+      .error s!"values of type {t} cannot be ordered, so `<=` does not apply to them"
   | .let_ x e body => do
     let t ← e.inferE td ctx
     body.inferE td ((x, t) :: ctx)
@@ -454,8 +467,10 @@ public def Expression.inferE (td : TypeDecls) (ctx : Context) : Expression → E
   | .structNew name fes => do
     let sd ← Except.ofOption (td.ss.lookup name) fun _ => s!"no struct named '{name}' is declared"
     let fts ← Expression.inferFieldsE td ctx fes
-    if Expression.fieldsComplete sd.fields fts then .ok (.struct name)
-    else .error (Expression.fieldsProblem name sd.fields fts)
+    if Expression.fieldsComplete sd.fields fts then
+      .ok (.struct name)
+    else
+      .error (Expression.fieldsProblem name sd.fields fts)
   | .structGet e f =>
     match e.inferE td ctx with
     | .ok (.struct name) => do
@@ -470,27 +485,30 @@ public def Expression.inferE (td : TypeDecls) (ctx : Context) : Expression → E
       let fts ← Expression.inferFieldsE td ctx fes
       if fts.isEmpty then
         .error s!"a struct update must rebind at least one field of struct '{name}'"
-      else if fts.all fun p => sd.fields.lookup p.1 == some p.2 then .ok (.struct name)
-      else .error (Expression.fieldProblem name sd.fields fts)
+      else if fts.all fun p => sd.fields.lookup p.1 == some p.2 then
+        .ok (.struct name)
+      else
+        .error (Expression.fieldProblem name sd.fields fts)
     | .ok t => .error s!"a struct update needs a struct, but what is updated here has type {t}"
     | .error m => .error m
   | .indNew name c args => do
-    let d ← Except.ofOption (td.is.lookup name) fun _ =>
-      s!"no inductive named '{name}' is declared"
-    let ts ← Except.ofOption (d.constructors.lookup c) fun _ =>
-      s!"inductive '{name}' has no constructor named '{c}'"
+    let d ← Except.ofOption (td.is.lookup name) fun _ => s!"no inductive named '{name}' is declared"
+    let ts ←
+      Except.ofOption (d.constructors.lookup c) fun _ =>
+          s!"inductive '{name}' has no constructor named '{c}'"
     (Expression.inferListE td ctx args).expectAll ts s!"constructor '{c}' of inductive '{name}'"
     .ok (.ind name)
   | .indMatch scrut alts =>
     match scrut.inferE td ctx with
     | .ok (.ind name) => do
-      let d ← Except.ofOption (td.is.lookup name) fun _ =>
-        s!"no inductive named '{name}' is declared"
+      let d ←
+        Except.ofOption (td.is.lookup name) fun _ => s!"no inductive named '{name}' is declared"
       if !Expression.altsExhaustive d.constructors alts then
         .error (Expression.altsProblem name d.constructors alts)
-      else do
-        let rs ← Expression.inferAltsE td ctx d.constructors alts
-        Except.ofOption (Ty.common rs) fun _ => Expression.commonProblem rs
+      else
+        do
+          let rs ← Expression.inferAltsE td ctx d.constructors alts
+          Except.ofOption (Ty.common rs) fun _ => Expression.commonProblem rs
     | .ok t => .error s!"a match needs a value of an inductive type, but its scrutinee has type {t}"
     | .error m => .error m
   | .intLit _ => .ok .int
@@ -526,7 +544,9 @@ public def Expression.inferE (td : TypeDecls) (ctx : Context) : Expression → E
       match f.inferE td ctx with
       | .ok (.fn ps r) =>
         if ps == [t] then .ok (.list r)
-        else .error s!"`map list` over a list of {t} needs a function of one {t} parameter, \
+        else
+          .error
+            s!"`map list` over a list of {t} needs a function of one {t} parameter, \
           but this one takes ({Ty.renderGroup ps})"
       | .ok ft => .error s!"`map list` needs a function, but its second operand has type {ft}"
       | .error m => .error m
@@ -549,14 +569,20 @@ public def Expression.inferE (td : TypeDecls) (ctx : Context) : Expression → E
     | .ok (.hashmap kt vt) => do
       (k.inferE td ctx).expect kt "the key given to a hashmap update"
       (v.inferE td ctx).expect vt "the value given to a hashmap update"
-      if Ty.comparable td kt then .ok (.hashmap kt vt) else .error (Ty.keyProblem kt)
+      if Ty.comparable td kt then
+        .ok (.hashmap kt vt)
+      else
+        .error (Ty.keyProblem kt)
     | .ok t => .error s!"a hashmap update needs a hashmap, but what is updated here has type {t}"
     | .error m => .error m
   | .hashmapGet m k =>
     match m.inferE td ctx with
     | .ok (.hashmap kt vt) => do
       (k.inferE td ctx).expect kt "the key given to a hashmap lookup"
-      if Ty.comparable td kt then .ok (.option vt) else .error (Ty.keyProblem kt)
+      if Ty.comparable td kt then
+        .ok (.option vt)
+      else
+        .error (Ty.keyProblem kt)
     | .ok t => .error s!"`m[k]` needs a hashmap, but what is looked up in here has type {t}"
     | .error m => .error m
   | .hashmapMap m f =>
@@ -565,10 +591,10 @@ public def Expression.inferE (td : TypeDecls) (ctx : Context) : Expression → E
       match f.inferE td ctx with
       | .ok (.fn ps r) =>
         if ps != [kt, vt] then
-          .error s!"`map hashmap` over a {Ty.hashmap kt vt} needs a function taking \
+          .error
+            s!"`map hashmap` over a {Ty.hashmap kt vt} needs a function taking \
             ({Ty.renderGroup [kt, vt]}), but this one takes ({Ty.renderGroup ps})"
-        else if Ty.comparable td kt then .ok (.hashmap kt r)
-        else .error (Ty.keyProblem kt)
+        else if Ty.comparable td kt then .ok (.hashmap kt r) else .error (Ty.keyProblem kt)
       | .ok ft => .error s!"`map hashmap` needs a function, but its second operand has type {ft}"
       | .error m => .error m
     | .ok t => .error s!"`map hashmap` needs a hashmap, but its first operand has type {t}"
@@ -585,11 +611,10 @@ public def Expression.inferE (td : TypeDecls) (ctx : Context) : Expression → E
   | .tupleGet e i =>
     match e.inferE td ctx with
     | .ok (.tuple ts) =>
-      Except.ofOption ts[i]? fun _ =>
-        s!"a tuple of type {Ty.tuple ts} has no element at index {i}"
+      Except.ofOption ts[i]? fun _ => s!"a tuple of type {Ty.tuple ts} has no element at index {i}"
     | .ok t => .error s!"`t.{i}` needs a tuple, but what is read here has type {t}"
     | .error m => .error m
-
+  | .unreachable t _ => .ok t
 /-- Infer the types of `es`, in order, or describe why one of them has none. -/
 public def Expression.inferListE (td : TypeDecls) (ctx : Context) :
     List Expression → Except String (List Ty)
@@ -598,7 +623,6 @@ public def Expression.inferListE (td : TypeDecls) (ctx : Context) :
     let t ← e.inferE td ctx
     let ts ← Expression.inferListE td ctx es
     .ok (t :: ts)
-
 /-- Infer the type of each field's expression, keeping the field it belongs to, or describe why one
 of them has none.
 
@@ -612,7 +636,6 @@ public def Expression.inferFieldsE (td : TypeDecls) (ctx : Context) :
     let t ← (e.inferE td ctx).mapError fun m => s!"in field '{f}': {m}"
     let fts ← Expression.inferFieldsE td ctx fes
     .ok ((f, t) :: fts)
-
 /-- Infer the type of each alternative's expression, in the order the alternatives were written, or
 describe why one of them is for a constructor `cs` does not declare, binds the wrong number of
 names, or has an expression with no type. -/
@@ -620,17 +643,20 @@ public def Expression.inferAltsE (td : TypeDecls) (ctx : Context) (cs : List (Ct
     List (CtorName × List String × Expression) → Except String (List Ty)
   | [] => .ok []
   | (c, xs, body) :: alts => do
-    let ts ← Except.ofOption (cs.lookup c) fun _ =>
-      s!"'{c}' is not a constructor of the type being matched on"
+    let ts ←
+      Except.ofOption (cs.lookup c) fun _ =>
+          s!"'{c}' is not a constructor of the type being matched on"
     if xs.length != ts.length then
-      .error s!"the alternative for '{c}' binds {xs.length} name(s), but '{c}' carries \
+      .error
+          s!"the alternative for '{c}' binds {xs.length} name(s), but '{c}' carries \
         {ts.length} value(s)"
-    else do
-      let t ← (body.inferE td (xs.zip ts ++ ctx)).mapError
-        fun m => s!"in the alternative for '{c}': {m}"
-      let rs ← Expression.inferAltsE td ctx cs alts
-      .ok (t :: rs)
-
+    else
+      do
+        let t ←
+          (body.inferE td (xs.zip ts ++ ctx)).mapError fun m =>
+              s!"in the alternative for '{c}': {m}"
+        let rs ← Expression.inferAltsE td ctx cs alts
+        .ok (t :: rs)
 end
 
 /-! ## Inference, undescribed
@@ -668,8 +694,7 @@ public def Expression.inferAlts (td : TypeDecls) (ctx : Context) (cs : List (Cto
 /-- A type inferred is a type reported: the two forms of inference accept the same expressions at
 the same types, so a fact about either of them is a fact about the other. -/
 public theorem Expression.inferE_eq_ok_iff {td : TypeDecls} {ctx : Context} {e : Expression}
-    {t : Ty} : e.inferE td ctx = .ok t ↔ e.infer td ctx = some t := by
-  simp [Expression.infer]
+    {t : Ty} : e.inferE td ctx = .ok t ↔ e.infer td ctx = some t := by simp [Expression.infer]
 
 /-! Inversion principles for `infer`, one per syntactic form.
 
@@ -677,47 +702,50 @@ public theorem Expression.inferE_eq_ok_iff {td : TypeDecls} {ctx : Context} {e :
 to go through these instead.  They are `simp` lemmas, so a hypothesis `e.infer td ctx = some t`
 decomposes into premises about `e`'s subterms automatically. -/
 
-@[simp, grind =] public theorem Expression.infer_varRef {td : TypeDecls} {ctx : Context}
-    {x : String} :
+@[simp, grind =]
+public theorem Expression.infer_varRef {td : TypeDecls} {ctx : Context} {x : String} :
     (Expression.varRef x).infer td ctx = ctx.lookup x := by
   cases h : ctx.lookup x <;> simp [Expression.infer, Expression.inferE, h]
 
-@[simp, grind =] public theorem Expression.infer_boolLit {td : TypeDecls} {ctx : Context}
-    {b : Bool} :
+@[simp, grind =]
+public theorem Expression.infer_boolLit {td : TypeDecls} {ctx : Context} {b : Bool} :
     (Expression.boolLit b).infer td ctx = some .bool := by
   simp [Expression.infer, Expression.inferE]
 
-@[simp, grind =] public theorem Expression.infer_intLit {td : TypeDecls} {ctx : Context} {i : Int} :
-    (Expression.intLit i).infer td ctx = some .int := by
-  simp [Expression.infer, Expression.inferE]
+@[simp, grind =]
+public theorem Expression.infer_intLit {td : TypeDecls} {ctx : Context} {i : Int} :
+    (Expression.intLit i).infer td ctx = some .int := by simp [Expression.infer, Expression.inferE]
 
-@[simp, grind =] public theorem Expression.infer_stringLit {td : TypeDecls} {ctx : Context}
-    {s : String} :
+@[simp, grind =]
+public theorem Expression.infer_stringLit {td : TypeDecls} {ctx : Context} {s : String} :
     (Expression.stringLit s).infer td ctx = some .string := by
   simp [Expression.infer, Expression.inferE]
 
-@[simp, grind =] public theorem Expression.infer_lnil {td : TypeDecls} {ctx : Context} {t : Ty} :
+@[simp, grind =]
+public theorem Expression.infer_lnil {td : TypeDecls} {ctx : Context} {t : Ty} :
     (Expression.lnil t).infer td ctx = some (.list t) := by
   simp [Expression.infer, Expression.inferE]
 
 /-- An empty option takes its type from its annotation, the way an empty list does: there is no
 value in it for an element type to be read off. -/
-@[simp, grind =] public theorem Expression.infer_optionNone {td : TypeDecls} {ctx : Context}
-    {t : Ty} :
+@[simp, grind =]
+public theorem Expression.infer_optionNone {td : TypeDecls} {ctx : Context} {t : Ty} :
     (Expression.optionNone t).infer td ctx = some (.option t) := by
   simp [Expression.infer, Expression.inferE]
 
 /-- A `plus` is typeable exactly when both operands are `int`s, and then it is an `int`. -/
-@[simp, grind =] public theorem Expression.infer_plus_eq_some {td : TypeDecls} {ctx : Context}
-    {l r : Expression} {t : Ty} :
+@[simp, grind =]
+public theorem Expression.infer_plus_eq_some {td : TypeDecls} {ctx : Context} {l r : Expression}
+    {t : Ty} :
     (Expression.plus l r).infer td ctx = some t ↔
       l.infer td ctx = some .int ∧ r.infer td ctx = some .int ∧ t = .int := by
   simp [Expression.infer, Expression.inferE]
   grind
 
 /-- A `minus` is typeable exactly when both operands are `int`s, and then it is an `int`. -/
-@[simp, grind =] public theorem Expression.infer_minus_eq_some {td : TypeDecls} {ctx : Context}
-    {l r : Expression} {t : Ty} :
+@[simp, grind =]
+public theorem Expression.infer_minus_eq_some {td : TypeDecls} {ctx : Context} {l r : Expression}
+    {t : Ty} :
     (Expression.minus l r).infer td ctx = some t ↔
       l.infer td ctx = some .int ∧ r.infer td ctx = some .int ∧ t = .int := by
   simp [Expression.infer, Expression.inferE]
@@ -727,8 +755,9 @@ value in it for an element type to be read off. -/
 
 This is what makes the values `Eval` builds homogeneous: the element type is read off the head
 and then *required* of the tail, so one `Ty` covers every element. -/
-@[simp, grind =] public theorem Expression.infer_lcons_eq_some {td : TypeDecls} {ctx : Context}
-    {hd tl : Expression} {t : Ty} :
+@[simp, grind =]
+public theorem Expression.infer_lcons_eq_some {td : TypeDecls} {ctx : Context} {hd tl : Expression}
+    {t : Ty} :
     (Expression.lcons hd tl).infer td ctx = some t ↔
       ∃ t', hd.infer td ctx = some t' ∧ tl.infer td ctx = some (.list t') ∧ t = .list t' := by
   simp [Expression.infer, Expression.inferE]
@@ -740,8 +769,9 @@ The element type is existentially quantified and goes nowhere: a length counts t
 looking at any of them, so *which* list it is handed is all the premise says and the result's type
 does not depend on it.  That is what makes this the one list form whose result is not a list —
 `listReverse` passes its operand's type through, where this one discards it. -/
-@[simp, grind =] public theorem Expression.infer_listLength_eq_some {td : TypeDecls}
-    {ctx : Context} {l : Expression} {t : Ty} :
+@[simp, grind =]
+public theorem Expression.infer_listLength_eq_some {td : TypeDecls} {ctx : Context} {l : Expression}
+    {t : Ty} :
     (Expression.listLength l).infer td ctx = some t ↔
       (∃ t', l.infer td ctx = some (.list t')) ∧ t = .int := by
   simp only [Expression.infer, Expression.inferE, Except.toOption_eq_some_iff]
@@ -752,8 +782,9 @@ type.
 
 Reversing preserves both the length and the element type, so the operand's type is also the
 result's: unlike `lcons`, this form introduces no new type structure. -/
-@[simp, grind =] public theorem Expression.infer_listReverse_eq_some {td : TypeDecls}
-    {ctx : Context} {l : Expression} {t : Ty} :
+@[simp, grind =]
+public theorem Expression.infer_listReverse_eq_some {td : TypeDecls} {ctx : Context}
+    {l : Expression} {t : Ty} :
     (Expression.listReverse l).infer td ctx = some t ↔
       ∃ t', l.infer td ctx = some (.list t') ∧ t = .list t' := by
   simp only [Expression.infer, Expression.inferE, Except.toOption_eq_some_iff]
@@ -770,19 +801,21 @@ instead — one element apiece — which is what `listReverse` preserves as well
 The function takes one parameter where a hashmap's takes two, since a list element is one value
 where a binding is a key beside its value.  That is also what tells the two forms apart when both
 are written `map`: the arity of the function is the arity of what it is handed. -/
-@[simp, grind =] public theorem Expression.infer_listMap_eq_some {td : TypeDecls} {ctx : Context}
-    {l f : Expression} {t : Ty} :
+@[simp, grind =]
+public theorem Expression.infer_listMap_eq_some {td : TypeDecls} {ctx : Context} {l f : Expression}
+    {t : Ty} :
     (Expression.listMap l f).infer td ctx = some t ↔
-      ∃ t' r, l.infer td ctx = some (.list t') ∧ f.infer td ctx = some (.fn [t'] r)
-        ∧ t = .list r := by
+      ∃ t' r,
+        l.infer td ctx = some (.list t') ∧ f.infer td ctx = some (.fn [t'] r) ∧ t = .list r := by
   simp only [Expression.infer, Expression.inferE, Except.toOption_eq_some_iff]
   split <;> simp_all <;> grind
 
 /-- An `optionSome` is typeable exactly when the expression it holds is, and then it is an option of
 that expression's type.  No annotation is needed, unlike `optionNone`: the value is what the element
 type is read off, the way `lcons` reads a list's element type off its head. -/
-@[simp, grind =] public theorem Expression.infer_optionSome_eq_some {td : TypeDecls} {ctx : Context}
-    {e : Expression} {t : Ty} :
+@[simp, grind =]
+public theorem Expression.infer_optionSome_eq_some {td : TypeDecls} {ctx : Context} {e : Expression}
+    {t : Ty} :
     (Expression.optionSome e).infer td ctx = some t ↔
       ∃ t', e.infer td ctx = some t' ∧ t = .option t' := by
   simp [Expression.infer, Expression.inferE]
@@ -795,11 +828,13 @@ The same shape as `ite` rather than as `indMatch`: the cases are the two the typ
 nothing to be exhaustive about and no list of inferred types to find a common one among.  What the
 `some` case adds is the name it binds, which is in scope in that case alone and at the type the
 scrutinee's option holds. -/
-@[simp, grind =] public theorem Expression.infer_optionMatch_eq_some {td : TypeDecls}
-    {ctx : Context} {scrut nbody sbody : Expression} {x : String} {t : Ty} :
+@[simp, grind =]
+public theorem Expression.infer_optionMatch_eq_some {td : TypeDecls} {ctx : Context}
+    {scrut nbody sbody : Expression} {x : String} {t : Ty} :
     (Expression.optionMatch scrut nbody x sbody).infer td ctx = some t ↔
-      ∃ t', scrut.infer td ctx = some (.option t') ∧ nbody.infer td ctx = some t
-        ∧ sbody.infer td ((x, t') :: ctx) = some t := by
+      ∃ t',
+        scrut.infer td ctx = some (.option t') ∧
+          nbody.infer td ctx = some t ∧ sbody.infer td ((x, t') :: ctx) = some t := by
   simp only [Expression.infer, Expression.inferE, Except.toOption_eq_some_iff]
   split <;> simp_all
 
@@ -808,7 +843,8 @@ context, and then it is a function from the parameters' types to the body's.
 
 Parameters go on the front of the context, so they shadow same-named bindings from outside, and — as
 in `FuncDecl.callEnv` — a name repeated in the parameter list refers to its leftmost occurrence. -/
-@[simp, grind =] public theorem Expression.infer_lam_eq_some {td : TypeDecls} {ctx : Context}
+@[simp, grind =]
+public theorem Expression.infer_lam_eq_some {td : TypeDecls} {ctx : Context}
     {ps : List (String × Ty)} {body : Expression} {t : Ty} :
     (Expression.lam ps body).infer td ctx = some t ↔
       ∃ r, body.infer td (ps ++ ctx) = some r ∧ t = .fn (ps.map Prod.snd) r := by
@@ -820,16 +856,21 @@ are the types of the arguments, in order, and then it is that function type's re
 
 Because `Ty.fn` records all the parameters at once, arity is part of that one comparison: a call
 passing too few arguments is ill typed rather than partially applied. -/
-@[simp, grind =] public theorem Expression.infer_app_eq_some {td : TypeDecls} {ctx : Context}
-    {f : Expression} {args : List Expression} {t : Ty} :
+@[simp, grind =]
+public theorem Expression.infer_app_eq_some {td : TypeDecls} {ctx : Context} {f : Expression}
+    {args : List Expression} {t : Ty} :
     (Expression.app f args).infer td ctx = some t ↔
       ∃ ps, f.infer td ctx = some (.fn ps t) ∧ Expression.inferList td ctx args = some ps := by
   simp only [Expression.infer, Expression.inferE, Expression.inferList]
-  split <;> (try split) <;> first | grind | (simp_all <;> grind)
+  split <;> (try split) <;>
+    first
+    | grind
+    | (simp_all <;> grind)
 
 /-- An `ite` is typeable when its condition is a `bool` and its two branches have one type —
 and then that is its type. -/
-@[simp, grind =] public theorem Expression.infer_ite_eq_some {td : TypeDecls} {ctx : Context}
+@[simp, grind =]
+public theorem Expression.infer_ite_eq_some {td : TypeDecls} {ctx : Context}
     {c thn els : Expression} {t : Ty} :
     (Expression.ite c thn els).infer td ctx = some t ↔
       c.infer td ctx = some .bool ∧ thn.infer td ctx = some t ∧ els.infer td ctx = some t := by
@@ -841,8 +882,9 @@ The shape `plus` and `minus` have, over `bool` rather than `int`: one type on bo
 same type out.  Unlike `ite`, which also asks for a `bool`, nothing here is polymorphic — the
 operands are what a conditional's *condition* is, not what its branches are — and unlike `equals`
 there is no comparability to ask after, since the one type this accepts is a leaf. -/
-@[simp, grind =] public theorem Expression.infer_boolAnd_eq_some {td : TypeDecls} {ctx : Context}
-    {l r : Expression} {t : Ty} :
+@[simp, grind =]
+public theorem Expression.infer_boolAnd_eq_some {td : TypeDecls} {ctx : Context} {l r : Expression}
+    {t : Ty} :
     (Expression.boolAnd l r).infer td ctx = some t ↔
       l.infer td ctx = some .bool ∧ r.infer td ctx = some .bool ∧ t = .bool := by
   simp [Expression.infer, Expression.inferE]
@@ -852,8 +894,9 @@ there is no comparability to ask after, since the one type this accepts is a lea
 
 The same rule as `boolAnd`'s: the two differ in which operand's value settles the result without the
 other, which is a fact about evaluating one and not about typing it. -/
-@[simp, grind =] public theorem Expression.infer_boolOr_eq_some {td : TypeDecls} {ctx : Context}
-    {l r : Expression} {t : Ty} :
+@[simp, grind =]
+public theorem Expression.infer_boolOr_eq_some {td : TypeDecls} {ctx : Context} {l r : Expression}
+    {t : Ty} :
     (Expression.boolOr l r).infer td ctx = some t ↔
       l.infer td ctx = some .bool ∧ r.infer td ctx = some .bool ∧ t = .bool := by
   simp [Expression.infer, Expression.inferE]
@@ -861,11 +904,13 @@ other, which is a fact about evaluating one and not about typing it. -/
 
 /-- An `equals` is typeable when its two operands are the same type and that type is one a
 comparison can reach the bottom of (see `Ty.comparable`).  The `equals` itself is of type `bool`. -/
-@[simp, grind =] public theorem Expression.infer_equals_eq_some {td : TypeDecls} {ctx : Context}
-    {l r : Expression} {t : Ty} :
+@[simp, grind =]
+public theorem Expression.infer_equals_eq_some {td : TypeDecls} {ctx : Context} {l r : Expression}
+    {t : Ty} :
     (Expression.equals l r).infer td ctx = some t ↔
-      ∃ t', l.infer td ctx = some t' ∧ r.infer td ctx = some t' ∧ Ty.comparable td t' = true
-        ∧ t = .bool := by
+      ∃ t',
+        l.infer td ctx = some t' ∧
+          r.infer td ctx = some t' ∧ Ty.comparable td t' = true ∧ t = .bool := by
   simp [Expression.infer, Expression.inferE]
   grind
 
@@ -875,11 +920,13 @@ ordering (see `Ty.orderable`).  The `lt` itself is of type `bool`.
 `equals`'s rule with `Ty.orderable` in place of `Ty.comparable`, which is the only thing between the
 two: both read a type off the left operand, require it of the right, and produce a `bool` whatever
 it was. -/
-@[simp, grind =] public theorem Expression.infer_lt_eq_some {td : TypeDecls} {ctx : Context}
-    {l r : Expression} {t : Ty} :
+@[simp, grind =]
+public theorem Expression.infer_lt_eq_some {td : TypeDecls} {ctx : Context} {l r : Expression}
+    {t : Ty} :
     (Expression.lt l r).infer td ctx = some t ↔
-      ∃ t', l.infer td ctx = some t' ∧ r.infer td ctx = some t' ∧ Ty.orderable t' = true
-        ∧ t = .bool := by
+      ∃ t',
+        l.infer td ctx = some t' ∧
+          r.infer td ctx = some t' ∧ Ty.orderable t' = true ∧ t = .bool := by
   simp [Expression.infer, Expression.inferE]
   grind
 
@@ -887,18 +934,21 @@ it was. -/
 
 The two differ in nothing a type checker sees: which of the two answers a comparison of equal values
 gives is what they differ in, and that is what `Eval` says of them. -/
-@[simp, grind =] public theorem Expression.infer_le_eq_some {td : TypeDecls} {ctx : Context}
-    {l r : Expression} {t : Ty} :
+@[simp, grind =]
+public theorem Expression.infer_le_eq_some {td : TypeDecls} {ctx : Context} {l r : Expression}
+    {t : Ty} :
     (Expression.le l r).infer td ctx = some t ↔
-      ∃ t', l.infer td ctx = some t' ∧ r.infer td ctx = some t' ∧ Ty.orderable t' = true
-        ∧ t = .bool := by
+      ∃ t',
+        l.infer td ctx = some t' ∧
+          r.infer td ctx = some t' ∧ Ty.orderable t' = true ∧ t = .bool := by
   simp [Expression.infer, Expression.inferE]
   grind
 
 /-- A `let_` is typeable when the expression it binds is and its body is under that name at
 that type, and then it has the body's type. -/
-@[simp, grind =] public theorem Expression.infer_let_eq_some {td : TypeDecls} {ctx : Context}
-    {x : String} {e body : Expression} {t : Ty} :
+@[simp, grind =]
+public theorem Expression.infer_let_eq_some {td : TypeDecls} {ctx : Context} {x : String}
+    {e body : Expression} {t : Ty} :
     (Expression.let_ x e body).infer td ctx = some t ↔
       ∃ t', e.infer td ctx = some t' ∧ body.infer td ((x, t') :: ctx) = some t := by
   simp [Expression.infer, Expression.inferE]
@@ -909,57 +959,77 @@ declaration's fields, at those types, in any order.
 Any order, because the fields are matched up by name: `Expression.fieldsComplete` is what says the
 two lists are the same fields, and it is the only thing between this and `structUpdate`'s rule —
 which is the same condition over *some* of the declaration's fields rather than all of them. -/
-@[simp, grind =] public theorem Expression.infer_structNew_eq_some {td : TypeDecls} {ctx : Context}
-    {name : String} {fes : List (FieldName × Expression)} {t : Ty} :
+@[simp, grind =]
+public theorem Expression.infer_structNew_eq_some {td : TypeDecls} {ctx : Context} {name : String}
+    {fes : List (FieldName × Expression)} {t : Ty} :
     (Expression.structNew name fes).infer td ctx = some t ↔
-      ∃ sd fts, td.ss.lookup name = some sd ∧ Expression.inferFields td ctx fes = some fts
-        ∧ Expression.fieldsComplete sd.fields fts = true ∧ t = .struct name := by
+      ∃ sd fts,
+        td.ss.lookup name = some sd ∧
+          Expression.inferFields td ctx fes = some fts ∧
+          Expression.fieldsComplete sd.fields fts = true ∧ t = .struct name := by
   simp [Expression.infer, Expression.inferE, Expression.inferFields]
   grind
 
 /-- A `structGet` is typeable when its operand is a declared struct with the named field. -/
-@[simp, grind =] public theorem Expression.infer_structGet_eq_some {td : TypeDecls} {ctx : Context}
-    {e : Expression} {f : FieldName} {t : Ty} :
+@[simp, grind =]
+public theorem Expression.infer_structGet_eq_some {td : TypeDecls} {ctx : Context} {e : Expression}
+    {f : FieldName} {t : Ty} :
     (Expression.structGet e f).infer td ctx = some t ↔
-      ∃ name sd, e.infer td ctx = some (.struct name) ∧ td.ss.lookup name = some sd
-        ∧ sd.fields.lookup f = some t := by
+      ∃ name sd,
+        e.infer td ctx = some (.struct name) ∧
+          td.ss.lookup name = some sd ∧ sd.fields.lookup f = some t := by
   simp only [Expression.infer, Expression.inferE, Except.toOption_eq_some_iff]
   split <;> grind
 
 /-- A `structUpdate` is typeable when its operand is a declared struct and every field it
 rebinds is one of that declaration's, at the type the declaration gives it. -/
-@[simp, grind =] public theorem Expression.infer_structUpdate_eq_some {td : TypeDecls}
-    {ctx : Context} {e : Expression} {fes : List (FieldName × Expression)} {t : Ty} :
+@[simp, grind =]
+public theorem Expression.infer_structUpdate_eq_some {td : TypeDecls} {ctx : Context}
+    {e : Expression} {fes : List (FieldName × Expression)} {t : Ty} :
     (Expression.structUpdate e fes).infer td ctx = some t ↔
-      ∃ name sd fts, e.infer td ctx = some (.struct name) ∧ td.ss.lookup name = some sd
-        ∧ Expression.inferFields td ctx fes = some fts ∧ fts ≠ []
-        ∧ (∀ p ∈ fts, sd.fields.lookup p.1 = some p.2) ∧ t = .struct name := by
+      ∃ name sd fts,
+        e.infer td ctx = some (.struct name) ∧
+          td.ss.lookup name = some sd ∧
+          Expression.inferFields td ctx fes = some fts ∧
+          fts ≠ [] ∧ (∀ p ∈ fts, sd.fields.lookup p.1 = some p.2) ∧ t = .struct name := by
   simp only [Expression.infer, Expression.inferE, Expression.inferFields]
-  split <;> (try split) <;> first | grind | (simp_all <;> grind)
+  split <;> (try split) <;>
+    first
+    | grind
+    | (simp_all <;> grind)
 
 /-- An `indNew` is typeable when the type it names is declared, that declaration has the
 constructor it names, and the arguments are the data types that constructor takes, in order. -/
-@[simp, grind =] public theorem Expression.infer_indNew_eq_some {td : TypeDecls} {ctx : Context}
-    {name : String} {c : CtorName} {args : List Expression} {t : Ty} :
+@[simp, grind =]
+public theorem Expression.infer_indNew_eq_some {td : TypeDecls} {ctx : Context} {name : String}
+    {c : CtorName} {args : List Expression} {t : Ty} :
     (Expression.indNew name c args).infer td ctx = some t ↔
-      ∃ d ts, td.is.lookup name = some d ∧ d.constructors.lookup c = some ts
-        ∧ Expression.inferList td ctx args = some ts ∧ t = .ind name := by
+      ∃ d ts,
+        td.is.lookup name = some d ∧
+          d.constructors.lookup c = some ts ∧
+          Expression.inferList td ctx args = some ts ∧ t = .ind name := by
   simp [Expression.infer, Expression.inferE, Expression.inferList]
   grind
 
 /-- An `indMatch` is typeable when its scrutinee is a declared inductive type, it has one
 alternative per constructor of that declaration, those alternatives all check, and they all have one
 type. -/
-@[simp, grind =] public theorem Expression.infer_indMatch_eq_some {td : TypeDecls} {ctx : Context}
+@[simp, grind =]
+public theorem Expression.infer_indMatch_eq_some {td : TypeDecls} {ctx : Context}
     {scrut : Expression} {alts : List (CtorName × List String × Expression)} {t : Ty} :
     (Expression.indMatch scrut alts).infer td ctx = some t ↔
-      ∃ name d rs, scrut.infer td ctx = some (.ind name) ∧ td.is.lookup name = some d
-        ∧ Expression.altsExhaustive d.constructors alts = true
-        ∧ Expression.inferAlts td ctx d.constructors alts = some rs ∧ rs ≠ []
-        ∧ ∀ t' ∈ rs, t' = t := by
+      ∃ name d rs,
+        scrut.infer td ctx = some (.ind name) ∧
+          td.is.lookup name = some d ∧
+          Expression.altsExhaustive d.constructors alts = true ∧
+          Expression.inferAlts td ctx d.constructors alts = some rs ∧
+          rs ≠ [] ∧ ∀ t' ∈ rs, t' = t := by
   simp only [Expression.infer, Expression.inferE, Expression.inferAlts]
   repeat' split
-  all_goals first | grind | (simp_all <;> grind)
+  all_goals
+    first
+    | grind
+    | (simp_all <;> grind)
 
 /-! The five hashmap forms.  Each of them asks for the key type to be comparable, which is the one
 condition that is not about the shape of the expression: a hashmap is read by comparing the key
@@ -971,8 +1041,9 @@ with is not reachable by building one. -/
 /-- A `hashmapEmpty` takes its type from its two annotations, the way an empty list and an empty
 option take theirs: it binds nothing, so there is no key and no value for either half to be read
 off. -/
-@[simp, grind =] public theorem Expression.infer_hashmapEmpty_eq_some {td : TypeDecls}
-    {ctx : Context} {kt vt t : Ty} :
+@[simp, grind =]
+public theorem Expression.infer_hashmapEmpty_eq_some {td : TypeDecls} {ctx : Context}
+    {kt vt t : Ty} :
     (Expression.hashmapEmpty kt vt).infer td ctx = some t ↔
       Ty.comparable td kt = true ∧ t = .hashmap kt vt := by
   simp only [Expression.infer, Expression.inferE, Except.toOption_eq_some_iff]
@@ -983,11 +1054,14 @@ are of the two types that hashmap relates — and then it is that same hashmap t
 
 Rebinding introduces no type structure, so the result's type is the map's, the way `listReverse`'s
 is its operand's. -/
-@[simp, grind =] public theorem Expression.infer_hashmapPut_eq_some {td : TypeDecls} {ctx : Context}
+@[simp, grind =]
+public theorem Expression.infer_hashmapPut_eq_some {td : TypeDecls} {ctx : Context}
     {m k v : Expression} {t : Ty} :
     (Expression.hashmapPut m k v).infer td ctx = some t ↔
-      ∃ kt vt, m.infer td ctx = some (.hashmap kt vt) ∧ k.infer td ctx = some kt
-        ∧ v.infer td ctx = some vt ∧ Ty.comparable td kt = true ∧ t = .hashmap kt vt := by
+      ∃ kt vt,
+        m.infer td ctx = some (.hashmap kt vt) ∧
+          k.infer td ctx = some kt ∧
+          v.infer td ctx = some vt ∧ Ty.comparable td kt = true ∧ t = .hashmap kt vt := by
   simp only [Expression.infer, Expression.inferE, Except.toOption_eq_some_iff]
   split <;> simp_all <;> grind
 
@@ -997,11 +1071,13 @@ hashmap's key type, and then it is an option of its value type.
 An option rather than the value type itself, because a key the map does not bind is not an error:
 `optionMatch` is what the two cases are read with, so a lookup that found nothing is a value like
 any other. -/
-@[simp, grind =] public theorem Expression.infer_hashmapGet_eq_some {td : TypeDecls} {ctx : Context}
+@[simp, grind =]
+public theorem Expression.infer_hashmapGet_eq_some {td : TypeDecls} {ctx : Context}
     {m k : Expression} {t : Ty} :
     (Expression.hashmapGet m k).infer td ctx = some t ↔
-      ∃ kt vt, m.infer td ctx = some (.hashmap kt vt) ∧ k.infer td ctx = some kt
-        ∧ Ty.comparable td kt = true ∧ t = .option vt := by
+      ∃ kt vt,
+        m.infer td ctx = some (.hashmap kt vt) ∧
+          k.infer td ctx = some kt ∧ Ty.comparable td kt = true ∧ t = .option vt := by
   simp only [Expression.infer, Expression.inferE, Except.toOption_eq_some_iff]
   split <;> simp_all <;> grind
 
@@ -1013,11 +1089,14 @@ The function takes the key as well as the value, so its parameter types are the 
 order: `tuple [kt, vt]` is what a binding is where `toList` produces one, and this is the same pair
 read as a parameter list.  The key type is the one thing carried through to the result — a mapping
 rebinds no key — so what the two hashmap types share is exactly what is not mapped. -/
-@[simp, grind =] public theorem Expression.infer_hashmapMap_eq_some {td : TypeDecls} {ctx : Context}
+@[simp, grind =]
+public theorem Expression.infer_hashmapMap_eq_some {td : TypeDecls} {ctx : Context}
     {m f : Expression} {t : Ty} :
     (Expression.hashmapMap m f).infer td ctx = some t ↔
-      ∃ kt vt r, m.infer td ctx = some (.hashmap kt vt) ∧ f.infer td ctx = some (.fn [kt, vt] r)
-        ∧ Ty.comparable td kt = true ∧ t = .hashmap kt r := by
+      ∃ kt vt r,
+        m.infer td ctx = some (.hashmap kt vt) ∧
+          f.infer td ctx = some (.fn [kt, vt] r) ∧
+          Ty.comparable td kt = true ∧ t = .hashmap kt r := by
   simp only [Expression.infer, Expression.inferE, Except.toOption_eq_some_iff]
   split <;> simp_all <;> grind
 
@@ -1029,11 +1108,13 @@ expression but the map's — there is no key here to require anything of.  `tupl
 than two parallel lists because a binding is a key *and* its value: nothing else in the IR relates
 the two, so taking them apart into a list of keys and a list of values would lose which went with
 which. -/
-@[simp, grind =] public theorem Expression.infer_hashmapToList_eq_some {td : TypeDecls}
-    {ctx : Context} {m : Expression} {t : Ty} :
+@[simp, grind =]
+public theorem Expression.infer_hashmapToList_eq_some {td : TypeDecls} {ctx : Context}
+    {m : Expression} {t : Ty} :
     (Expression.hashmapToList m).infer td ctx = some t ↔
-      ∃ kt vt, m.infer td ctx = some (.hashmap kt vt) ∧ Ty.comparable td kt = true
-        ∧ t = .list (.tuple [kt, vt]) := by
+      ∃ kt vt,
+        m.infer td ctx = some (.hashmap kt vt) ∧
+          Ty.comparable td kt = true ∧ t = .list (.tuple [kt, vt]) := by
   simp only [Expression.infer, Expression.inferE, Except.toOption_eq_some_iff]
   split <;> simp_all <;> grind
 
@@ -1047,7 +1128,8 @@ in the order they were written.
 It takes no annotation, unlike `lnil` and `optionNone` and `hashmapEmpty`: the elements are what the
 types are read off, and `tupleNew []` needs none either — `tuple []` is the only type it could
 have. -/
-@[simp, grind =] public theorem Expression.infer_tupleNew_eq_some {td : TypeDecls} {ctx : Context}
+@[simp, grind =]
+public theorem Expression.infer_tupleNew_eq_some {td : TypeDecls} {ctx : Context}
     {es : List Expression} {t : Ty} :
     (Expression.tupleNew es).infer td ctx = some t ↔
       ∃ ts, Expression.inferList td ctx es = some ts ∧ t = .tuple ts := by
@@ -1061,41 +1143,60 @@ The index is read off the expression rather than evaluated, which is what lets o
 a heterogeneous value: `getElem?` is a lookup in the *type*, so an index past the end is ill typed
 rather than a failure at run time.  That is the positional reading of `structGet`, whose field name
 is looked up in the declaration the operand's type names. -/
-@[simp, grind =] public theorem Expression.infer_tupleGet_eq_some {td : TypeDecls} {ctx : Context}
-    {e : Expression} {i : Nat} {t : Ty} :
+@[simp, grind =]
+public theorem Expression.infer_tupleGet_eq_some {td : TypeDecls} {ctx : Context} {e : Expression}
+    {i : Nat} {t : Ty} :
     (Expression.tupleGet e i).infer td ctx = some t ↔
       ∃ ts, e.infer td ctx = some (.tuple ts) ∧ ts[i]? = some t := by
   simp only [Expression.infer, Expression.inferE, Except.toOption_eq_some_iff]
   split <;> grind
 
+/-- An `unreachable` takes its type from its annotation and asks nothing of anything: it is the one
+form with no condition at all, so there is no message for it and nothing for an inversion principle
+to recover beyond the annotation itself.
+
+That annotation is what "a branch nothing reaches can have any type" comes to under inference that
+determines one type per form, and it is the same reason `lnil` and `optionNone` and `hashmapEmpty`
+carry theirs.  Where those hold nothing for a type to be read off, this is never evaluated at all —
+so unlike theirs, this annotation is not even checked against a value by `Eval.hasType`: `Eval` has
+no rule for the form, which is what `Eval.not_unreachable` says. -/
+@[simp, grind =]
+public theorem Expression.infer_unreachable {td : TypeDecls} {ctx : Context} {t : Ty}
+    {why : String} : (Expression.unreachable t why).infer td ctx = some t := by
+  simp [Expression.infer, Expression.inferE]
+
 /-! Inversion principles for `inferList`.  Together these say what it computes: the argument types
 in order, and `none` as soon as one argument has no type. -/
 
-@[simp, grind =] public theorem Expression.inferList_nil {td : TypeDecls} {ctx : Context} :
+@[simp, grind =]
+public theorem Expression.inferList_nil {td : TypeDecls} {ctx : Context} :
     Expression.inferList td ctx [] = some [] := by
   simp [Expression.inferList, Expression.inferListE]
 
-@[simp, grind =] public theorem Expression.inferList_cons_eq_some {td : TypeDecls} {ctx : Context}
-    {e : Expression} {es : List Expression} {ts : List Ty} :
+@[simp, grind =]
+public theorem Expression.inferList_cons_eq_some {td : TypeDecls} {ctx : Context} {e : Expression}
+    {es : List Expression} {ts : List Ty} :
     Expression.inferList td ctx (e :: es) = some ts ↔
-      ∃ t ts', e.infer td ctx = some t ∧ Expression.inferList td ctx es = some ts'
-        ∧ ts = t :: ts' := by
+      ∃ t ts',
+        e.infer td ctx = some t ∧ Expression.inferList td ctx es = some ts' ∧ ts = t :: ts' := by
   simp [Expression.inferList, Expression.inferListE, Expression.infer]
   grind
 
 /-! Inversion principles for `inferFields`, and then what it says about the list it produces: the
 fields it was given, in order, and `none` as soon as one field's expression has no type. -/
 
-@[simp, grind =] public theorem Expression.inferFields_nil {td : TypeDecls} {ctx : Context} :
+@[simp, grind =]
+public theorem Expression.inferFields_nil {td : TypeDecls} {ctx : Context} :
     Expression.inferFields td ctx [] = some [] := by
   simp [Expression.inferFields, Expression.inferFieldsE]
 
-@[simp, grind =] public theorem Expression.inferFields_cons_eq_some {td : TypeDecls} {ctx : Context}
-    {f : FieldName} {e : Expression} {fes : List (FieldName × Expression)}
-    {fts : List (FieldName × Ty)} :
+@[simp, grind =]
+public theorem Expression.inferFields_cons_eq_some {td : TypeDecls} {ctx : Context} {f : FieldName}
+    {e : Expression} {fes : List (FieldName × Expression)} {fts : List (FieldName × Ty)} :
     Expression.inferFields td ctx ((f, e) :: fes) = some fts ↔
-      ∃ t fts', e.infer td ctx = some t ∧ Expression.inferFields td ctx fes = some fts'
-        ∧ fts = (f, t) :: fts' := by
+      ∃ t fts',
+        e.infer td ctx = some t ∧
+          Expression.inferFields td ctx fes = some fts' ∧ fts = (f, t) :: fts' := by
   simp [Expression.inferFields, Expression.inferFieldsE, Expression.infer]
   grind
 
@@ -1106,14 +1207,13 @@ are `inferFields`' output, the expressions are its input, and `Eval` relates tho
 one key sequence runs through all four. -/
 public theorem Expression.map_fst_of_inferFields {td : TypeDecls} {ctx : Context}
     {fes : List (FieldName × Expression)} {fts : List (FieldName × Ty)}
-    (h : Expression.inferFields td ctx fes = some fts) :
-    fts.map Prod.fst = fes.map Prod.fst := by
+    (h : Expression.inferFields td ctx fes = some fts) : fts.map Prod.fst = fes.map Prod.fst := by
   induction fes generalizing fts with
   | nil => simp_all
   | cons p fes ih =>
-      obtain ⟨f, e⟩ := p
-      obtain ⟨t, fts', -, hfts, rfl⟩ := Expression.inferFields_cons_eq_some.mp h
-      simp [ih hfts]
+    obtain ⟨f, e⟩ := p
+    obtain ⟨t, fts', -, hfts, rfl⟩ := Expression.inferFields_cons_eq_some.mp h
+    simp [ih hfts]
 
 /-- The type `inferFields` reports for a field is the type of the expression that field was given.
 
@@ -1126,30 +1226,34 @@ public theorem Expression.lookup_of_inferFields {td : TypeDecls} {ctx : Context}
   induction fes generalizing fts with
   | nil => simp at hf
   | cons p fes ih =>
-      obtain ⟨g, e'⟩ := p
-      obtain ⟨t, fts', he', hfts, rfl⟩ := Expression.inferFields_cons_eq_some.mp h
-      rw [List.lookup_cons] at hf ⊢
-      split at hf
-      · exact ⟨t, by simp_all, by grind⟩
-      · exact ih hfts hf
+    obtain ⟨g, e'⟩ := p
+    obtain ⟨t, fts', he', hfts, rfl⟩ := Expression.inferFields_cons_eq_some.mp h
+    rw [List.lookup_cons] at hf ⊢
+    split at hf
+    · exact ⟨t, by simp_all, by grind⟩
+    · exact ih hfts hf
 
 /-! Inversion principles for `inferAlts`.  There is one alternative list to run out, and the second
 says what one step along it asks for. -/
 
-@[simp, grind =] public theorem Expression.inferAlts_nil {td : TypeDecls} {ctx : Context}
+@[simp, grind =]
+public theorem Expression.inferAlts_nil {td : TypeDecls} {ctx : Context}
     {cs : List (CtorName × List Ty)} : Expression.inferAlts td ctx cs [] = some [] := by
   simp [Expression.inferAlts, Expression.inferAltsE]
 
 /-- One step of the walk: the alternative is for a constructor the declaration has, it binds one
 name per data type that constructor carries, and its expression is typeable under those names at
 those types. -/
-@[simp, grind =] public theorem Expression.inferAlts_cons_eq_some {td : TypeDecls} {ctx : Context}
+@[simp, grind =]
+public theorem Expression.inferAlts_cons_eq_some {td : TypeDecls} {ctx : Context}
     {cs : List (CtorName × List Ty)} {c : CtorName} {xs : List String} {body : Expression}
     {alts : List (CtorName × List String × Expression)} {rs : List Ty} :
     Expression.inferAlts td ctx cs ((c, xs, body) :: alts) = some rs ↔
-      ∃ ts t rs', cs.lookup c = some ts ∧ xs.length = ts.length
-        ∧ body.infer td (xs.zip ts ++ ctx) = some t
-        ∧ Expression.inferAlts td ctx cs alts = some rs' ∧ rs = t :: rs' := by
+      ∃ ts t rs',
+        cs.lookup c = some ts ∧
+          xs.length = ts.length ∧
+          body.infer td (xs.zip ts ++ ctx) = some t ∧
+          Expression.inferAlts td ctx cs alts = some rs' ∧ rs = t :: rs' := by
   simp [Expression.inferAlts, Expression.inferAltsE, Expression.infer]
   grind
 
@@ -1157,22 +1261,22 @@ those types. -/
 data types, and the type inferred for its expression is one of the types `inferAlts` reports. -/
 public theorem Expression.lookup_of_inferAlts {td : TypeDecls} {ctx : Context}
     {cs : List (CtorName × List Ty)} {alts : List (CtorName × List String × Expression)}
-    {rs : List Ty} (h : Expression.inferAlts td ctx cs alts = some rs) {c : CtorName}
-    {ts : List Ty} {xs : List String} {body : Expression} (hc : cs.lookup c = some ts)
+    {rs : List Ty} (h : Expression.inferAlts td ctx cs alts = some rs) {c : CtorName} {ts : List Ty}
+    {xs : List String} {body : Expression} (hc : cs.lookup c = some ts)
     (ha : alts.lookup c = some (xs, body)) :
     ∃ t, t ∈ rs ∧ xs.length = ts.length ∧ body.infer td (xs.zip ts ++ ctx) = some t := by
   induction alts generalizing rs with
   | nil => simp at ha
   | cons q alts ih =>
-      obtain ⟨c₀, xs₀, body₀⟩ := q
-      obtain ⟨ts₀, t₀, rs', hc₀, hlen, hbody, halts, rfl⟩ := Expression.inferAlts_cons_eq_some.mp h
-      rw [List.lookup_cons] at ha
-      by_cases hcc : c == c₀
-      · obtain rfl : c = c₀ := by grind
-        simp only [hcc] at ha
-        obtain ⟨rfl, rfl⟩ : xs = xs₀ ∧ body = body₀ := by grind
-        obtain rfl : ts = ts₀ := by grind
-        exact ⟨t₀, by simp, hlen, hbody⟩
-      · simp only [hcc] at ha
-        obtain ⟨t, htmem, htlen, htbody⟩ := ih halts ha
-        exact ⟨t, List.mem_cons_of_mem _ htmem, htlen, htbody⟩
+    obtain ⟨c₀, xs₀, body₀⟩ := q
+    obtain ⟨ts₀, t₀, rs', hc₀, hlen, hbody, halts, rfl⟩ := Expression.inferAlts_cons_eq_some.mp h
+    rw [List.lookup_cons] at ha
+    by_cases hcc : c == c₀
+    · obtain rfl : c = c₀ := by grind
+      simp only [hcc] at ha
+      obtain ⟨rfl, rfl⟩ : xs = xs₀ ∧ body = body₀ := by grind
+      obtain rfl : ts = ts₀ := by grind
+      exact ⟨t₀, by simp, hlen, hbody⟩
+    · simp only [hcc] at ha
+      obtain ⟨t, htmem, htlen, htbody⟩ := ih halts ha
+      exact ⟨t, List.mem_cons_of_mem _ htmem, htlen, htbody⟩

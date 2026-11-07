@@ -36,7 +36,8 @@ and otherwise the variable `Foo` with its field `bar` read.  The name it becomes
 not the Lean name it was found under.
 
 The keywords inside a DSL term — `bool`, `int`, `string`, `list`, `option`, `hashmap`, `tuple`,
-`true`, `false`, `some`, `none`, `reverse`, `length`, `map`, `toList`, `var`, `struct`, `new`, and
+`true`, `false`, `some`, `none`, `reverse`, `length`, `map`, `toList`, `unreachable`, `var`,
+`struct`, `new`, and
 `as` — are declared
 with `&`, Lean's
 non-reserved symbol form, so importing this module does not stop `int` or `some` from being used as
@@ -57,6 +58,7 @@ its symbol parsers when it meets an identifier, which is how `&"int"` gets a cha
 Without it a category ignores `&`-declared alternatives entirely. -/
 
 declare_syntax_cat lgtmTy (behavior := symbol)
+
 declare_syntax_cat lgtmExpr (behavior := symbol)
 
 /-! ## Types
@@ -64,15 +66,20 @@ declare_syntax_cat lgtmExpr (behavior := symbol)
 `Ty.fn` records every parameter at once, so a function type is written with its parameters in one
 comma-separated group: `(int, string) -> int`, and `() -> int` for a function of no arguments. -/
 
-syntax:max &"bool" : lgtmTy
-syntax:max &"int" : lgtmTy
-syntax:max &"string" : lgtmTy
-syntax:max &"list" lgtmTy:max : lgtmTy
+syntax :max &"bool" : lgtmTy
+
+syntax :max &"int" : lgtmTy
+
+syntax :max &"string" : lgtmTy
+
+syntax :max &"list" lgtmTy:max : lgtmTy
+
 /-- `option int` is a value of type `int` or nothing.
 
 Like `list` and unlike `struct` and `inductive`, it carries the type it holds rather than naming a
 declaration, so there is no `lgtm` command declaring one and no `TypeDecls` entry to resolve. -/
-syntax:max &"option" lgtmTy:max : lgtmTy
+syntax :max &"option" lgtmTy:max : lgtmTy
+
 /-- `hashmap string int` is a finite map from `string` keys to `int` values.
 
 Like `list` and `option` and unlike `struct` and `inductive`, it carries the types it relates rather
@@ -82,7 +89,8 @@ resolve.
 Both halves are at `max` and are read in order, so `hashmap string list int` is a map to lists and
 `hashmap list string int` a map from them, while a function type on either side takes parentheses:
 `hashmap string ((int) -> int)`. -/
-syntax:max &"hashmap" lgtmTy:max lgtmTy:max : lgtmTy
+syntax :max &"hashmap" lgtmTy:max lgtmTy:max : lgtmTy
+
 /-- `tuple(int, string)` is an `int` beside a `string`: as many values as the types it lists, each at
 the type in its position.
 
@@ -94,22 +102,29 @@ is what says how many there are, and a function type on any of them needs no par
 Like `list`, `option` and `hashmap`, and unlike `struct` and `inductive`, it carries the types it
 relates rather than naming a declaration, so there is no `lgtm` command declaring one and no
 `TypeDecls` entry to resolve. -/
-syntax:max &"tuple" "(" lgtmTy,* ")" : lgtmTy
+syntax :max &"tuple" "(" lgtmTy,* ")" : lgtmTy
+
 /-- `struct Point` is the type the `lgtm struct` named `Point` declares.  The string form,
 `struct "my-struct"`, is for struct names that are not Lean identifiers — the same escape hatch
 `var` is for variables. -/
-syntax:max &"struct" ident : lgtmTy
-syntax:max &"struct" str : lgtmTy
+syntax :max &"struct" ident : lgtmTy
+
+syntax :max &"struct" str : lgtmTy
+
 /-- `inductive Color` is the type the `lgtm inductive` named `Color` declares, with the same string
 escape hatch `struct` has. -/
-syntax:max "inductive " ident : lgtmTy
-syntax:max "inductive " str : lgtmTy
-syntax:max "(" lgtmTy ")" : lgtmTy
-syntax:20 "(" lgtmTy,* ")" " -> " lgtmTy:20 : lgtmTy
-syntax:max "~" "(" term ")" : lgtmTy
+syntax :max "inductive " ident : lgtmTy
+
+syntax :max "inductive " str : lgtmTy
+
+syntax :max "(" lgtmTy ")" : lgtmTy
+
+syntax :20 "(" lgtmTy,* ")" " -> " lgtmTy:20 : lgtmTy
+
+syntax :max "~" "(" term ")" : lgtmTy
 
 /-- `[lgtm_ty| t]` is the `Ty` that `t` denotes. -/
-syntax:max "[lgtm_ty| " lgtmTy "]" : term
+syntax :max "[lgtm_ty| " lgtmTy "]" : term
 
 macro_rules
   | `([lgtm_ty| bool]) => `(Ty.bool)
@@ -174,22 +189,36 @@ concerned, so a dotted identifier that no declaration has taken as a Lean name i
 `varRef` and one `structGet` per component, while the postfix `.` is what reads a field of something
 that is not a bare name — `f(1).x`, or `(var "my-struct").x`.  The two agree on everything they both
 accept, and the postfix form is also what reads a field off a name a declaration *has* taken:
-`(var "Foo.bar").baz`, since `Foo.bar.baz` would be the whole IR name. -/
+`(var "Foo.bar").baz`, since `Foo.bar.baz` would be the whole IR name.
 
-syntax:max ident : lgtmExpr
-syntax:max num : lgtmExpr
-syntax:max str : lgtmExpr
+`unreachable "why" : int` is the branch nothing reaches.  It is annotated the way `none : int` is,
+and for a reason of its own: a branch needs the type its siblings have, and there is nothing in this
+one for a type to be read off because there is nothing in it at all. -/
+
+syntax :max ident : lgtmExpr
+
+syntax :max num : lgtmExpr
+
+syntax :max str : lgtmExpr
+
 /-- `true` and `false` are the two `bool` literals.  They are keywords rather than identifiers, so
 neither is available as a variable name inside a DSL term; `var "true"` is the escape hatch, the same
 one `reverse` and `new` leave. -/
-syntax:max &"true" : lgtmExpr
-syntax:max &"false" : lgtmExpr
-syntax:max "(" lgtmExpr ")" : lgtmExpr
-syntax:max "~" "(" term ")" : lgtmExpr
+syntax :max &"true" : lgtmExpr
+
+syntax :max &"false" : lgtmExpr
+
+syntax :max "(" lgtmExpr ")" : lgtmExpr
+
+syntax :max "~" "(" term ")" : lgtmExpr
+
 /-- `var "x"` is the variable `x`, for IR names that are not Lean identifiers. -/
-syntax:max &"var" str : lgtmExpr
-syntax:max "[" lgtmExpr,* " : " lgtmTy "]" : lgtmExpr
-syntax:max &"reverse" lgtmExpr:max : lgtmExpr
+syntax :max &"var" str : lgtmExpr
+
+syntax :max "[" lgtmExpr,* " : " lgtmTy "]" : lgtmExpr
+
+syntax :max &"reverse" lgtmExpr:max : lgtmExpr
+
 /-- `length xs` is how many elements `xs` has, as an `int`.
 
 A prefix keyword binding as tightly as `reverse`, so `length xs + 1` is the length plus one and
@@ -198,17 +227,23 @@ is not a list, which is what makes `length xs == 0` a comparison of two `int`s.
 
 `length` is a keyword, so it is not available as a variable name inside a DSL term; `var "length"`
 is the escape hatch, the same one `reverse` and `toList` leave. -/
-syntax:max &"length" lgtmExpr:max : lgtmExpr
-syntax:max lgtmExpr:max noWs "(" lgtmExpr,* ")" : lgtmExpr
+syntax :max &"length" lgtmExpr:max : lgtmExpr
+
+syntax :max lgtmExpr:max noWs "(" lgtmExpr,* ")" : lgtmExpr
+
 /-- `new Point { x = 1, y = 2 }` builds a `Point`.  Every field the declaration has must be given,
 in the order it declares them, which is the type checker's business rather than the parser's. -/
-syntax:max &"new" ident "{" (ident " = " lgtmExpr),* "}" : lgtmExpr
-syntax:max &"new" str "{" (ident " = " lgtmExpr),* "}" : lgtmExpr
+syntax :max &"new" ident "{" (ident " = " lgtmExpr),* "}" : lgtmExpr
+
+syntax :max &"new" str "{" (ident " = " lgtmExpr),* "}" : lgtmExpr
+
 /-- `e.field`, for an `e` that is not a bare name.  A bare name takes the dotted-identifier route
 instead. -/
-syntax:max lgtmExpr:max noWs "." noWs ident : lgtmExpr
+syntax :max lgtmExpr:max noWs "." noWs ident : lgtmExpr
+
 /-- `{ p with x = 1, y = 2 }` is `p` with those fields rebound and the rest left alone. -/
-syntax:max "{" lgtmExpr " with " (ident " = " lgtmExpr),* "}" : lgtmExpr
+syntax :max "{" lgtmExpr " with " (ident " = " lgtmExpr),* "}" : lgtmExpr
+
 /-- `new Color.Rgb(255, 0, 0)` applies the constructor `Rgb` of the inductive type `Color`, and
 `new Color.Red()` one that takes nothing — the parentheses are always there, as they are for a call.
 
@@ -216,15 +251,18 @@ The type and the constructor are one dotted identifier because that is how the t
 everywhere else, and because it is one token as far as Lean's tokenizer is concerned.  Exactly two
 components are expected; `new "my-type" "Red"(1)` is the escape hatch for names that are not Lean
 identifiers. -/
-syntax:max &"new" ident "(" lgtmExpr,* ")" : lgtmExpr
-syntax:max &"new" str str "(" lgtmExpr,* ")" : lgtmExpr
+syntax :max &"new" ident "(" lgtmExpr,* ")" : lgtmExpr
+
+syntax :max &"new" str str "(" lgtmExpr,* ")" : lgtmExpr
+
 /-- `some(e)` is the option holding `e`.  It takes no annotation, because `optionSome` takes none:
 the value it holds is what the element type is read off.
 
 Written with parentheses the way a call and a `new` are, and for the same reason the `match`
 alternative `| some(x) => ...` is: the one value an option holds is given like the one argument a
 constructor takes. -/
-syntax:max &"some" "(" lgtmExpr ")" : lgtmExpr
+syntax :max &"some" "(" lgtmExpr ")" : lgtmExpr
+
 /-- `none : int` is the empty option at `int`, annotated because `optionNone` is: an empty option
 holds nothing to read a type off, exactly as an empty list literal does not.
 
@@ -235,7 +273,24 @@ annotation of its own, the option takes parentheses to say which `:` is which:
 
 `none` is a keyword, so neither it nor `some` is available as a variable name inside a DSL term;
 `var "none"` is the escape hatch, the same one `true` and `new` leave. -/
-syntax:max &"none" " : " lgtmTy:max : lgtmExpr
+syntax :max &"none" " : " lgtmTy:max : lgtmExpr
+
+/-- `unreachable "why" : int` is a branch nothing reaches, at `int`, with a note saying why.
+
+Annotated, and read the same way `none : int` is: a type at `max`, so `unreachable "why" : list int`
+needs no parentheses while a function type does — `unreachable "why" : ((int) -> int)` — and inside a
+list literal, which ends with an annotation of its own, it takes parentheses to say which `:` is
+which.
+
+What the annotation is for is the branch rather than the form: both branches of an `if` must have
+one type, so this takes whichever one its siblings have, and the type checker asks nothing else of
+it.  Nothing else does either — `Eval` has no rule for the form, so a use that is ever reached has
+no value, and `Eval.not_unreachable` is what a proof rules one out with.
+
+`unreachable` is a keyword, so it is not available as a variable name inside a DSL term;
+`var "unreachable"` is the escape hatch, the same one `none` and `toList` leave. -/
+syntax :max &"unreachable" str " : " lgtmTy:max : lgtmExpr
+
 /-- `hashmap(string, int)` is the empty map from `string` to `int`.
 
 Annotated for the reason `[: int]` and `none : int` are: it binds nothing, so there is no key and no
@@ -245,7 +300,8 @@ which.
 
 `hashmap` is a keyword, so it is not available as a variable name inside a DSL term; `var "hashmap"`
 is the escape hatch, the same one `true`, `none` and `new` leave. -/
-syntax:max &"hashmap" "(" lgtmTy ", " lgtmTy ")" : lgtmExpr
+syntax :max &"hashmap" "(" lgtmTy ", " lgtmTy ")" : lgtmExpr
+
 /-- `m[k]` is what `k` is bound to in `m`.
 
 An `option` of the map's value type, so a key the map does not bind is an ordinary value rather than
@@ -255,7 +311,8 @@ Written with no space before the `[`, which is what tells it from a list literal
 two expressions and no parse, while `m[1]` is a lookup.  It binds as tightly as a field read and
 nests the same way — `p.m[k]`, `f(1)[k]`, `m[k1][k2]` — since what a lookup produces is an operand
 like any other. -/
-syntax:max lgtmExpr:max noWs "[" lgtmExpr "]" : lgtmExpr
+syntax :max lgtmExpr:max noWs "[" lgtmExpr "]" : lgtmExpr
+
 /-! `map` is one keyword over two forms — a list's mapping and a hashmap's — so it is written with a
 tag saying which: `map list xs f` and `map hashmap m f`.
 
@@ -277,7 +334,8 @@ carry through, which is the type checker's business rather than the parser's.
 The two operands bind as tightly as `reverse`'s one, so `map list xs f` and `map list p.items g(1)`
 need no parentheses while a function written out does — a `fun` is the loosest form there is:
 `map list xs (fun (x : int) => x + 1)`. -/
-syntax:max &"map" &"list" lgtmExpr:max lgtmExpr:max : lgtmExpr
+syntax :max &"map" &"list" lgtmExpr:max lgtmExpr:max : lgtmExpr
+
 /-- `map hashmap m f` is `m` with `f` applied to each of its bindings: a map from the same keys, each
 bound to what `f` returned for that key and the value it was bound to.
 
@@ -292,7 +350,8 @@ v + 1)`.
 `map` is a keyword, so it is not available as a variable name inside a DSL term; `var "map"` is the
 escape hatch, the same one `reverse` and `toList` leave.  `list` is one too, now that it tags a
 mapping, and `var "list"` is the same escape hatch for it. -/
-syntax:max &"map" &"hashmap" lgtmExpr:max lgtmExpr:max : lgtmExpr
+syntax :max &"map" &"hashmap" lgtmExpr:max lgtmExpr:max : lgtmExpr
+
 /-- `toList m` is the bindings of `m` as a list, one `tuple(k, v)` per binding, in the order the map
 carries them.
 
@@ -302,9 +361,11 @@ and does not type check, which is the type checker's business rather than the pa
 
 `toList` is a keyword, so it is not available as a variable name inside a DSL term; `var "toList"`
 is the escape hatch, the same one `reverse` and `hashmap` leave. -/
-syntax:max &"toList" lgtmExpr:max : lgtmExpr
+syntax :max &"toList" lgtmExpr:max : lgtmExpr
+
 /-- One binding of a hashmap update: the key, in brackets, and what to bind it to. -/
 public syntax lgtmKeyBinding := "[" lgtmExpr "]" " = " lgtmExpr
+
 /-- `{ m with [k] = v }` is `m` with `k` bound to `v`, and any previous binding for `k` dropped.
 
 The shape a struct update is written in, because it is the same thing of a map: `{ p with x = 1 }`
@@ -315,7 +376,8 @@ name, so there is no term both could be read as, and no update may mix them.
 Several bindings are one `hashmapPut` apiece, applied left to right, so
 `{ m with [a] = 1, [b] = 2 }` is `{ { m with [a] = 1 } with [b] = 2 }`.  At least one is required:
 `{ m with }` is the struct update it has always been. -/
-syntax:max "{" lgtmExpr " with " lgtmKeyBinding,+ "}" : lgtmExpr
+syntax :max "{" lgtmExpr " with " lgtmKeyBinding,+ "}" : lgtmExpr
+
 /-- `tuple(1, "a")` is an `int` beside a `string`.
 
 Written the way the type `tuple(int, string)` is and for the same reason: a tuple takes any number
@@ -328,7 +390,8 @@ it could have, where an empty list has every list type.
 
 `tuple` is a keyword, so it is not available as a variable name inside a DSL term; `var "tuple"` is
 the escape hatch, the same one `true`, `none`, `hashmap` and `new` leave. -/
-syntax:max &"tuple" "(" lgtmExpr,* ")" : lgtmExpr
+syntax :max &"tuple" "(" lgtmExpr,* ")" : lgtmExpr
+
 /-- `t.0` is the first element of the tuple `t`, `t.1` the second.
 
 The positional counterpart of `p.x`, and written to look like one: the index takes the place of the
@@ -346,11 +409,13 @@ heterogeneous, so the type that comes out is the one the tuple type gives at tha
 there is no type to give for a position that is not known until something runs.  An index past the
 end is therefore ill typed rather than a failure at run time, which is the type checker's business
 rather than the parser's. -/
-syntax:max lgtmExpr:max noWs "." noWs num : lgtmExpr
+syntax :max lgtmExpr:max noWs "." noWs num : lgtmExpr
+
 /-- One alternative of a `match`: the constructor's name, the names to bind the values it carries to,
 and the expression to evaluate when the value was built by it.  A constructor that carries nothing
 takes no parentheses. -/
 public syntax lgtmAlt := " | " ident ("(" ident,* ")")? " => " lgtmExpr
+
 /-- `match c with | Red => 0 | Rgb(r, g, b) => r` takes a value of an inductive type apart.
 
 The alternatives have to be the type's constructors in the order it declares them, which is the type
@@ -365,7 +430,8 @@ has rather than a list to check against a declaration, so there is nothing for a
 or a missing one to mean.  The cost is that an inductive type declaring a constructor called `none`
 or `some` is one this syntax cannot match on; `~(Expression.indMatch ...)` is the way to write that
 one. -/
-syntax:10 "match " lgtmExpr " with" lgtmAlt* : lgtmExpr
+syntax :10 "match " lgtmExpr " with" lgtmAlt* : lgtmExpr
+
 /-- `if b then { 1 } else { 2 }` chooses between its two branches.
 
 The branches are braced, so the form ends where the last `}` does and needs no parentheses to be an
@@ -375,10 +441,14 @@ because `then` is what ends it.
 
 Both branches must have the same type and the condition must be a `bool`, which is the type checker's
 business rather than the parser's. -/
-syntax:max "if " lgtmExpr " then " "{" lgtmExpr "}" " else " "{" lgtmExpr "}" : lgtmExpr
-syntax:65 lgtmExpr:65 " + " lgtmExpr:66 : lgtmExpr
-syntax:65 lgtmExpr:65 " - " lgtmExpr:66 : lgtmExpr
-syntax:55 lgtmExpr:56 " :: " lgtmExpr:55 : lgtmExpr
+syntax :max "if " lgtmExpr " then " "{" lgtmExpr "}" " else " "{" lgtmExpr "}" : lgtmExpr
+
+syntax :65 lgtmExpr:65 " + " lgtmExpr:66 : lgtmExpr
+
+syntax :65 lgtmExpr:65 " - " lgtmExpr:66 : lgtmExpr
+
+syntax :55 lgtmExpr:56 " :: " lgtmExpr:55 : lgtmExpr
+
 /-- `a == b` compares two values structurally, however deep they are.
 
 It is the loosest of the operators but the two boolean ones, so `x + 1 == y` and `x :: xs == ys`
@@ -388,7 +458,8 @@ say which, since what one produces is an ordinary `bool`.
 
 The operands must have the same type, and it must be a type a comparison can reach the bottom of —
 which is the type checker's business rather than the parser's. -/
-syntax:50 lgtmExpr:51 " == " lgtmExpr:51 : lgtmExpr
+syntax :50 lgtmExpr:51 " == " lgtmExpr:51 : lgtmExpr
+
 /-- `a < b` is `true` when `a` comes before `b` in its type's ordering, and `a <= b` when it comes
 before it or is it.
 
@@ -403,8 +474,10 @@ business rather than the parser's.
 
 These two are the whole of the IR's ordering: `a > b` is `b < a` written the other way round, so
 there is no form for it here. -/
-syntax:50 lgtmExpr:51 " < " lgtmExpr:51 : lgtmExpr
-syntax:50 lgtmExpr:51 " <= " lgtmExpr:51 : lgtmExpr
+syntax :50 lgtmExpr:51 " < " lgtmExpr:51 : lgtmExpr
+
+syntax :50 lgtmExpr:51 " <= " lgtmExpr:51 : lgtmExpr
+
 /-- `a && b` is `true` when both operands are, and `a || b` when either is.
 
 They are the two loosest operators there are, `||` looser than `&&` and both looser than `==`, so
@@ -415,16 +488,19 @@ unlike `==`: `a && b && c` is `(a && b) && c`, which is the same answer either g
 Both operands must be `bool`s, which is the type checker's business rather than the parser's.  The
 second is evaluated only when the first did not settle the answer, which is neither's — it is what
 `Eval` says of `boolAnd` and `boolOr`. -/
-syntax:40 lgtmExpr:40 " && " lgtmExpr:41 : lgtmExpr
-syntax:35 lgtmExpr:35 " || " lgtmExpr:36 : lgtmExpr
-syntax:10 "fun" ("(" ident " : " lgtmTy ")")* " => " lgtmExpr:10 : lgtmExpr
+syntax :40 lgtmExpr:40 " && " lgtmExpr:41 : lgtmExpr
+
+syntax :35 lgtmExpr:35 " || " lgtmExpr:36 : lgtmExpr
+
+syntax :10 "fun" ("(" ident " : " lgtmTy ")")* " => " lgtmExpr:10 : lgtmExpr
+
 /-- `let x = e in body`.  The bound expression carries no annotation, because `let_` does not: the
 type checker infers it.  The body extends as far right as it can, so `let`s chain without
 parentheses. -/
-syntax:10 "let " ident " = " lgtmExpr " in " lgtmExpr:10 : lgtmExpr
+syntax :10 "let " ident " = " lgtmExpr " in " lgtmExpr:10 : lgtmExpr
 
 /-- `[lgtm| e]` is the `Expression` that `e` denotes. -/
-syntax:max "[lgtm| " lgtmExpr "]" : term
+syntax :max "[lgtm| " lgtmExpr "]" : term
 
 /-- The `optionMatch` on `scrut` that `alts` describes, when they are the option forms:
 `| none => e` first and `| some(x) => e` second, each alternative given as its constructor name, the
@@ -442,18 +518,21 @@ public meta def optionMatchAlts (scrut : Lean.TSyntax `lgtmExpr)
   let isOptionCtor (c : Lean.Ident) : Bool := c.getId == `none || c.getId == `some
   let some (named, _, _) := alts.find? (fun (c, _, _) => isOptionCtor c) | return none
   let #[(nc, nxs, nbody), (sc, sxs, sbody)] := alts
-    | Lean.Macro.throwErrorAt named
+    |
+    Lean.Macro.throwErrorAt named
         "a match on an option has two alternatives: `| none => ... | some(x) => ...`"
   unless nc.getId == `none && sc.getId == `some do
-    Lean.Macro.throwErrorAt named
-      "a match on an option takes `none` first and `some` second"
+    Lean.Macro.throwErrorAt named "a match on an option takes `none` first and `some` second"
   unless nxs.isEmpty do
     Lean.Macro.throwErrorAt nc "`none` holds nothing, so its alternative binds no names"
   let #[x] := sxs
-    | Lean.Macro.throwErrorAt sc
+    |
+    Lean.Macro.throwErrorAt sc
         "`some` holds one value, so its alternative binds one name: `| some(x) => ...`"
-  return some (← `(Expression.optionMatch [lgtm| $scrut] [lgtm| $nbody]
-    $(Lean.quote x.getId.toString) [lgtm| $sbody]))
+  return some
+      (←
+        `(Expression.optionMatch [lgtm| $scrut] [lgtm| $nbody] $(Lean.quote x.getId.toString)
+              [lgtm| $sbody]))
 
 /-- Whether `n` is the Lean name of a declaration already in scope, which is how a dotted identifier
 is told apart from a field read.
@@ -465,7 +544,8 @@ calling a declaration of another takes a `meta import` of it as well as an ordin
 `meta` because it runs while a macro expands rather than at run time, and `public` for the reason
 `lgtmVis` is: a `module` hides even the names its own macros expand to. -/
 public meta def isDeclInScope (n : Lean.Name) : Lean.MacroM Bool := do
-  if ← Lean.Macro.hasDecl ((← Lean.Macro.getCurrNamespace) ++ n) then return true
+  if ← Lean.Macro.hasDecl ((← Lean.Macro.getCurrNamespace) ++ n) then
+    return true
   Lean.Macro.hasDecl n
 
 macro_rules
@@ -563,6 +643,7 @@ macro_rules
   | `([lgtm| $e.$i:num]) => `(Expression.tupleGet [lgtm| $e] $i)
   | `([lgtm| some($e)]) => `(Expression.optionSome [lgtm| $e])
   | `([lgtm| none : $t]) => `(Expression.optionNone [lgtm_ty| $t])
+  | `([lgtm| unreachable $why:str : $t]) => `(Expression.unreachable [lgtm_ty| $t] $why)
   | `([lgtm| match $e with $alts:lgtmAlt*]) => do
       let parsed ← alts.mapM fun alt =>
         match alt with
@@ -595,8 +676,8 @@ in; they are not Lean binders.
 
 `lgtm private def` makes the generated Lean declaration `private`.  The visibility comes after
 `lgtm` rather than before it because a command's first token is what the parser dispatches on. -/
-syntax (docComment)? "lgtm " (lgtmVis)? "def " ident (&"as" str)?
-  ("(" ident " : " lgtmTy ")")* " : " lgtmTy " := " lgtmExpr : command
+syntax (docComment)? "lgtm " (lgtmVis)? "def " ident (&"as" str)? ("(" ident " : " lgtmTy ")")*
+  " : " lgtmTy " := " lgtmExpr : command
 
 macro_rules
   | `($[$doc:docComment]? lgtm $[$vis:lgtmVis]? def $n:ident $[as $ir:str]?
@@ -628,8 +709,7 @@ on the program the declaration ends up in.
 
 `meta` because it runs while a macro expands rather than at run time, and `public` for the reason
 `lgtmVis` is: a `module` hides even the names its own macros expand to. -/
-public meta def throwOnRepeatedName (what : String) (ns : Array Lean.Ident) :
-    Lean.MacroM Unit := do
+public meta def throwOnRepeatedName (what : String) (ns : Array Lean.Ident) : Lean.MacroM Unit := do
   let mut seen : Array String := #[]
   for n in ns do
     let s := n.getId.toString
@@ -649,8 +729,8 @@ rather than a declaration only `Program.check` would turn down.
 
 A doc comment documents the Lean declaration only.  A `StructDecl` has no docstring field to put it
 in, unlike a `FuncDecl`. -/
-syntax (docComment)? "lgtm " (lgtmVis)? &"struct" ident (&"as" str)?
-  "{" (ident " : " lgtmTy),* "}" : command
+syntax (docComment)? "lgtm " (lgtmVis)? &"struct" ident (&"as" str)? "{" (ident " : " lgtmTy),*
+  "}" : command
 
 macro_rules
   | `($[$doc:docComment]? lgtm $[$vis:lgtmVis]? struct $n:ident $[as $ir:str]?
@@ -684,8 +764,7 @@ could never build and one a `match` would have to write a second alternative for
 
 A doc comment documents the Lean declaration only.  An `InductiveDecl` has no docstring field to put
 it in, as a `StructDecl` has not. -/
-syntax (docComment)? "lgtm " (lgtmVis)? "inductive " ident (&"as" str)?
-  "{" lgtmCtor,* "}" : command
+syntax (docComment)? "lgtm " (lgtmVis)? "inductive " ident (&"as" str)? "{" lgtmCtor,* "}" : command
 
 macro_rules
   | `($[$doc:docComment]? lgtm $[$vis:lgtmVis]? inductive $n:ident $[as $ir:str]?
@@ -703,4 +782,3 @@ macro_rules
       match vis with
       | some _ => `($[$doc:docComment]? private def $n : InductiveDecl := $val)
       | none => `($[$doc:docComment]? def $n : InductiveDecl := $val)
-

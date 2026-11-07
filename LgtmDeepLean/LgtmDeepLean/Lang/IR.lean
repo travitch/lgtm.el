@@ -1,14 +1,13 @@
 module
 
-
 public inductive Ty where
-| bool
-| int
-| string
-| option : Ty → Ty
-| list : Ty → Ty
-| hashmap : Ty → Ty → Ty
-/-- A fixed-length sequence of values, each at the type its position gives it: `tuple [int, string]`
+  | bool
+  | int
+  | string
+  | option : Ty → Ty
+  | list : Ty → Ty
+  | hashmap : Ty → Ty → Ty
+  /-- A fixed-length sequence of values, each at the type its position gives it: `tuple [int, string]`
 is an `int` beside a `string`.
 
 Positional and structural — it names no declaration, the way `list` and `option` name none — so it
@@ -19,16 +18,17 @@ same types in the same order.
 Unlike `list` it is heterogeneous and its length is part of its type, which is what makes it the type
 of *one binding* of a hashmap: `tuple [kt, vt]` is what `Expression.hashmapToList` produces a list
 of. -/
-| tuple : List Ty → Ty
-/-- A function from the types of its parameters to the type of its result. -/
-| fn : List Ty → Ty → Ty
-/-- A declared structure type (matched nominally). -/
-| struct : String → Ty
-/-- A declared inductive type (matched nominally). -/
-| ind : String → Ty
+  | tuple : List Ty → Ty
+  /-- A function from the types of its parameters to the type of its result. -/
+  | fn : List Ty → Ty → Ty
+  /-- A declared structure type (matched nominally). -/
+  | struct : String → Ty
+  /-- A declared inductive type (matched nominally). -/
+  | ind : String → Ty
   deriving Repr
 
-public abbrev FieldName := String
+public abbrev FieldName :=
+  String
 
 /-- A structure type declaration with named and typed fields.
 
@@ -38,7 +38,8 @@ public structure StructDecl where
   fields : List (FieldName × Ty)
   deriving Repr
 
-public abbrev CtorName := String
+public abbrev CtorName :=
+  String
 
 /-- A declaration of an inductive type that is similar to Lean's built-in inductives.
 
@@ -51,7 +52,6 @@ public structure InductiveDecl where
   deriving Repr
 
 mutual
-
 public def Ty.beq : Ty → Ty → Bool
   | .bool, .bool => true
   | .int, .int => true
@@ -64,20 +64,18 @@ public def Ty.beq : Ty → Ty → Bool
   | .struct a, .struct b => a == b
   | .ind a, .ind b => a == b
   | _, _ => false
-
 public def Ty.beqList : List Ty → List Ty → Bool
   | [], [] => true
   | a :: as, b :: bs => Ty.beq a b && Ty.beqList as bs
   | _, _ => false
-
 end
 
 /-- We have to write out the `BEq` instance by hand because the deriving handler cannot
 handle the mutually-recursive `.fn` case. -/
-public instance : BEq Ty := ⟨Ty.beq⟩
+public instance : BEq Ty :=
+  ⟨Ty.beq⟩
 
 mutual
-
 public theorem Ty.beq_iff_eq : ∀ (a b : Ty), Ty.beq a b = true ↔ a = b
   | .bool, b => by cases b <;> simp [Ty.beq]
   | .int, b => by cases b <;> simp [Ty.beq]
@@ -89,11 +87,9 @@ public theorem Ty.beq_iff_eq : ∀ (a b : Ty), Ty.beq a b = true ↔ a = b
   | .fn as r, b => by cases b <;> simp [Ty.beq, Ty.beqList_iff_eq as, Ty.beq_iff_eq r]
   | .struct s, b => by cases b <;> simp [Ty.beq]
   | .ind s, b => by cases b <;> simp [Ty.beq]
-
 public theorem Ty.beqList_iff_eq : ∀ (as bs : List Ty), Ty.beqList as bs = true ↔ as = bs
   | [], bs => by cases bs <;> simp [Ty.beqList]
   | a :: as, bs => by cases bs <;> simp [Ty.beqList, Ty.beq_iff_eq a, Ty.beqList_iff_eq as]
-
 end
 
 public instance : LawfulBEq Ty where
@@ -105,7 +101,6 @@ handle the mutually-recursive `.fn` case. -/
 public instance : DecidableEq Ty := fun a b => decidable_of_iff _ (Ty.beq_iff_eq a b)
 
 mutual
-
 public def Ty.renderWith (parens : Bool) : Ty → String
   | .bool => "bool"
   | .int => "int"
@@ -119,44 +114,44 @@ public def Ty.renderWith (parens : Bool) : Ty → String
     if parens then s!"({s})" else s
   | .struct name => s!"struct {name}"
   | .ind name => s!"inductive {name}"
-
 public def Ty.renderGroup : List Ty → String
   | [] => ""
   | [t] => Ty.renderWith false t
   | t :: ts => s!"{Ty.renderWith false t}, {Ty.renderGroup ts}"
-
 end
 
-public def Ty.render (t : Ty) : String := Ty.renderWith false t
+public def Ty.render (t : Ty) : String :=
+  Ty.renderWith false t
 
-public instance : ToString Ty := ⟨Ty.render⟩
+public instance : ToString Ty :=
+  ⟨Ty.render⟩
 
 public inductive Expression where
-/-- A function, annotated with the name and type of each of its parameters. -/
-| lam : List (String × Ty) → Expression → Expression
-/-- Apply a function to its arguments. -/
-| app : Expression → List Expression → Expression
-| boolLit : Bool → Expression
-/-- A polymorphic conditional.
+  /-- A function, annotated with the name and type of each of its parameters. -/
+  | lam : List (String × Ty) → Expression → Expression
+  /-- Apply a function to its arguments. -/
+  | app : Expression → List Expression → Expression
+  | boolLit : Bool → Expression
+  /-- A polymorphic conditional.
 
 > if $expression1 then { $expression2 } else { $expression3 }
 
 The condition expression must be a boolean.  The two body expressions can be any type, as long
 as it is the same for both. -/
-| ite : Expression → Expression → Expression → Expression
-/-- Conjunction of two booleans, short-circuiting.
+  | ite : Expression → Expression → Expression → Expression
+  /-- Conjunction of two booleans, short-circuiting.
 
 > $expression1 && $expression2
 
 -/
-| boolAnd : Expression → Expression → Expression
-/-- Disjunction of two booleans, short-circuiting.
+  | boolAnd : Expression → Expression → Expression
+  /-- Disjunction of two booleans, short-circuiting.
 
 > $expression1 || $expression2
 
 -/
-| boolOr : Expression → Expression → Expression
-/-- Test if two values are equal via deep structural comparison.
+  | boolOr : Expression → Expression → Expression
+  /-- Test if two values are equal via deep structural comparison.
 
 The two operands must be of the same type.
 
@@ -167,8 +162,8 @@ Two inductive values are equal if they are the same type, they were constructed 
 constructor tags, and their values are pointwise equal.
 
 Values of function type cannot be compared. -/
-| equals : Expression → Expression → Expression
-/-- Test if the first object is less than the second.
+  | equals : Expression → Expression → Expression
+  /-- Test if the first object is less than the second.
 
 The operands of the comparison are required to be the same type.
 This comparison is polymorphic over int, string, option, list, and tuples.
@@ -178,8 +173,8 @@ one that has not.  An empty option comes before one that holds a value.
 `Ty.orderable` is the whole of which types this applies to.  A bool is not one of them, nor is a
 struct or an inductive type: unlike `equals`, this claims no ordering for the types a declaration
 names. -/
-| lt : Expression → Expression → Expression
-/-- Test if the first object is less than or equal to the second.
+  | lt : Expression → Expression → Expression
+  /-- Test if the first object is less than or equal to the second.
 
 The operands of the comparison are required to be the same type.
 This comparison is polymorphic over int, string, option, list, and tuples.
@@ -188,75 +183,75 @@ one that has not.  An empty option comes before one that holds a value.
 
 The same comparison `lt` performs, read one answer wider: two equal values are the one pair the two
 forms differ on. -/
-| le : Expression → Expression → Expression
-/-- Introduce a let binding.  Binds the first expression to the given name, which
+  | le : Expression → Expression → Expression
+  /-- Introduce a let binding.  Binds the first expression to the given name, which
     becomes available in the second expression. -/
-| let_ : String → Expression → Expression → Expression
-/-- A variable reference. -/
-| varRef : String → Expression
-/-- Create a new instance of the struct with the given name, binding each
+  | let_ : String → Expression → Expression → Expression
+  /-- A variable reference. -/
+  | varRef : String → Expression
+  /-- Create a new instance of the struct with the given name, binding each
     field to the given values. All fields must be initialized. -/
-| structNew : String → List (FieldName × Expression) → Expression
-/-- Get the field with the given name from the given expression (i.e., obj.field). -/
-| structGet : Expression → FieldName → Expression
-/-- Update the given struct object with new bindings for the named fields.
+  | structNew : String → List (FieldName × Expression) → Expression
+  /-- Get the field with the given name from the given expression (i.e., obj.field). -/
+  | structGet : Expression → FieldName → Expression
+  /-- Update the given struct object with new bindings for the named fields.
 
 The list of fields is not permitted to be empty.
 
 Example: { x with field1 = value1, field2 = value2 } -/
-| structUpdate : Expression → List (FieldName × Expression) → Expression
-/-- Create a new instance of an inductive type using the given constructor name. -/
-| indNew : String → CtorName → List Expression → Expression
-/-- Case analysis on a value of an inductive type: the expression to take apart, and one alternative
+  | structUpdate : Expression → List (FieldName × Expression) → Expression
+  /-- Create a new instance of an inductive type using the given constructor name. -/
+  | indNew : String → CtorName → List Expression → Expression
+  /-- Case analysis on a value of an inductive type: the expression to take apart, and one alternative
 per constructor of its type.
 
 Example: match c with | Red => 0 | Rgb(r, g, b) => r -/
-| indMatch : Expression → List (CtorName × List String × Expression) → Expression
-| intLit : Int → Expression
-| plus : Expression → Expression → Expression
-| minus : Expression → Expression → Expression
-| stringLit : String → Expression
-/-- The empty option value with its type to aid type checking. -/
-| optionNone : Ty → Expression
-/-- The option value holding another value. -/
-| optionSome : Expression → Expression
-/-- Case analysis on a value of option type: the expression to take apart, the expression to
+  | indMatch : Expression → List (CtorName × List String × Expression) → Expression
+  | intLit : Int → Expression
+  | plus : Expression → Expression → Expression
+  | minus : Expression → Expression → Expression
+  | stringLit : String → Expression
+  /-- The empty option value with its type to aid type checking. -/
+  | optionNone : Ty → Expression
+  /-- The option value holding another value. -/
+  | optionSome : Expression → Expression
+  /-- Case analysis on a value of option type: the expression to take apart, the expression to
 evaluate when it holds nothing, and the name to bind that value to together with the expression
 to evaluate under it.
 
 This is a special form (instead of `indMatch`) because options get compiled away during extraction. -/
-| optionMatch : Expression → Expression → String → Expression → Expression
-/-- The empty list annotated with its element type -/
-| lnil : Ty → Expression
-| lcons : Expression → Expression → Expression
-/-- Map a function over lists.
+  | optionMatch : Expression → Expression → String → Expression → Expression
+  /-- The empty list annotated with its element type -/
+  | lnil : Ty → Expression
+  | lcons : Expression → Expression → Expression
+  /-- Map a function over lists.
 
 For a list `l` of type `list a`, and a function `f` of type `(a) -> b`, `map l f` produces a `list b`.
 -/
-| listMap : Expression → Expression → Expression
-/-- Calculate the length of the given list. -/
-| listLength : Expression → Expression
-| listReverse : Expression → Expression
-| hashmapEmpty : Ty → Ty → Expression
-/-- Augment the given hashmap `m` with a binding of `k` to `v`
+  | listMap : Expression → Expression → Expression
+  /-- Calculate the length of the given list. -/
+  | listLength : Expression → Expression
+  | listReverse : Expression → Expression
+  | hashmapEmpty : Ty → Ty → Expression
+  /-- Augment the given hashmap `m` with a binding of `k` to `v`
 
 > hashmapPut m k v
 
 Creates a new hashmap with the new binding, discarding any previous binding for `k`. -/
-| hashmapPut : Expression → Expression → Expression → Expression
-/-- Get the value bound to `k` in `m`, if any.  Returns an `option v`.
+  | hashmapPut : Expression → Expression → Expression → Expression
+  /-- Get the value bound to `k` in `m`, if any.  Returns an `option v`.
 
 > hashampGet m k
 -/
-| hashmapGet : Expression → Expression → Expression
-/-- Map a function over a hashmap to produce a new hashmap.
+  | hashmapGet : Expression → Expression → Expression
+  /-- Map a function over a hashmap to produce a new hashmap.
 
 Given a hashmap of type hashmap(k, v1), the mapping function is of type fun(k, v1) -> v2,
 producing a hashmap of type hashmap(k, v2). -/
-| hashmapMap : Expression → Expression → Expression
-/-- Convert a hashmap to a list of pairs. -/
-| hashmapToList : Expression → Expression
-/-- Create a new tuple with the given elements.
+  | hashmapMap : Expression → Expression → Expression
+  /-- Convert a hashmap to a list of pairs. -/
+  | hashmapToList : Expression → Expression
+  /-- Create a new tuple with the given elements.
 
 > tupleNew [$expression1, $expression2, ...]
 
@@ -267,8 +262,8 @@ is positional, so the elements are given in the order their types come in and th
 name.  How many there are is not checked against anything — a tuple type is whatever types the
 elements turned out to have, unlike `indNew`, whose arity is its declaration's.  `tupleNew []` is
 the one value of `tuple []`. -/
-| tupleNew : List Expression → Expression
-/-- Get an element from a tuple.
+  | tupleNew : List Expression → Expression
+  /-- Get an element from a tuple.
 
 > tupleGet $tuple $index
 
@@ -279,7 +274,28 @@ is heterogeneous, so what comes out is of the type its tuple type gives at that 
 position arrived at by evaluating something would be one no `Ty` could be read off.  That is the
 same reason `structGet` takes a `FieldName` rather than an expression — this is its positional
 counterpart, over a type that carries its own fields instead of naming a declaration. -/
-| tupleGet : Expression → Nat → Expression
+  | tupleGet : Expression → Nat → Expression
+  /-- A branch nothing reaches, at the type that branch needed.
+
+> unreachable $type $why
+
+with concrete syntax unreachable "$why" : $type.
+
+This expression is used on branches that are intended to be proved unreachable.  `Eval` has no rule
+for it, so an expression reaching one is stuck: `Eval td env e v` is a premise everywhere in this
+development, so a proof that a declaration produces a value at all is a proof that no `unreachable`
+in it was reached.  That is what makes a use of this safe rather than merely untested.  Because they
+need to be proved unreachable, they do not need to be extracted.
+
+The type is an annotation, the way `lnil`'s and `optionNone`'s are, rather than something read off
+what the expression holds: every form determines its own type (see `Expression.inferE`), so an
+expression that could have had any of them is one nothing could report a type for.  Writing the
+annotation is what lets it have the type its branch's siblings have, which is the whole of what
+having any type is for here.
+
+The `String` says why the branch cannot be reached and goes nowhere: nothing reads it, since nothing
+reaches it. -/
+  | unreachable : Ty → String → Expression
 
 public structure FuncDecl where
   docstring : String
