@@ -8,3 +8,8 @@ name = "LgtmDeepLean"
 [[lean_exe]]
 name = "lgtmdeeplean"
 root = "Main"
+
+[[require]]
+name = "lean-fmt"
+scope = "jcreinhold"
+rev = "v4.35.0"
