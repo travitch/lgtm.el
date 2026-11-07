@@ -168,6 +168,27 @@ constructor tags, and their values are pointwise equal.
 
 Values of function type cannot be compared. -/
 | equals : Expression → Expression → Expression
+/-- Test if the first object is less than the second.
+
+The operands of the comparison are required to be the same type.
+This comparison is polymorphic over int, string, option, list, and tuples.
+Tuple and list comparison are lexicographic per element, so a list that runs out first comes before
+one that has not.  An empty option comes before one that holds a value.
+
+`Ty.orderable` is the whole of which types this applies to.  A bool is not one of them, nor is a
+struct or an inductive type: unlike `equals`, this claims no ordering for the types a declaration
+names. -/
+| lt : Expression → Expression → Expression
+/-- Test if the first object is less than or equal to the second.
+
+The operands of the comparison are required to be the same type.
+This comparison is polymorphic over int, string, option, list, and tuples.
+Tuple and list comparison are lexicographic per element, so a list that runs out first comes before
+one that has not.  An empty option comes before one that holds a value.
+
+The same comparison `lt` performs, read one answer wider: two equal values are the one pair the two
+forms differ on. -/
+| le : Expression → Expression → Expression
 /-- Introduce a let binding.  Binds the first expression to the given name, which
     becomes available in the second expression. -/
 | let_ : String → Expression → Expression → Expression

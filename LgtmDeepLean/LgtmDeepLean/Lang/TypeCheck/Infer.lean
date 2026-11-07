@@ -437,6 +437,16 @@ public def Expression.inferE (td : TypeDecls) (ctx : Context) : Expression → E
     (r.inferE td ctx).expect t "the right operand of `==`"
     if Ty.comparable td t then .ok .bool
     else .error s!"values of type {t} cannot be compared, so `==` does not apply to them"
+  | .lt l r => do
+    let t ← l.inferE td ctx
+    (r.inferE td ctx).expect t "the right operand of `<`"
+    if Ty.orderable t then .ok .bool
+    else .error s!"values of type {t} cannot be ordered, so `<` does not apply to them"
+  | .le l r => do
+    let t ← l.inferE td ctx
+    (r.inferE td ctx).expect t "the right operand of `<=`"
+    if Ty.orderable t then .ok .bool
+    else .error s!"values of type {t} cannot be ordered, so `<=` does not apply to them"
   | .let_ x e body => do
     let t ← e.inferE td ctx
     body.inferE td ((x, t) :: ctx)
@@ -855,6 +865,32 @@ comparison can reach the bottom of (see `Ty.comparable`).  The `equals` itself i
     {l r : Expression} {t : Ty} :
     (Expression.equals l r).infer td ctx = some t ↔
       ∃ t', l.infer td ctx = some t' ∧ r.infer td ctx = some t' ∧ Ty.comparable td t' = true
+        ∧ t = .bool := by
+  simp [Expression.infer, Expression.inferE]
+  grind
+
+/-- An `lt` is typeable when its two operands are the same type and that type is one with an
+ordering (see `Ty.orderable`).  The `lt` itself is of type `bool`.
+
+`equals`'s rule with `Ty.orderable` in place of `Ty.comparable`, which is the only thing between the
+two: both read a type off the left operand, require it of the right, and produce a `bool` whatever
+it was. -/
+@[simp, grind =] public theorem Expression.infer_lt_eq_some {td : TypeDecls} {ctx : Context}
+    {l r : Expression} {t : Ty} :
+    (Expression.lt l r).infer td ctx = some t ↔
+      ∃ t', l.infer td ctx = some t' ∧ r.infer td ctx = some t' ∧ Ty.orderable t' = true
+        ∧ t = .bool := by
+  simp [Expression.infer, Expression.inferE]
+  grind
+
+/-- An `le` is typeable under the same conditions as an `lt`, and is a `bool` as well.
+
+The two differ in nothing a type checker sees: which of the two answers a comparison of equal values
+gives is what they differ in, and that is what `Eval` says of them. -/
+@[simp, grind =] public theorem Expression.infer_le_eq_some {td : TypeDecls} {ctx : Context}
+    {l r : Expression} {t : Ty} :
+    (Expression.le l r).infer td ctx = some t ↔
+      ∃ t', l.infer td ctx = some t' ∧ r.infer td ctx = some t' ∧ Ty.orderable t' = true
         ∧ t = .bool := by
   simp [Expression.infer, Expression.inferE]
   grind

@@ -5,13 +5,19 @@ public import LgtmDeepLean.Lang.TypeCheck.TypeDecls
 
 /-! # Comparable types
 
-This module defines what types polymorphic equality (`Expression.equals`) can be applied to.
+This module defines what types the two polymorphic comparisons can be applied to: equality
+(`Expression.equals`), which is `Ty.comparable`, and ordering (`Expression.lt` and
+`Expression.le`), which is `Ty.orderable`.
+
 Any type that is not and does not contain a function type or a hashmap type can be compared for
 equality.
 
 The general strategy is to use depth-first search over all types transitively referenced by
 the type under consideration.  Lean requires that recursion is bounded.  We use the number of
 defined types as the recursion bound for each depth-first search.
+
+Ordering needs none of that machinery, and the second half of this module says why: it accepts no
+type that names a declaration, so nothing is ever looked up and there is no cycle to bound.
 
  -/
 
@@ -145,3 +151,93 @@ in, and a list of tuples compared elementwise answers about that order rather th
     Ty.comparable td (.tuple ts) = ts.all (Ty.comparable td) := by
   rw [Ty.comparable, Ty.comparableWith, Ty.comparableWithList_eq_all]
   rfl
+
+/-! ## Ordered types
+
+Which types `Expression.lt` and `Expression.le` can be applied to, the way `Ty.comparable` is which
+types `Expression.equals` can be.
+
+It takes no `TypeDecls`, and that is the whole difference between the two.  An ordering is given on
+`int` and `string` and carried through `option`, `list` and `tuple`, none of which names a
+declaration, so there is nothing to look up, nothing to be missing, and no cycle for a budget to cut
+off.  A `struct` or an `ind` is not ordered at all rather than ordered when the types it leads to
+are: a declaration's fields are named rather than positional, so there is nothing to say which of
+them an ordering should look at first, and a constructor's place in an ordering would be its place in
+a list of constructors — neither is an order the declaration meant. -/
+
+mutual
+
+/-- Is `t` a type with an ordering: `int` or `string`, or an `option`, `list` or `tuple` of types
+that are?
+
+`bool` is turned down with the nominal types.  `false < true` is an ordering nobody would argue
+with, but a `bool` is what a comparison *produces* here rather than something it is given, so there
+is nothing an ordering on it would be for.  A hashmap is turned down for the reason `Ty.comparable`
+turns it down — the order its bindings are carried in is not canonical, so no comparison of two maps
+answers about the maps — and a function type for the reason that one turns it down. -/
+@[expose] public def Ty.orderable : Ty → Bool
+  | .int | .string => true
+  | .option t => Ty.orderable t
+  | .list t => Ty.orderable t
+  | .tuple ts => Ty.orderableList ts
+  | .bool | .fn _ _ | .hashmap _ _ | .struct _ | .ind _ => false
+
+/-- The same question of every type in a list: the types a `tuple` holds, each of which a
+lexicographic comparison may have to reach before it has an answer.
+
+`Ty.orderable` run along a list and nothing more, which is a second function for the reason
+`Ty.beqList` is one beside `Ty.beq`: a `Ty` carries a `List Ty` at `tuple`, so the walk over the
+list is what the recursion there goes through. -/
+@[expose] public def Ty.orderableList : List Ty → Bool
+  | [] => true
+  | t :: ts => Ty.orderable t && Ty.orderableList ts
+
+end
+
+@[simp] public theorem Ty.orderableList_eq_all {ts : List Ty} :
+    Ty.orderableList ts = ts.all Ty.orderable := by
+  induction ts with
+  | nil => rfl
+  | cons t ts ih => simp [Ty.orderableList, ih]
+
+/-! What `Ty.orderable` comes to at each type former, which is what a proof elsewhere reads it
+through.  All but the tuple case are the definition's own equations; they are stated here so that
+`simp` and `grind` have them without being handed the definition. -/
+
+@[simp, grind =] public theorem Ty.orderable_int : Ty.orderable .int = true := rfl
+
+@[simp, grind =] public theorem Ty.orderable_string : Ty.orderable .string = true := rfl
+
+/-- A `bool` is ordered by nothing here: it is what a comparison produces, not what one compares. -/
+@[simp, grind =] public theorem Ty.orderable_bool : Ty.orderable .bool = false := rfl
+
+@[simp, grind =] public theorem Ty.orderable_fn {ps : List Ty} {r : Ty} :
+    Ty.orderable (.fn ps r) = false := rfl
+
+@[simp, grind =] public theorem Ty.orderable_hashmap {kt vt : Ty} :
+    Ty.orderable (.hashmap kt vt) = false := rfl
+
+/-- A declared type is turned down whatever it declares, which is where this parts company with
+`Ty.comparable`: there is no walk over the declarations, because no ordering is being claimed for
+one. -/
+@[simp, grind =] public theorem Ty.orderable_struct {name : String} :
+    Ty.orderable (.struct name) = false := rfl
+
+@[simp, grind =] public theorem Ty.orderable_ind {name : String} :
+    Ty.orderable (.ind name) = false := rfl
+
+/-- An option is ordered exactly when the type it holds is: the empty one comes first, and the rest
+is a comparison of the values two of them hold. -/
+@[simp, grind =] public theorem Ty.orderable_option {t : Ty} :
+    Ty.orderable (.option t) = Ty.orderable t := rfl
+
+/-- A list is ordered exactly when its elements are, lexicographically. -/
+@[simp, grind =] public theorem Ty.orderable_list {t : Ty} :
+    Ty.orderable (.list t) = Ty.orderable t := rfl
+
+/-- And a tuple exactly when every type it holds is, which is the list case read positionally: a
+lexicographic comparison stops at the first position the two disagree at, and any position may be
+that one. -/
+@[simp, grind =] public theorem Ty.orderable_tuple {ts : List Ty} :
+    Ty.orderable (.tuple ts) = ts.all Ty.orderable := by
+  rw [Ty.orderable, Ty.orderableList_eq_all]

@@ -374,6 +374,221 @@ public theorem Value.ne_of_beq? {a b : Value} (h : Value.beq? a b = some false) 
   intro heq
   simpa using (Value.beq?_eq_some_iff a b false h).mpr heq
 
+/-! ## Structural ordering
+
+What `Expression.lt` and `Expression.le` compare two values with, and where a value of a type with
+no ordering stops it.
+
+One three-way comparison with `Value.lt?` and `Value.le?` reading an answer off it, rather than two
+comparisons walking the values separately.  That is what a lexicographic comparison needs: the first
+position two lists disagree at is what decides them, and finding it means asking of each pair in
+turn whether it is less, greater, or neither — which is the question the two predicates do not
+answer and the one `Ordering` is.  The two forms then differ in nothing but how they read it, which
+is also all that typing them differs in.
+
+`Ty.orderable` is the type-level counterpart, as `Ty.comparable` is for `Value.beq?`, and the two
+are in step the same way: a `lt` or an `le` that type checks is one this never has to give up on.
+It is a function rather than a rule of `Eval` for the reason `Value.beq?` is one — there is nothing
+about *evaluation* in it. -/
+
+/-- The three-way comparison Lean's own `<` and `==` make of two values of a type that has both.
+
+`compareOfLessAndEq` written with `==` in place of `DecidableEq`, rather than the library's `compare`
+itself, because the `Ord` instance for `String` has no exposed body: a comparison reached through it
+is one nothing outside the module it is declared in can reduce, and the `rfl`s that say what a
+particular comparison came to are the whole of how the forms are tested.  Written out, the leaves
+reduce the way `Value.beq?`'s do. -/
+@[expose] public def Ordering.ofLessAndBEq {α : Type} [LT α] [DecidableLT α] [BEq α] (a b : α) :
+    Ordering :=
+  if a < b then .lt else if a == b then .eq else .gt
+
+/-- One of the three answers is `lt`, and it is the one Lean's `<` gives: the other two branches are
+reached only where `<` already said `false`. -/
+@[simp] public theorem Ordering.isLT_ofLessAndBEq {α : Type} [LT α] [DecidableLT α] [BEq α]
+    {a b : α} : (Ordering.ofLessAndBEq a b).isLT = decide (a < b) := by
+  rw [Ordering.ofLessAndBEq]
+  split <;> try split
+  all_goals simp_all
+
+/-- And `eq` is the one `==` gives, where `==` means equality. -/
+public theorem Ordering.eq_of_ofLessAndBEq {α : Type} [LT α] [DecidableLT α] [BEq α] [LawfulBEq α]
+    {a b : α} (h : Ordering.ofLessAndBEq a b = .eq) : a = b := by
+  rw [Ordering.ofLessAndBEq] at h
+  split at h
+  · simp at h
+  · split at h
+    · grind
+    · simp at h
+
+mutual
+
+/-- How `a` compares with `b`, or `none` where the two cannot be compared at all.
+
+`int`s and `string`s are compared with Lean's own `<` and `==`, the way `Value.beq?` compares them
+with Lean's own `==`.  An empty option comes before one that holds a value, and two that hold values
+are their values compared.  Lists and tuples are compared lexicographically by the same walk — a
+tuple is positional too — so the first position they disagree at is what decides them.
+
+`none` is what a `bool`, a hashmap, a closure, a struct value and a value of an inductive type all
+get, which is one fewer answer than `Value.beq?` gives: an ordering is claimed here only for the
+types `Ty.orderable` accepts, and those are exactly the ones above.  It also covers the pairs that
+disagree about which type they carry, as `Value.beq?`'s does — those are pairs typing rules out, and
+there is no ordering between values of different types to be an answer about. -/
+@[expose] public def Value.cmp? : Value → Value → Option Ordering
+  | .int a, .int b => some (Ordering.ofLessAndBEq a b)
+  | .string a, .string b => some (Ordering.ofLessAndBEq a b)
+  | .option none, .option none => some .eq
+  | .option none, .option (some _) => some .lt
+  | .option (some _), .option none => some .gt
+  | .option (some a), .option (some b) => Value.cmp? a b
+  | .list as, .list bs => Value.cmpList? as bs
+  | .tuple as, .tuple bs => Value.cmpList? as bs
+  | _, _ => none
+
+/-- How `as` compares with `bs` lexicographically: the first position they disagree at decides them,
+and a list that runs out first comes before one that has not.
+
+The elements after that first disagreement are not compared, which is where this parts company with
+`Value.beqList?`.  That one compares throughout and answers `none` if any pair of elements is
+incomparable, because an equality has to be able to look everywhere it would have had to; a
+lexicographic comparison would not have had to look past the first disagreement, so a pair beyond it
+that has no answer is one this never asks about. -/
+@[expose] public def Value.cmpList? : List Value → List Value → Option Ordering
+  | [], [] => some .eq
+  | [], _ :: _ => some .lt
+  | _ :: _, [] => some .gt
+  | a :: as, b :: bs =>
+    match Value.cmp? a b with
+    | some .eq => Value.cmpList? as bs
+    | some o => some o
+    | none => none
+
+end
+
+/-- Whether `a` comes before `b`, or `none` where the two cannot be compared. -/
+@[expose] public def Value.lt? (a b : Value) : Option Bool := (Value.cmp? a b).map Ordering.isLT
+
+/-- Whether `a` comes before `b` or is `b`, or `none` where the two cannot be compared.
+
+The same comparison as `Value.lt?` read one answer wider, which is the whole of what the two forms
+differ in: `Ordering.eq` is the one result they disagree about. -/
+@[expose] public def Value.le? (a b : Value) : Option Bool := (Value.cmp? a b).map Ordering.isLE
+
+mutual
+
+/-- A comparison that called two values equal found two equal values.
+
+This is the ordering's counterpart of `Value.eq_of_beq?`, and it is what makes the forms usable in a
+proof: `Eval` hands back whatever `Value.cmp?` said, so without it an `le` that came out `true` of
+two values would say nothing about which of the two cases it came out `true` for.
+
+Only this direction holds.  Its converse would be reflexivity — that comparing a value with itself
+says `Ordering.eq` — and that is false of a value this gives up on, a closure among them, so it is a
+fact about values of orderable types rather than about values. -/
+public theorem Value.eq_of_cmp? : ∀ (a b : Value), Value.cmp? a b = some .eq → a = b
+  | .int x, b => by
+    cases b with
+    | int y =>
+      intro h
+      simp only [Value.cmp?, Option.some.injEq] at h
+      simp [Ordering.eq_of_ofLessAndBEq h]
+    | _ => simp [Value.cmp?]
+  | .string x, b => by
+    cases b with
+    | string y =>
+      intro h
+      simp only [Value.cmp?, Option.some.injEq] at h
+      simp [Ordering.eq_of_ofLessAndBEq h]
+    | _ => simp [Value.cmp?]
+  | .option oa, b => by
+    cases b with
+    | option ob =>
+      cases oa with
+      | none => cases ob <;> simp [Value.cmp?]
+      | some a =>
+        cases ob with
+        | none => simp [Value.cmp?]
+        | some b =>
+          intro h
+          simpa using Value.eq_of_cmp? a b (by simpa [Value.cmp?] using h)
+    | _ => simp [Value.cmp?]
+  | .list as, b => by
+    cases b with
+    | list bs =>
+      intro h
+      simpa using Value.eq_of_cmpList? as bs (by simpa [Value.cmp?] using h)
+    | _ => simp [Value.cmp?]
+  | .tuple as, b => by
+    cases b with
+    | tuple bs =>
+      intro h
+      simpa using Value.eq_of_cmpList? as bs (by simpa [Value.cmp?] using h)
+    | _ => simp [Value.cmp?]
+  | .bool x, b => by cases b <;> simp [Value.cmp?]
+  | .hashmap kvs, b => by cases b <;> simp [Value.cmp?]
+  | .closure cb cg ps body, b => by cases b <;> simp [Value.cmp?]
+  | .struct n fvs, b => by cases b <;> simp [Value.cmp?]
+  | .ind n c vs, b => by cases b <;> simp [Value.cmp?]
+
+/-- The positional version of `Value.eq_of_cmp?`: two lists a lexicographic comparison called equal
+are the same list.
+
+A list that ran out before the other is answered for without the elements coming into it, so the
+only way to `Ordering.eq` is through every position, which is what makes this an induction over the
+two lists together. -/
+public theorem Value.eq_of_cmpList? : ∀ (as bs : List Value),
+    Value.cmpList? as bs = some .eq → as = bs
+  | [], bs => by cases bs <;> simp [Value.cmpList?]
+  | a :: as, bs => by
+    cases bs with
+    | nil => simp [Value.cmpList?]
+    | cons b bs =>
+      intro h
+      rw [Value.cmpList?] at h
+      split at h
+      · next heq =>
+        rw [Value.eq_of_cmp? a b heq, Value.eq_of_cmpList? as bs h]
+      · grind
+      · simp at h
+
+end
+
+/-! What the two forms come to at the leaves: Lean's own `<` and `≤` on the `Int`s or the `String`s
+two values carry.  This is where a proof about a declaration that compares numbers ends up, so these
+are the facts it carries on with. -/
+
+@[simp] public theorem Value.lt?_int {a b : Int} :
+    Value.lt? (.int a) (.int b) = some (decide (a < b)) := by
+  simp [Value.lt?, Value.cmp?]
+
+@[simp] public theorem Value.lt?_string {a b : String} :
+    Value.lt? (.string a) (.string b) = some (decide (a < b)) := by
+  simp [Value.lt?, Value.cmp?]
+
+/-! `le?` takes more saying than `lt?` does, at either leaf.  `Ordering.lt` is the answer `<` itself
+gave, so `Value.lt?` is that answer and nothing else; `Ordering.gt` is the answer *neither* branch
+gave, so reading `le?` off it is where the type's own ordering comes in — that nothing is both
+greater and less, and that two values neither below nor above each other are the same value. -/
+
+@[simp] public theorem Value.le?_int {a b : Int} :
+    Value.le? (.int a) (.int b) = some (decide (a ≤ b)) := by
+  rw [Value.le?, Value.cmp?, Option.map_some, Option.some.injEq, Ordering.ofLessAndBEq]
+  split <;> try split
+  all_goals simp_all [Ordering.isLE] <;> omega
+
+@[simp] public theorem Value.le?_string {a b : String} :
+    Value.le? (.string a) (.string b) = some (decide (a ≤ b)) := by
+  rw [Value.le?, Value.cmp?, Option.map_some, Option.some.injEq, Ordering.ofLessAndBEq]
+  split
+  · next h => simp [Ordering.isLE, Std.le_of_lt h]
+  · next h =>
+      rw [String.not_lt] at h
+      split
+      · next heq => simp [Ordering.isLE, show a = b by grind]
+      · next hne =>
+          simp only [Ordering.isLE, Bool.false_eq, decide_eq_false_iff_not]
+          exact fun hle => hne (by simp [String.le_antisymm hle h])
+
 /-! ## Reading and rebinding a hashmap
 
 The two walks along a hashmap's bindings, and what each of them finds.  Both are `Value.beq?` run

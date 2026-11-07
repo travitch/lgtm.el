@@ -133,11 +133,14 @@ macro_rules
 
 /-! ## Expressions
 
-Precedence runs `||` looser than `&&`, which is looser than `==`, which is looser than `::`, which
-is looser than `+`/`-`, which are looser than application, `reverse` and `length`, so `1 + 2 :: xs`
-is `(1 + 2) :: xs`, `f(x) + 1` is `(f(x)) + 1`, `x :: xs == ys` compares two lists rather than
-consing onto a comparison, and `x == y && b` is a conjunction of a comparison rather than a
-comparison against a conjunction.
+Precedence runs `||` looser than `&&`, which is looser than `==`, `<` and `<=`, which are looser
+than `::`, which is looser than `+`/`-`, which are looser than application, `reverse` and `length`,
+so `1 + 2 :: xs` is `(1 + 2) :: xs`, `f(x) + 1` is `(f(x)) + 1`, `x :: xs == ys` compares two lists
+rather than consing onto a comparison, `x < y + 1` compares against the sum, and `x == y && b` is a
+conjunction of a comparison rather than a comparison against a conjunction.
+
+The three comparisons share one level and none of them associates, so `a == b == c` and `a < b <= c`
+are parse errors rather than one of the two readings each could have had.
 
 A list literal carries its element type, because `lnil` does: `[1, 2 : int]` is
 `.lcons (.intLit 1) (.lcons (.intLit 2) (.lnil .int))`, and the empty list is `[: int]`.
@@ -378,14 +381,30 @@ syntax:65 lgtmExpr:65 " - " lgtmExpr:66 : lgtmExpr
 syntax:55 lgtmExpr:56 " :: " lgtmExpr:55 : lgtmExpr
 /-- `a == b` compares two values structurally, however deep they are.
 
-It is the loosest of the operators, so `x + 1 == y` and `x :: xs == ys` need no parentheses, and it
-is non-associative: `a == b == c` is a parse error rather than one of the two comparisons it could
-have meant.  A comparison *of* comparisons is written with the parentheses that say which, since what
-one produces is an ordinary `bool`.
+It is the loosest of the operators but the two boolean ones, so `x + 1 == y` and `x :: xs == ys`
+need no parentheses, and it is non-associative: `a == b == c` is a parse error rather than one of
+the two comparisons it could have meant.  A comparison *of* comparisons is written with the parentheses that
+say which, since what one produces is an ordinary `bool`.
 
 The operands must have the same type, and it must be a type a comparison can reach the bottom of —
 which is the type checker's business rather than the parser's. -/
 syntax:50 lgtmExpr:51 " == " lgtmExpr:51 : lgtmExpr
+/-- `a < b` is `true` when `a` comes before `b` in its type's ordering, and `a <= b` when it comes
+before it or is it.
+
+They sit at `==`'s level and do not associate either, so `x + 1 < y` and `length xs <= 0` need no
+parentheses while `a < b <= c` and `a < b == c` are parse errors rather than one of the readings
+each could have had.  What they produce is an ordinary `bool`, so a comparison of two of them is written
+with the parentheses that say which: `(a < b) == c`.
+
+The operands must have the same type and it must be one with an ordering — `int` or `string`, or an
+`option`, `list` or `tuple` of those, compared lexicographically — which is the type checker's
+business rather than the parser's.
+
+These two are the whole of the IR's ordering: `a > b` is `b < a` written the other way round, so
+there is no form for it here. -/
+syntax:50 lgtmExpr:51 " < " lgtmExpr:51 : lgtmExpr
+syntax:50 lgtmExpr:51 " <= " lgtmExpr:51 : lgtmExpr
 /-- `a && b` is `true` when both operands are, and `a || b` when either is.
 
 They are the two loosest operators there are, `||` looser than `&&` and both looser than `==`, so
@@ -477,6 +496,8 @@ macro_rules
   | `([lgtm| $a - $b]) => `(Expression.minus [lgtm| $a] [lgtm| $b])
   | `([lgtm| $a :: $b]) => `(Expression.lcons [lgtm| $a] [lgtm| $b])
   | `([lgtm| $a == $b]) => `(Expression.equals [lgtm| $a] [lgtm| $b])
+  | `([lgtm| $a < $b]) => `(Expression.lt [lgtm| $a] [lgtm| $b])
+  | `([lgtm| $a <= $b]) => `(Expression.le [lgtm| $a] [lgtm| $b])
   | `([lgtm| $a && $b]) => `(Expression.boolAnd [lgtm| $a] [lgtm| $b])
   | `([lgtm| $a || $b]) => `(Expression.boolOr [lgtm| $a] [lgtm| $b])
   | `([lgtm| reverse $e]) => `(Expression.listReverse [lgtm| $e])

@@ -1620,6 +1620,210 @@ private def sameFns : FuncDecl :=
 -- `Ty.comparable` that rules it out, on the type the two operands share.
 #guard !(sameFns.check {} []).isOk
 
+/-! ## Ordering
+
+`ELt` and `ELe` evaluate both operands and hand back what `Value.lt?` and `Value.le?` made of the
+two values, which is `EEquals` with another comparison in place of `Value.beq?`.  The two forms are
+one comparison read two ways, so what is worth showing of each is where they differ: the pair of
+equal values, and nothing else. -/
+
+-- A comparison of literals is decided by the values they evaluate to, and what comes out is a
+-- `bool` whatever was compared.
+example : Eval {} ∅ [lgtm| 1 < 2] (.bool true) := .ELt _ _ (.EIntLit 1) (.EIntLit 2) rfl
+example : Eval {} ∅ [lgtm| 2 < 1] (.bool false) := .ELt _ _ (.EIntLit 2) (.EIntLit 1) rfl
+example : Eval {} ∅ [lgtm| "a" < "b"] (.bool true) :=
+  .ELt _ _ (.EStringLit "a") (.EStringLit "b") rfl
+example : Eval {} ∅ [lgtm| "b" < "a"] (.bool false) :=
+  .ELt _ _ (.EStringLit "b") (.EStringLit "a") rfl
+
+-- Two equal values are the one pair the two forms disagree about, which is the whole of what
+-- separates them.
+example : Eval {} ∅ [lgtm| 1 < 1] (.bool false) := .ELt _ _ (.EIntLit 1) (.EIntLit 1) rfl
+example : Eval {} ∅ [lgtm| 1 <= 1] (.bool true) := .ELe _ _ (.EIntLit 1) (.EIntLit 1) rfl
+example : Eval {} ∅ [lgtm| 2 <= 1] (.bool false) := .ELe _ _ (.EIntLit 2) (.EIntLit 1) rfl
+example : Eval {} ∅ [lgtm| "a" <= "a"] (.bool true) :=
+  .ELe _ _ (.EStringLit "a") (.EStringLit "a") rfl
+
+-- A comparison is decided by the values and not by the expressions, as a `==` is.
+example : Eval {} ∅ [lgtm| 1 + 1 < 5 - 2] (.bool true) :=
+  .ELt _ _ (.EPlus (n₁ := 1) (n₂ := 1) _ _ (.EIntLit 1) (.EIntLit 1))
+    (.EMinus (n₁ := 5) (n₂ := 2) _ _ (.EIntLit 5) (.EIntLit 2)) rfl
+
+-- Lists are compared lexicographically: the first position the two disagree at decides them, and
+-- the elements past it are not compared at all.
+example : Eval {} ∅ [lgtm| [1, 2 : int] < [1, 3 : int]] (.bool true) :=
+  .ELt _ _ (.ECons _ _ (.EIntLit 1) (.ECons _ _ (.EIntLit 2) (.ENil .int)))
+    (.ECons _ _ (.EIntLit 1) (.ECons _ _ (.EIntLit 3) (.ENil .int))) rfl
+example : Eval {} ∅ [lgtm| [2, 0 : int] < [1, 9 : int]] (.bool false) :=
+  .ELt _ _ (.ECons _ _ (.EIntLit 2) (.ECons _ _ (.EIntLit 0) (.ENil .int)))
+    (.ECons _ _ (.EIntLit 1) (.ECons _ _ (.EIntLit 9) (.ENil .int))) rfl
+
+-- A list that runs out first comes before one that has not, which is the one answer the elements
+-- do not come into — and the empty list is below every other.
+example : Eval {} ∅ [lgtm| [1 : int] < [1, 0 : int]] (.bool true) :=
+  .ELt _ _ (.ECons _ _ (.EIntLit 1) (.ENil .int))
+    (.ECons _ _ (.EIntLit 1) (.ECons _ _ (.EIntLit 0) (.ENil .int))) rfl
+example : Eval {} ∅ [lgtm| [: int] <= [1 : int]] (.bool true) :=
+  .ELe _ _ (.ENil .int) (.ECons _ _ (.EIntLit 1) (.ENil .int)) rfl
+example : Eval {} ∅ [lgtm| [: int] <= [: int]] (.bool true) :=
+  .ELe _ _ (.ENil .int) (.ENil .int) rfl
+
+-- An empty option comes before one that holds a value, and two that hold values are their values
+-- compared.
+example : Eval {} ∅ (Expression.lt (.optionNone .int) (.optionSome (.intLit 0))) (.bool true) :=
+  .ELt _ _ (.ENone .int) (.ESome _ (.EIntLit 0)) rfl
+example : Eval {} ∅ (Expression.lt (.optionSome (.intLit 0)) (.optionNone .int)) (.bool false) :=
+  .ELt _ _ (.ESome _ (.EIntLit 0)) (.ENone .int) rfl
+example : Eval {} ∅ (Expression.lt (.optionSome (.intLit 1)) (.optionSome (.intLit 2)))
+    (.bool true) :=
+  .ELt _ _ (.ESome _ (.EIntLit 1)) (.ESome _ (.EIntLit 2)) rfl
+example : Eval {} ∅ (Expression.le (.optionNone .int) (.optionNone .int)) (.bool true) :=
+  .ELe _ _ (.ENone .int) (.ENone .int) rfl
+
+-- A tuple is compared by the same walk a list is, position by position, so a pair agreeing on its
+-- first position is decided by its second.
+example : Eval {} ∅ [lgtm| tuple("a", 1) < tuple("a", 2)] (.bool true) :=
+  .ELt _ _
+    (.ETupleNew (vs := [.string "a", .int 1]) _ rfl (by
+      rintro p hp
+      simp at hp
+      rcases hp with rfl | rfl
+      · exact .EStringLit "a"
+      · exact .EIntLit 1))
+    (.ETupleNew (vs := [.string "a", .int 2]) _ rfl (by
+      rintro p hp
+      simp at hp
+      rcases hp with rfl | rfl
+      · exact .EStringLit "a"
+      · exact .EIntLit 2))
+    rfl
+
+/-- Whether `x` is below `y`. -/
+lgtm private def below (x : int) (y : int) : bool :=
+  x < y
+
+/-- Whether `x` is below `y` or is `y`. -/
+lgtm private def atMost as "at-most" (x : int) (y : int) : bool :=
+  x <= y
+
+#guard (below.check {} []).isOk
+#guard (atMost.check {} []).isOk
+
+example : FuncDecl.Apply below {} [] [.int 1, .int 2] (.bool true) :=
+  .EApply _ (.cons "x" (.int 1) (.cons "y" (.int 2) .nil))
+    (.ELt _ _ (.EVarRef "x" rfl) (.EVarRef "y" rfl) rfl)
+
+example : FuncDecl.Apply below {} [] [.int 2, .int 2] (.bool false) :=
+  .EApply _ (.cons "x" (.int 2) (.cons "y" (.int 2) .nil))
+    (.ELt _ _ (.EVarRef "x" rfl) (.EVarRef "y" rfl) rfl)
+
+example : FuncDecl.Apply atMost {} [] [.int 2, .int 2] (.bool true) :=
+  .EApply _ (.cons "x" (.int 2) (.cons "y" (.int 2) .nil))
+    (.ELe _ _ (.EVarRef "x" rfl) (.EVarRef "y" rfl) rfl)
+
+-- Soundness covers the new forms: a `bool` comes back because the body is a comparison, which is
+-- the one thing its type says — the type the operands shared is not part of it.
+example (v : Value) (x y : Int) (h : FuncDecl.Apply below {} [] [.int x, .int y] v) :
+    v.HasType {} .bool :=
+  h.hasType Globals.wellTyped_nil (by simp [below, List.lookup])
+
+/-! ### What an ordering means
+
+The examples above are about particular values.  These are the general facts: what a comparison of
+two `int`s came out as *is* Lean's own `<` and `≤` on them, which is what `Value.lt?_int` and
+`Value.le?_int` say and what the rest of a proof carries on with. -/
+
+/-- What `below` computes, for every pair of `int`s rather than for one: inverting `ELt` down to the
+two `EVarRef`s leaves `Value.lt?` on the values the parameters were bound to, which on `int`s is
+their own `<`. -/
+private theorem below.eq_lt {x y : Int} {res : Value}
+    (h : FuncDecl.Apply below {} [] [.int x, .int y] res) : res = .bool (decide (x < y)) := by
+  obtain ⟨-, -, hbody⟩ := h
+  cases hbody with
+  | ELt _ _ h₁ h₂ hb =>
+    cases h₁ with
+    | EVarRef _ hlx =>
+      cases h₂ with
+      | EVarRef _ hly =>
+        simp [below, FuncDecl.callEnv, Env.extend, Globals.env, Env.lookup, List.lookup] at hlx hly
+        subst hlx
+        subst hly
+        simp at hb
+        grind
+
+/-- And `atMost` the same with `≤`, which is the one pair of values the two forms differ on read as
+a fact about every pair. -/
+private theorem atMost.eq_le {x y : Int} {res : Value}
+    (h : FuncDecl.Apply atMost {} [] [.int x, .int y] res) : res = .bool (decide (x ≤ y)) := by
+  obtain ⟨-, -, hbody⟩ := h
+  cases hbody with
+  | ELe _ _ h₁ h₂ hb =>
+    cases h₁ with
+    | EVarRef _ hlx =>
+      cases h₂ with
+      | EVarRef _ hly =>
+        simp [atMost, FuncDecl.callEnv, Env.extend, Globals.env, Env.lookup, List.lookup]
+          at hlx hly
+        subst hlx
+        subst hly
+        simp at hb
+        grind
+
+-- Which is enough to reason about a call without mentioning the relation again.
+example {x y : Int} {res : Value} (hxy : x < y)
+    (h : FuncDecl.Apply below {} [] [.int x, .int y] res) : res = .bool true := by
+  simp [below.eq_lt h, hxy]
+
+/-! ### What cannot be ordered
+
+An ordering gives up on more values than an equality does: a `bool`, a hashmap, a struct value and a
+value of an inductive type all have no ordering here, where all four can be compared for equality.
+`Ty.orderable` is the type checker's side of it, and it is why a well-typed program never meets one
+of these. -/
+
+-- Two `bool`s have no ordering, so this is stuck even though the same two compare for equality
+-- perfectly well.
+example (v : Value) : ¬ Eval {} ∅ [lgtm| true < false] v := by
+  intro h
+  cases h with
+  | ELt _ _ h₁ h₂ hb =>
+      cases h₁
+      cases h₂
+      simp [Value.lt?, Value.cmp?] at hb
+
+example : Eval {} ∅ [lgtm| true == false] (.bool false) :=
+  .EEquals _ _ (.EBoolLit true) (.EBoolLit false) rfl
+
+-- And two struct values have none either, for a reason of the same kind: a declaration's fields are
+-- named rather than ordered, so there is nothing to say which of them to look at first.
+example (v : Value) :
+    ¬ Eval {} ⟨[("p", .struct "Point" [("x", .int 1), ("y", .int 2)])], []⟩
+      [lgtm| p < p] v := by
+  intro h
+  cases h with
+  | ELt _ _ h₁ h₂ hb =>
+      cases h₁ with
+      | EVarRef _ hlp =>
+          cases h₂ with
+          | EVarRef _ hlp' =>
+              simp [Env.lookup, List.lookup] at hlp hlp'
+              subst hlp
+              subst hlp'
+              simp [Value.lt?, Value.cmp?] at hb
+
+/-- `below` with both of its parameters of a type that has no ordering, which is the declaration the
+type checker has to turn down. -/
+private def belowBools : FuncDecl :=
+  { below with parameters := [("x", .bool), ("y", .bool)] }
+
+/-- The same over a struct type, which is the other kind of operand an equality would have taken. -/
+private def belowPoints : FuncDecl :=
+  { below with
+    parameters := [("x", .struct "Point"), ("y", .struct "Point")] }
+
+-- And it does turn them down, so the stuck cases above are ones a well-typed program never reaches.
+#guard !(belowBools.check {} []).isOk
+#guard !(belowPoints.check points []).isOk
 
 /-! ## Options
 

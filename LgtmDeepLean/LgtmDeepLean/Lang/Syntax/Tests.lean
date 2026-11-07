@@ -86,6 +86,41 @@ example : [lgtm| [x == y, true : bool]]
     = Expression.lcons (.equals (.varRef "x") (.varRef "y"))
         (.lcons (.boolLit true) (.lnil .bool)) := rfl
 
+-- `<` and `<=` sit at `==`'s level, so each reads as much on either side as a `==` would.
+example : [lgtm| x < y] = Expression.lt (.varRef "x") (.varRef "y") := rfl
+example : [lgtm| x <= y] = Expression.le (.varRef "x") (.varRef "y") := rfl
+example : [lgtm| x + 1 < y]
+    = Expression.lt (.plus (.varRef "x") (.intLit 1)) (.varRef "y") := rfl
+example : [lgtm| x < y + 1]
+    = Expression.lt (.varRef "x") (.plus (.varRef "y") (.intLit 1)) := rfl
+example : [lgtm| length xs <= 0]
+    = Expression.le (.listLength (.varRef "xs")) (.intLit 0) := rfl
+example : [lgtm| f(1) <= g(2)]
+    = Expression.le (.app (.varRef "f") [.intLit 1]) (.app (.varRef "g") [.intLit 2]) := rfl
+example : [lgtm| p.x < q.x]
+    = Expression.lt (.structGet (.varRef "p") "x") (.structGet (.varRef "q") "x") := rfl
+example : [lgtm| x :: xs <= ys]
+    = Expression.le (.lcons (.varRef "x") (.varRef "xs")) (.varRef "ys") := rfl
+
+-- `<=` is one token: the two characters are read together, so this is an ordering and not a
+-- comparison against something starting with `=`.
+example : [lgtm| x <= y] ≠ Expression.lt (.varRef "x") (.varRef "y") := by simp
+
+-- None of the three comparisons associates, so parentheses are what nests one in another — and a
+-- comparison is an operand anywhere a `bool` is one.
+example : [lgtm| (x < y) == b]
+    = Expression.equals (.lt (.varRef "x") (.varRef "y")) (.varRef "b") := rfl
+example : [lgtm| (x < y) == (x <= y)]
+    = Expression.equals (.lt (.varRef "x") (.varRef "y")) (.le (.varRef "x") (.varRef "y")) := rfl
+example : [lgtm| if x <= y then { 1 } else { 2 }]
+    = Expression.ite (.le (.varRef "x") (.varRef "y")) (.intLit 1) (.intLit 2) := rfl
+example : [lgtm| let b = x < y in b]
+    = Expression.let_ "b" (.lt (.varRef "x") (.varRef "y")) (.varRef "b") := rfl
+example : [lgtm| fun (q : int) => q <= n]
+    = Expression.lam [("q", .int)] (.le (.varRef "q") (.varRef "n")) := rfl
+example : [lgtm| f(x < y)]
+    = Expression.app (.varRef "f") [.lt (.varRef "x") (.varRef "y")] := rfl
+
 -- `&&` and `||` are looser than `==`, which is what lets a comparison be an operand of either
 -- without parentheses, and `||` is the looser of the two.
 example : [lgtm| b && c] = Expression.boolAnd (.varRef "b") (.varRef "c") := rfl
@@ -96,6 +131,11 @@ example : [lgtm| b && x == y]
     = Expression.boolAnd (.varRef "b") (.equals (.varRef "x") (.varRef "y")) := rfl
 example : [lgtm| length xs == 0 || b]
     = Expression.boolOr (.equals (.listLength (.varRef "xs")) (.intLit 0)) (.varRef "b") := rfl
+example : [lgtm| x <= y && y <= z]
+    = Expression.boolAnd (.le (.varRef "x") (.varRef "y")) (.le (.varRef "y") (.varRef "z")) := rfl
+example : [lgtm| x < y || x == y]
+    = Expression.boolOr (.lt (.varRef "x") (.varRef "y"))
+        (.equals (.varRef "x") (.varRef "y")) := rfl
 example : [lgtm| a || b && c]
     = Expression.boolOr (.varRef "a") (.boolAnd (.varRef "b") (.varRef "c")) := rfl
 example : [lgtm| a && b || c]

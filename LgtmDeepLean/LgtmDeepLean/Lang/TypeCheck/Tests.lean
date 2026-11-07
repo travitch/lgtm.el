@@ -566,6 +566,95 @@ private def cycles : TypeDecls :=
 #guard (Expression.let_ "e" (.equals (.varRef "n") (.intLit 1)) (.varRef "e")).infer types ctx
   == some .bool
 
+/-! ### Ordering
+
+Which types an ordering may be used at, which is `Ty.orderable`, and then what `lt` and `le` do with
+it: one type between the two operands, and a `bool` out of it whatever that type was.  The two forms
+have one rule between them, so each guard below holds of either wherever it holds of one. -/
+
+-- `int` and `string` are the leaves with an ordering.  A `bool` is not one of them, which is where
+-- this parts company with `Ty.comparable`: it is what a comparison produces, not what one compares.
+#guard Ty.orderable .int
+#guard Ty.orderable .string
+#guard !Ty.orderable .bool
+#guard !Ty.orderable (.fn [.int] .int)
+#guard !Ty.orderable (.hashmap .string .int)
+
+-- An option, a list and a tuple are ordered exactly when the types they hold are, however deeply
+-- nested.
+#guard Ty.orderable (.option .int)
+#guard Ty.orderable (.option (.list .string))
+#guard Ty.orderable (.list .int)
+#guard Ty.orderable (.list (.list .string))
+#guard Ty.orderable (.tuple [.string, .int])
+#guard Ty.orderable (.tuple [])
+#guard !Ty.orderable (.option .bool)
+#guard !Ty.orderable (.list .bool)
+#guard !Ty.orderable (.list (.fn [.int] .int))
+#guard !Ty.orderable (.tuple [.string, .bool])
+#guard !Ty.orderable (.tuple [.int, .hashmap .string .int])
+
+-- A declared type is turned down whatever it declares, so there is nothing to look up and no budget
+-- to run out: `Point` is two `int`s and is no more ordered than `WithFn` is.
+#guard !Ty.orderable (.struct "Point")
+#guard !Ty.orderable (.struct "WithFn")
+#guard !Ty.orderable (.ind "Color")
+#guard !Ty.orderable (.ind "Tree")
+#guard !Ty.orderable (.list (.struct "Point"))
+
+-- Two operands of one ordered type make a `bool`, whatever that type was.
+#guard (Expression.lt (.intLit 1) (.intLit 2)).infer types ctx == some .bool
+#guard (Expression.le (.intLit 1) (.intLit 2)).infer types ctx == some .bool
+#guard (Expression.lt (.stringLit "a") (.varRef "s")).infer types ctx == some .bool
+#guard (Expression.le (.varRef "xs") (.lnil .int)).infer types ctx == some .bool
+#guard (Expression.lt (.varRef "o") (.optionNone .int)).infer types ctx == some .bool
+#guard (Expression.le (.varRef "tu") (.varRef "tu")).infer types ctx == some .bool
+#guard (Expression.lt (.intLit 1) (.intLit 2)).infer {} [] == some .bool
+
+-- The type is read off the left operand and then required of the right, so operands of different
+-- types have nothing to compare.
+#guard (Expression.lt (.intLit 1) (.stringLit "a")).infer types ctx == none
+#guard (Expression.le (.varRef "xs") (.varRef "n")).infer types ctx == none
+#guard (Expression.lt (.lnil .int) (.lnil .string)).infer types ctx == none
+
+-- An ill-typed operand on either side makes the comparison ill typed.
+#guard (Expression.lt (.varRef "nope") (.intLit 1)).infer types ctx == none
+#guard (Expression.le (.intLit 1) (.varRef "nope")).infer types ctx == none
+
+-- Operands of a type with no ordering are turned down, and the types equality accepts are among
+-- them: a `bool`, a struct, an inductive type, a hashmap.
+#guard (Expression.lt (.varRef "flag") (.boolLit true)).infer types ctx == none
+#guard (Expression.le (.varRef "p") (.varRef "p")).infer types ctx == none
+#guard (Expression.lt (.varRef "c") (.varRef "c")).infer types ctx == none
+#guard (Expression.le (.varRef "m") (.varRef "m")).infer types ctx == none
+#guard (Expression.lt (.varRef "f") (.varRef "f")).infer types ctx == none
+#guard (Expression.lt (.varRef "tufn") (.varRef "tufn")).infer types ctx == none
+
+-- The same operands compared for equality are accepted, which is the whole of what the two
+-- comparisons differ in.
+#guard (Expression.equals (.varRef "flag") (.boolLit true)).infer types ctx == some .bool
+#guard (Expression.equals (.varRef "p") (.varRef "p")).infer types ctx == some .bool
+
+-- An ordering is an expression like any other: it goes where a `bool` goes, and its operands are
+-- whatever has the type they share.
+#guard (Expression.ite (.lt (.varRef "n") (.intLit 1)) (.intLit 1) (.intLit 2)).infer types ctx
+  == some .int
+#guard (Expression.boolAnd (.le (.intLit 0) (.varRef "n"))
+  (.lt (.varRef "n") (.intLit 10))).infer types ctx == some .bool
+#guard (Expression.equals (.lt (.varRef "n") (.intLit 1)) (.varRef "flag")).infer types ctx
+  == some .bool
+#guard (Expression.lt (.plus (.varRef "n") (.intLit 1)) (.varRef "n")).infer types ctx == some .bool
+#guard (Expression.le (.listLength (.varRef "xs")) (.intLit 0)).infer types ctx == some .bool
+#guard (Expression.lt (.structGet (.varRef "p") "x") (.intLit 0)).infer types ctx == some .bool
+#guard (Expression.lam [("q", .string)] (.lt (.varRef "q") (.varRef "s"))).infer types ctx
+  == some (.fn [.string] .bool)
+
+-- Checking agrees with inference on both forms.
+#guard ((Expression.lt (.varRef "n") (.intLit 1)).check types ctx .bool).isOk
+#guard !((Expression.lt (.varRef "n") (.intLit 1)).check types ctx .int).isOk
+#guard ((Expression.le (.varRef "s") (.stringLit "a")).check types ctx .bool).isOk
+#guard !((Expression.le (.varRef "flag") (.boolLit true)).check types ctx .bool).isOk
+
 -- Checking agrees with inference.
 #guard ((Expression.lnil .int).check types ctx (.list .int)).isOk
 #guard !((Expression.lnil .int).check types ctx .int).isOk
@@ -1727,6 +1816,12 @@ private def message (r : Except String Unit) : String :=
 -- condition no shape of expression could have shown.
 #guard message ((Expression.equals (.varRef "f") (.varRef "f")).check types ctx .bool)
   == "values of type (int, string) -> int cannot be compared, so `==` does not apply to them"
+#guard message ((Expression.lt (.varRef "flag") (.boolLit true)).check types ctx .bool)
+  == "values of type bool cannot be ordered, so `<` does not apply to them"
+#guard message ((Expression.le (.varRef "p") (.varRef "p")).check types ctx .bool)
+  == "values of type struct Point cannot be ordered, so `<=` does not apply to them"
+#guard message ((Expression.lt (.intLit 1) (.varRef "s")).check types ctx .bool)
+  == "the right operand of `<` has type string where int was expected"
 #guard message ((Expression.hashmapEmpty (.fn [.int] .int) .int).check types ctx
     (.hashmap (.fn [.int] .int) .int))
   == "(int) -> int cannot be a hashmap's key type, since values of it cannot be compared"

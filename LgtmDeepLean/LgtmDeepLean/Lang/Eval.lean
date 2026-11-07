@@ -81,6 +81,21 @@ between branches but the two values and what `Value.beq?` said about them — wh
 | EEquals (l r : Expression) :
     Eval td env l v₁ → Eval td env r v₂ → Value.beq? v₁ v₂ = some b →
     Eval td env (.equals l r) (.bool b)
+/-- An ordering evaluates both of its operands and hands back what comparing the two values said,
+exactly as `EEquals` does, with `Value.lt?` in place of `Value.beq?`.
+
+The premise is what makes a pair the comparison has no answer for stuck: a value of a type with no
+ordering on either side — a `bool` and a hashmap among them, which `Value.beq?` does answer for — or
+two values that disagree about the type they carry.  Those are the only things that can go wrong
+here, and exactly what `Ty.orderable` and the two operands sharing a type rule out between them. -/
+| ELt (l r : Expression) :
+    Eval td env l v₁ → Eval td env r v₂ → Value.lt? v₁ v₂ = some b →
+    Eval td env (.lt l r) (.bool b)
+/-- The same rule read one answer wider: `Value.le?` and `Value.lt?` are one comparison, and which
+of them a pair of equal values satisfies is the whole of what the two forms differ in. -/
+| ELe (l r : Expression) :
+    Eval td env l v₁ → Eval td env r v₂ → Value.le? v₁ v₂ = some b →
+    Eval td env (.le l r) (.bool b)
 /-- Let binds a variable that shadows any existing bindings.
 
     The bound value is available in the body of the let.  This is a non-recursive let. -/
