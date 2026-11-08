@@ -589,6 +589,46 @@ greater and less, and that two values neither below nor above each other are the
           simp only [Ordering.isLE, Bool.false_eq, decide_eq_false_iff_not]
           exact fun hle => hne (by simp [String.le_antisymm hle h])
 
+/-! ## Sorting by a key
+
+What `Expression.listSortBy` puts a list in order with: its elements paired with the keys a
+projection produced for them, ordered by those keys.
+
+A function rather than a premise saying the result is some sorted permutation of the elements,
+because `List.mergeSort` is stable and a permutation is not: a key several elements share is one
+that several orderings of them are each sorted under, so a premise would leave the form with no one
+value and `Eval` with nothing to hand back.  Equal keys keep the order they came in instead, which
+is one answer and the one every stable sort gives.
+
+The comparison is `Value.le?` read as a `Bool`, which is what a `mergeSort` takes.  It has to be
+`le?` rather than `lt?`: a merge takes from the left while the left is not *after* the right, and
+that is what leaves equal keys where they were.  The pairs the comparison has no answer for are
+read as `false` here, and they decide nothing — `Eval`'s rule for the form is stuck on a list whose
+keys are not all comparable, exactly as `ELt` is stuck on an operand with no ordering. -/
+
+/-- The pairs of `vks` — an element beside its key — ordered by their keys, with the elements of
+equal keys left in the order they came in. -/
+@[expose] public def Value.sortByKey (vks : List (Value × Value)) : List (Value × Value) :=
+  vks.mergeSort fun p q => Value.le? p.2 q.2 == some true
+
+/-- Sorting rearranges and nothing else: what comes out is a permutation of what went in.
+
+This is what every fact about a sorted list that is not about its order goes through — how long it
+is, which elements it holds, and what types those have. -/
+public theorem Value.sortByKey_perm {vks : List (Value × Value)} : (Value.sortByKey vks).Perm vks :=
+  List.mergeSort_perm vks _
+
+/-- So an element of a sorted list is an element of the list it came from, and conversely. -/
+@[simp] public theorem Value.mem_sortByKey {p : Value × Value} {vks : List (Value × Value)} :
+    p ∈ Value.sortByKey vks ↔ p ∈ vks :=
+  Value.sortByKey_perm.mem_iff
+
+/-- And it is as long as the list it came from, which is what a sort has in common with a reversal
+and with a mapping over a list: one element out per element in. -/
+@[simp] public theorem Value.length_sortByKey {vks : List (Value × Value)} :
+    (Value.sortByKey vks).length = vks.length :=
+  Value.sortByKey_perm.length_eq
+
 /-! ## Reading and rebinding a hashmap
 
 The two walks along a hashmap's bindings, and what each of them finds.  Both are `Value.beq?` run
@@ -954,6 +994,21 @@ public theorem Value.hasType_listMap {td : TypeDecls} {vs vs' : List Value} {t :
           rcases List.mem_cons.mp hv with rfl | hv'
           · exact hvs (w, v) (by simp)
           · exact ih (by simpa using hlen) (fun p hp => hvs p (by simp [hp])) v hv'
+
+/-- The elements a sort produces are of the type the elements it was given were: every element of
+the result is one of the list's own, carried over into another order.
+
+Shorter than `Value.hasType_listMap` and for the reason the two forms' typing rules differ: a
+mapping's elements are what its calls produced, so the function's result type is what types them,
+while a sort's are the ones it was handed.  The keys the calls produced are what the order was
+decided by and are of no type this says anything about — they come in paired with the elements and
+are dropped on the way out. -/
+public theorem Value.hasType_sortByKey {td : TypeDecls} {vs ks : List Value} {t : Ty}
+    (hvs : ∀ v ∈ vs, Value.HasType td v t) :
+    ∀ v ∈ (Value.sortByKey (vs.zip ks)).map Prod.fst, Value.HasType td v t := by
+  intro v hv
+  obtain ⟨p, hp, rfl⟩ := List.mem_map.mp hv
+  exact hvs p.1 (List.of_mem_zip (Value.mem_sortByKey.mp hp)).1
 
 /-- What it takes for a hashmap value to have a type: the type is a hashmap type, and the two halves
 of it are what the keys and the values are held to.

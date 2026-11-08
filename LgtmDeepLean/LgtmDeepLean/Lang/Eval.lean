@@ -233,6 +233,32 @@ wrong here and is exactly what typing rules out. -/
   |
   EListReverse (e : Expression) :
     Eval td env e (.list vs) → Eval td env (.listReverse e) (.list vs.reverse)
+  /-- A sort evaluates the list and the projection, calls the projection once per element to get that
+element's key, and hands the elements back in the order their keys put them in.
+
+The calls are `EListMap`'s, premise for premise: one argument apiece, `ArgsHaveType` holding the
+element to the closure's parameter rather than entering a function it was not written for, and the
+body evaluated in the environment the closure captured rather than in the one the sort was written
+in.  What they produce is where the two forms part company — a key rather than an element.  The keys
+go into `Value.sortByKey` and nowhere else, and what comes back out is the list that went in,
+reordered: a sort is the one list form that calls a function per element and still returns a list of
+the type it was given.
+
+`Value.sortByKey` is stable, so the elements of equal keys come back in the order they were in.
+
+The last premise is what makes a pair of keys the comparison has no answer for stuck, the way
+`ELt`'s is, and it is over the keys rather than over the elements: `Ty.orderable` is asked of the
+projection's result type and of nothing else, so the elements are of no type the ordering has to
+reach the bottom of. -/
+  |
+  EListSortBy (e f : Expression) :
+    Eval td env e (.list vs) →
+      Eval td env f (.closure cbindings cglobals ps body) →
+      vs.length = ks.length →
+      (∀ p ∈ vs.zip ks, ArgsHaveType td ps [p.1]) →
+      (∀ p ∈ vs.zip ks, Eval td (Env.extend ⟨cbindings, cglobals⟩ ps [p.1]) body p.2) →
+      (∀ k ∈ ks, ∀ k' ∈ ks, (Value.cmp? k k').isSome) →
+      Eval td env (.listSortBy e f) (.list ((Value.sortByKey (vs.zip ks)).map Prod.fst))
   /-- The empty hashmap, binding nothing.  Its two annotations go nowhere, for the reason `ENil` drops
 `lnil`'s and `ENone` drops `optionNone`'s: a value carries no type, so what they are for is
 `Expression.infer` alone. -/
@@ -511,6 +537,14 @@ public theorem Eval.hasType {td : TypeDecls} {env : Env} {ctx : Context} {e : Ex
       .list
         (Value.hasType_listMap hlen fun p hp =>
           ihev p hp (Env.hasType_extend (hat p hp) hcenv) (by simpa using hbodyty))
+  | EListSortBy e f _ _ _ _ _ _ ihl _
+    _ =>
+    obtain ⟨t', r, hl, -, -, rfl⟩ := Expression.infer_listSortBy_eq_some.mp ht
+    -- The projection contributes nothing to the type: its calls produced the keys, and those are
+    -- dropped once the order is settled.  So this is the one mapping-shaped rule proved from the
+    -- induction hypothesis for its *first* operand, which is where `EListMap` needs none.
+    cases ihl henv hl with
+    | list hall => exact .list (Value.hasType_sortByKey hall)
   | EHashmapPut m k v _ _ _ herase ihm ihk
     ihv =>
     obtain ⟨kt, vt, hm, hk, hv, -, rfl⟩ := Expression.infer_hashmapPut_eq_some.mp ht

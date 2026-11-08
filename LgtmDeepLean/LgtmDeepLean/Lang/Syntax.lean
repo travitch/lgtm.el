@@ -36,7 +36,7 @@ and otherwise the variable `Foo` with its field `bar` read.  The name it becomes
 not the Lean name it was found under.
 
 The keywords inside a DSL term — `bool`, `int`, `string`, `list`, `option`, `hashmap`, `tuple`,
-`true`, `false`, `some`, `none`, `reverse`, `length`, `map`, `toList`, `unreachable`, `var`,
+`true`, `false`, `some`, `none`, `reverse`, `length`, `map`, `sort`, `toList`, `unreachable`, `var`,
 `struct`, `new`, and
 `as` — are declared
 with `&`, Lean's
@@ -160,11 +160,13 @@ are parse errors rather than one of the two readings each could have had.
 A list literal carries its element type, because `lnil` does: `[1, 2 : int]` is
 `.lcons (.intLit 1) (.lcons (.intLit 2) (.lnil .int))`, and the empty list is `[: int]`.
 
-The three list operations are `reverse xs`, `length xs` and `map list xs f`, all prefix keywords
-binding as tightly as application.  They differ in what comes back out: a reversal is a list of the
-same type, a mapping is a list of whatever its function returns, and a length is an `int` whatever
-the elements were.  `map` is written with a tag because it is also a hashmap's operation — see the
-note on the two forms below.
+The four list operations are `reverse xs`, `length xs`, `map list xs f` and `sort xs f`, all prefix
+keywords binding as tightly as application.  They differ in what comes back out: a reversal and a
+sort are lists of the same type, a mapping is a list of whatever its function returns, and a length
+is an `int` whatever the elements were.  A sort takes a function as a mapping does and still
+produces a list of the type it was given, because what the function returns is the key each element
+is ordered by rather than what it becomes.  `map` is written with a tag because it is also a
+hashmap's operation — see the note on the two forms below.
 
 The two option values are written `some(1)` and `none : int`, and a `match` whose alternatives are
 named `none` and `some` takes one apart.  The empty one carries a type for the reason an empty list
@@ -351,6 +353,25 @@ v + 1)`.
 escape hatch, the same one `reverse` and `toList` leave.  `list` is one too, now that it tags a
 mapping, and `var "list"` is the same escape hatch for it. -/
 syntax :max &"map" &"hashmap" lgtmExpr:max lgtmExpr:max : lgtmExpr
+
+/-- `sort xs f` is `xs` with its elements in the order `f`'s results put them in: `f` is applied to
+each element to get the key that element is ordered by.
+
+The projection takes one parameter, as a list's mapping's function does, so it is of type
+`(int) -> string` over a `list int` — and unlike a mapping, what comes back is a `list int` still.
+The key's type is the one thing the result does not mention: it must be a type with an ordering,
+which is the type checker's business rather than the parser's, and the elements it ordered are
+handed back unchanged.
+
+Elements sharing a key keep the order they were in, which is what `Eval` says of the form rather
+than anything here.
+
+The two operands bind as tightly as `map list`'s, so `sort xs f` and `sort p.items g(1)` need no
+parentheses while a projection written out does: `sort xs (fun (x : int) => 0 - x)`.
+
+`sort` is a keyword, so it is not available as a variable name inside a DSL term; `var "sort"` is
+the escape hatch, the same one `reverse` and `map` leave. -/
+syntax :max &"sort" lgtmExpr:max lgtmExpr:max : lgtmExpr
 
 /-- `toList m` is the bindings of `m` as a list, one `tuple(k, v)` per binding, in the order the map
 carries them.
@@ -627,6 +648,7 @@ macro_rules
   | `([lgtm| hashmap($k, $v)]) => `(Expression.hashmapEmpty [lgtm_ty| $k] [lgtm_ty| $v])
   | `([lgtm| $m[$k]]) => `(Expression.hashmapGet [lgtm| $m] [lgtm| $k])
   | `([lgtm| map list $l $f]) => `(Expression.listMap [lgtm| $l] [lgtm| $f])
+  | `([lgtm| sort $l $f]) => `(Expression.listSortBy [lgtm| $l] [lgtm| $f])
   | `([lgtm| map hashmap $m $f]) => `(Expression.hashmapMap [lgtm| $m] [lgtm| $f])
   | `([lgtm| toList $m]) => `(Expression.hashmapToList [lgtm| $m])
   | `([lgtm| { $m with $bs:lgtmKeyBinding,* }]) => do
