@@ -591,7 +591,7 @@ greater and less, and that two values neither below nor above each other are the
 
 /-! ## Sorting by a key
 
-What `Expression.listSortBy` puts a list in order with: its elements paired with the keys a
+What `Expression.listSortOn` puts a list in order with: its elements paired with the keys a
 projection produced for them, ordered by those keys.
 
 A function rather than a premise saying the result is some sorted permutation of the elements,

@@ -285,15 +285,15 @@ private def ctx : Context :=
 -- A sort passes its operand's type through, the way `reverse` does: the projection's result is the
 -- key each element is ordered by, so it goes into the ordering and not into the type.
 #guard
-  (Expression.listSortBy (.varRef "xs") (.lam [("x", .int)] (.varRef "x"))).infer types ctx ==
+  (Expression.listSortOn (.varRef "xs") (.lam [("x", .int)] (.varRef "x"))).infer types ctx ==
     some (.list .int)
 
 #guard
-  (Expression.listSortBy (.varRef "xs") (.lam [("x", .int)] (.stringLit "a"))).infer types ctx ==
+  (Expression.listSortOn (.varRef "xs") (.lam [("x", .int)] (.stringLit "a"))).infer types ctx ==
     some (.list .int)
 
 #guard
-  (Expression.listSortBy (.lnil (.struct "Point"))
+  (Expression.listSortOn (.lnil (.struct "Point"))
           (.lam [("p", .struct "Point")] (.structGet (.varRef "p") "x"))).infer
       types ctx ==
     some (.list (.struct "Point"))
@@ -301,64 +301,64 @@ private def ctx : Context :=
 -- The projection takes one parameter at the list's element type, which is the comparison a
 -- mapping's function is held to as well.
 #guard
-  (Expression.listSortBy (.varRef "xs") (.lam [("x", .string)] (.varRef "x"))).infer types ctx ==
+  (Expression.listSortOn (.varRef "xs") (.lam [("x", .string)] (.varRef "x"))).infer types ctx ==
     none
 
-#guard (Expression.listSortBy (.varRef "xs") (.lam [] (.intLit 1))).infer types ctx == none
+#guard (Expression.listSortOn (.varRef "xs") (.lam [] (.intLit 1))).infer types ctx == none
 
 #guard
-  (Expression.listSortBy (.varRef "xs") (.lam [("x", .int), ("y", .int)] (.intLit 1))).infer types
+  (Expression.listSortOn (.varRef "xs") (.lam [("x", .int), ("y", .int)] (.intLit 1))).infer types
       ctx ==
     none
 
-#guard (Expression.listSortBy (.varRef "xs") (.varRef "n")).infer types ctx == none
+#guard (Expression.listSortOn (.varRef "xs") (.varRef "n")).infer types ctx == none
 
 #guard
-  (Expression.listSortBy (.varRef "m") (.lam [("x", .int)] (.varRef "x"))).infer types ctx == none
+  (Expression.listSortOn (.varRef "m") (.lam [("x", .int)] (.varRef "x"))).infer types ctx == none
 
 #guard
-  (Expression.listSortBy (.varRef "n") (.lam [("x", .int)] (.varRef "x"))).infer types ctx == none
+  (Expression.listSortOn (.varRef "n") (.lam [("x", .int)] (.varRef "x"))).infer types ctx == none
 
 -- The key has to be a type with an ordering, which is what sets this apart from every other list
 -- form: `Ty.orderable` accepts `int` and `string` and the three formers that carry them, and turns
 -- down a `bool`, a declared type, a hashmap and a function exactly as it does under `lt`.
 #guard
-  (Expression.listSortBy (.varRef "xs") (.lam [("x", .int)] (.optionSome (.varRef "x")))).infer
+  (Expression.listSortOn (.varRef "xs") (.lam [("x", .int)] (.optionSome (.varRef "x")))).infer
       types ctx ==
     some (.list .int)
 
 #guard
-  (Expression.listSortBy (.varRef "xs")
+  (Expression.listSortOn (.varRef "xs")
           (.lam [("x", .int)] (.tupleNew [.varRef "x", .stringLit "a"]))).infer
       types ctx ==
     some (.list .int)
 
 #guard
-  (Expression.listSortBy (.varRef "xs")
+  (Expression.listSortOn (.varRef "xs")
           (.lam [("x", .int)] (.lcons (.varRef "x") (.lnil .int)))).infer
       types ctx ==
     some (.list .int)
 
 #guard
-  (Expression.listSortBy (.varRef "xs")
+  (Expression.listSortOn (.varRef "xs")
           (.lam [("x", .int)] (.equals (.varRef "x") (.intLit 0)))).infer
       types ctx ==
     none
 
 #guard
-  (Expression.listSortBy (.lnil (.struct "Point"))
+  (Expression.listSortOn (.lnil (.struct "Point"))
           (.lam [("p", .struct "Point")] (.varRef "p"))).infer
       types ctx ==
     none
 
 #guard
-  (Expression.listSortBy (.varRef "xs") (.lam [("x", .int)] (.varRef "c"))).infer types ctx == none
+  (Expression.listSortOn (.varRef "xs") (.lam [("x", .int)] (.varRef "c"))).infer types ctx == none
 
 #guard
-  (Expression.listSortBy (.varRef "xs") (.lam [("x", .int)] (.varRef "m"))).infer types ctx == none
+  (Expression.listSortOn (.varRef "xs") (.lam [("x", .int)] (.varRef "m"))).infer types ctx == none
 
 #guard
-  (Expression.listSortBy (.varRef "xs")
+  (Expression.listSortOn (.varRef "xs")
           (.lam [("x", .int)] (.lam [("y", .int)] (.varRef "x")))).infer
       types ctx ==
     none
@@ -366,41 +366,41 @@ private def ctx : Context :=
 -- An element type with no ordering is no obstacle, which is the other half of the same point: it is
 -- the key that is compared, so a list of anything at all can be sorted by an `int` read off it.
 #guard
-  (Expression.listSortBy (.lnil (.fn [.int] .int))
+  (Expression.listSortOn (.lnil (.fn [.int] .int))
           (.lam [("g", .fn [.int] .int)] (.intLit 0))).infer
       types ctx ==
     some (.list (.fn [.int] .int))
 
 #guard
-  (Expression.listSortBy (.lnil (.hashmap .string .int))
+  (Expression.listSortOn (.lnil (.hashmap .string .int))
           (.lam [("m'", .hashmap .string .int)] (.intLit 0))).infer
       types ctx ==
     some (.list (.hashmap .string .int))
 
 -- What it produces is a list like any other, so the list forms nest into each other here too.
 #guard
-  (Expression.listLength (.listSortBy (.varRef "xs") (.lam [("x", .int)] (.varRef "x")))).infer
+  (Expression.listLength (.listSortOn (.varRef "xs") (.lam [("x", .int)] (.varRef "x")))).infer
       types ctx ==
     some .int
 
 #guard
-  (Expression.listSortBy (.listMap (.varRef "xs") (.lam [("x", .int)] (.stringLit "a")))
+  (Expression.listSortOn (.listMap (.varRef "xs") (.lam [("x", .int)] (.stringLit "a")))
           (.lam [("s", .string)] (.varRef "s"))).infer
       types ctx ==
     some (.list .string)
 
 #guard
-  (Expression.listSortBy (.hashmapToList (.varRef "m"))
+  (Expression.listSortOn (.hashmapToList (.varRef "m"))
           (.lam [("p", .tuple [.string, .int])] (.tupleGet (.varRef "p") 1))).infer
       types ctx ==
     some (.list (.tuple [.string, .int]))
 
 #guard
-  ((Expression.listSortBy (.varRef "xs") (.lam [("x", .int)] (.varRef "x"))).check types ctx
+  ((Expression.listSortOn (.varRef "xs") (.lam [("x", .int)] (.varRef "x"))).check types ctx
       (.list .int)).isOk
 
 #guard
-  !((Expression.listSortBy (.varRef "xs") (.lam [("x", .int)] (.stringLit "a"))).check types ctx
+  !((Expression.listSortOn (.varRef "xs") (.lam [("x", .int)] (.stringLit "a"))).check types ctx
         (.list .string)).isOk
 
 -- A `lam` takes its parameter types from its annotation and its result type from its body.
@@ -2852,16 +2852,16 @@ private def message (r : Except String Unit) : String :=
 
 #guard
   message
-      ((Expression.listSortBy (.varRef "xs") (.lam [("x", .string)] (.varRef "x"))).check types ctx
+      ((Expression.listSortOn (.varRef "xs") (.lam [("x", .string)] (.varRef "x"))).check types ctx
         (.list .int)) ==
-    "`sort` over a list of int needs a projection taking one int parameter, \
+    "`sortOn` over a list of int needs a projection taking one int parameter, \
       but this one takes (string)"
 
 -- And the one condition no other list form has says what the key's type was, since a key that
 -- cannot be ordered is nothing the shape of the expression shows.
 #guard
   message
-      ((Expression.listSortBy (.varRef "xs") (.lam [("x", .int)] (.varRef "c"))).check types ctx
+      ((Expression.listSortOn (.varRef "xs") (.lam [("x", .int)] (.varRef "c"))).check types ctx
         (.list .int)) ==
     "a sort key must be a type with an ordering, but this projection returns inductive Color, \
       which cannot be ordered"

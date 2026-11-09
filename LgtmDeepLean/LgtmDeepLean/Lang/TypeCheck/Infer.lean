@@ -562,14 +562,14 @@ public def Expression.inferE (td : TypeDecls) (ctx : Context) : Expression → E
     | .ok (.list t) => .ok (.list t)
     | .ok t => .error s!"`reverse` needs a list, but its operand has type {t}"
     | .error m => .error m
-  | .listSortBy l f =>
+  | .listSortOn l f =>
     match l.inferE td ctx with
     | .ok (.list t) =>
       match f.inferE td ctx with
       | .ok (.fn ps r) =>
         if ps != [t] then
           .error
-            s!"`sort` over a list of {t} needs a projection taking one {t} parameter, \
+            s!"`sortOn` over a list of {t} needs a projection taking one {t} parameter, \
             but this one takes ({Ty.renderGroup ps})"
         else
           if Ty.orderable r then .ok (.list t)
@@ -577,9 +577,9 @@ public def Expression.inferE (td : TypeDecls) (ctx : Context) : Expression → E
             .error
               s!"a sort key must be a type with an ordering, but this projection returns {r}, \
             which cannot be ordered"
-      | .ok ft => .error s!"`sort` needs a projection, but its second operand has type {ft}"
+      | .ok ft => .error s!"`sortOn` needs a projection, but its second operand has type {ft}"
       | .error m => .error m
-    | .ok t => .error s!"`sort` needs a list, but its first operand has type {t}"
+    | .ok t => .error s!"`sortOn` needs a list, but its first operand has type {t}"
     | .error m => .error m
   | .hashmapEmpty kt vt =>
     if Ty.comparable td kt then .ok (.hashmap kt vt) else .error (Ty.keyProblem kt)
@@ -829,7 +829,7 @@ public theorem Expression.infer_listMap_eq_some {td : TypeDecls} {ctx : Context}
   simp only [Expression.infer, Expression.inferE, Except.toOption_eq_some_iff]
   split <;> simp_all <;> grind
 
-/-- A `listSortBy` is typeable when its first operand is a list, its second is a function of one
+/-- A `listSortOn` is typeable when its first operand is a list, its second is a function of one
 parameter at that list's element type, and that function's result is a type with an ordering — and
 then it has the list's own type.
 
@@ -843,9 +843,9 @@ compared with the other keys, so `Ty.orderable` is required of it — the condit
 impose on their operands, imposed here on a type nothing in the expression is of: the keys are
 values the projection will produce, and this is the only place to say they can be ordered at all. -/
 @[simp, grind =]
-public theorem Expression.infer_listSortBy_eq_some {td : TypeDecls} {ctx : Context}
+public theorem Expression.infer_listSortOn_eq_some {td : TypeDecls} {ctx : Context}
     {l f : Expression} {t : Ty} :
-    (Expression.listSortBy l f).infer td ctx = some t ↔
+    (Expression.listSortOn l f).infer td ctx = some t ↔
       ∃ t' r,
         l.infer td ctx = some (.list t') ∧
           f.infer td ctx = some (.fn [t'] r) ∧ Ty.orderable r = true ∧ t = .list t' := by

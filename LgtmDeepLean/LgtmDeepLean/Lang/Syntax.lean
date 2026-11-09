@@ -51,7 +51,7 @@ the IR name `Foo.bar` when an `lgtm` command has declared that IR name, and othe
 so a module calling another's declarations no longer needs to import it twice.
 
 The keywords inside a DSL term — `bool`, `int`, `string`, `list`, `option`, `hashmap`, `tuple`,
-`true`, `false`, `some`, `none`, `reverse`, `length`, `map`, `sort`, `toList`, `unreachable`, `var`,
+`true`, `false`, `some`, `none`, `reverse`, `length`, `map`, `sortOn`, `toList`, `unreachable`, `var`,
 `struct`, `new`, and
 `as` — are declared
 with `&`, Lean's
@@ -396,7 +396,7 @@ are parse errors rather than one of the two readings each could have had.
 A list literal carries its element type, because `lnil` does: `[1, 2 : int]` is
 `.lcons (.intLit 1) (.lcons (.intLit 2) (.lnil .int))`, and the empty list is `[: int]`.
 
-The four list operations are `reverse xs`, `length xs`, `map list xs f` and `sort xs f`, all prefix
+The four list operations are `reverse xs`, `length xs`, `map list xs f` and `sortOn xs f`, all prefix
 keywords binding as tightly as application.  They differ in what comes back out: a reversal and a
 sort are lists of the same type, a mapping is a list of whatever its function returns, and a length
 is an `int` whatever the elements were.  A sort takes a function as a mapping does and still
@@ -594,7 +594,7 @@ escape hatch, the same one `reverse` and `toList` leave.  `list` is one too, now
 mapping, and `var "list"` is the same escape hatch for it. -/
 syntax :max &"map" &"hashmap" lgtmExpr:max lgtmExpr:max : lgtmExpr
 
-/-- `sort xs f` is `xs` with its elements in the order `f`'s results put them in: `f` is applied to
+/-- `sortOn xs f` is `xs` with its elements in the order `f`'s results put them in: `f` is applied to
 each element to get the key that element is ordered by.
 
 The projection takes one parameter, as a list's mapping's function does, so it is of type
@@ -606,12 +606,12 @@ handed back unchanged.
 Elements sharing a key keep the order they were in, which is what `Eval` says of the form rather
 than anything here.
 
-The two operands bind as tightly as `map list`'s, so `sort xs f` and `sort p.items g(1)` need no
-parentheses while a projection written out does: `sort xs (fun (x : int) => 0 - x)`.
+The two operands bind as tightly as `map list`'s, so `sortOn xs f` and `sortOn p.items g(1)` need no
+parentheses while a projection written out does: `sortOn xs (fun (x : int) => 0 - x)`.
 
-`sort` is a keyword, so it is not available as a variable name inside a DSL term; `var "sort"` is
-the escape hatch, the same one `reverse` and `map` leave. -/
-syntax :max &"sort" lgtmExpr:max lgtmExpr:max : lgtmExpr
+`sortOn` is a keyword, so it is not available as a variable name inside a DSL term; `var "sortOn"`
+is the escape hatch, the same one `reverse` and `map` leave. -/
+syntax :max &"sortOn" lgtmExpr:max lgtmExpr:max : lgtmExpr
 
 /-- `toList m` is the bindings of `m` as a list, one `tuple(k, v)` per binding, in the order the map
 carries them.
@@ -1018,8 +1018,8 @@ meta partial def elabLgtmExprCore (ctx : Context) (stx : TSyntax `lgtmExpr) :
   | `(lgtmExpr| hashmap($k, $v)) => return .hashmapEmpty (← elabLgtmTy k) (← elabLgtmTy v)
   | `(lgtmExpr| $m[$k]) => return .hashmapGet (← elabLgtmExpr ctx m) (← elabLgtmExpr ctx k)
   | `(lgtmExpr| map list $l $f) => return .listMap (← elabLgtmExpr ctx l) (← elabLgtmExpr ctx f)
-  | `(lgtmExpr| sort $l $f) =>
-      return .listSortBy (← elabLgtmExpr ctx l) (← elabLgtmExpr ctx f)
+  | `(lgtmExpr| sortOn $l $f) =>
+      return .listSortOn (← elabLgtmExpr ctx l) (← elabLgtmExpr ctx f)
   | `(lgtmExpr| map hashmap $m $f) =>
       return .hashmapMap (← elabLgtmExpr ctx m) (← elabLgtmExpr ctx f)
   | `(lgtmExpr| toList $m) => return .hashmapToList (← elabLgtmExpr ctx m)

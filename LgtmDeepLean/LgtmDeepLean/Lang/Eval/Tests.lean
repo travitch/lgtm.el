@@ -319,18 +319,18 @@ ordering has no answer about. -/
 
 -- An empty list sorts to an empty list: there is no element for the projection to be applied to, so
 -- every premise over the elements is vacuous and the function is never entered.
-example : Eval {} ∅ [lgtm| sort [ : int] (fun (x : int) => x)] (.list []) := by
-  have h : Eval {} ∅ [lgtm| sort [ : int] (fun (x : int) => x)]
+example : Eval {} ∅ [lgtm| sortOn [ : int] (fun (x : int) => x)] (.list []) := by
+  have h : Eval {} ∅ [lgtm| sortOn [ : int] (fun (x : int) => x)]
       (.list ((Value.sortByKey (([] : List Value).zip [])).map Prod.fst)) :=
-    .EListSortBy (ks := []) _ _ (.ENil _) (.ELam _ _) rfl (by simp) (by simp) (by simp)
+    .EListSortOn (ks := []) _ _ (.ENil _) (.ELam _ _) rfl (by simp) (by simp) (by simp)
   simpa [Value.sortByKey] using h
 
 -- Projecting an element onto itself orders the list by its own elements, so one already in order
 -- comes back as it was.
-example : Eval {} ∅ [lgtm| sort [1, 2 : int] (fun (x : int) => x)] (.list [.int 1, .int 2]) := by
-  have h : Eval {} ∅ [lgtm| sort [1, 2 : int] (fun (x : int) => x)]
+example : Eval {} ∅ [lgtm| sortOn [1, 2 : int] (fun (x : int) => x)] (.list [.int 1, .int 2]) := by
+  have h : Eval {} ∅ [lgtm| sortOn [1, 2 : int] (fun (x : int) => x)]
       (.list ((Value.sortByKey ([Value.int 1, .int 2].zip [Value.int 1, .int 2])).map Prod.fst)) := by
-    refine .EListSortBy (ks := [.int 1, .int 2]) _ _
+    refine .EListSortOn (ks := [.int 1, .int 2]) _ _
       (.ECons _ _ (.EIntLit 1) (.ECons _ _ (.EIntLit 2) (.ENil _))) (.ELam _ _) rfl ?_ ?_ ?_
     · rintro p hp
       simp at hp
@@ -345,12 +345,12 @@ example : Eval {} ∅ [lgtm| sort [1, 2 : int] (fun (x : int) => x)] (.list [.in
 
 -- A key that runs the other way puts the list the other way round, and the elements come back whole:
 -- it is the keys that were compared, and they are dropped once the order is settled.
-example : Eval {} ∅ [lgtm| sort [1, 2 : int] (fun (x : int) => 0 - x)] (.list [.int 2, .int 1]) := by
-  have h : Eval {} ∅ [lgtm| sort [1, 2 : int] (fun (x : int) => 0 - x)]
+example : Eval {} ∅ [lgtm| sortOn [1, 2 : int] (fun (x : int) => 0 - x)] (.list [.int 2, .int 1]) := by
+  have h : Eval {} ∅ [lgtm| sortOn [1, 2 : int] (fun (x : int) => 0 - x)]
       (.list
         ((Value.sortByKey ([Value.int 1, .int 2].zip [Value.int (0 - 1), .int (0 - 2)])).map
           Prod.fst)) := by
-    refine .EListSortBy (ks := [.int (0 - 1), .int (0 - 2)]) _ _
+    refine .EListSortOn (ks := [.int (0 - 1), .int (0 - 2)]) _ _
       (.ECons _ _ (.EIntLit 1) (.ECons _ _ (.EIntLit 2) (.ENil _))) (.ELam _ _) rfl ?_ ?_ ?_
     · rintro p hp
       simp at hp
@@ -368,10 +368,10 @@ example : Eval {} ∅ [lgtm| sort [1, 2 : int] (fun (x : int) => 0 - x)] (.list 
 -- A projection that answers the same key for every element leaves the list alone, which is what
 -- being stable comes to: equal keys decide nothing, so the order they came in is the order they
 -- come back in.
-example : Eval {} ∅ [lgtm| sort [2, 1 : int] (fun (x : int) => 0)] (.list [.int 2, .int 1]) := by
-  have h : Eval {} ∅ [lgtm| sort [2, 1 : int] (fun (x : int) => 0)]
+example : Eval {} ∅ [lgtm| sortOn [2, 1 : int] (fun (x : int) => 0)] (.list [.int 2, .int 1]) := by
+  have h : Eval {} ∅ [lgtm| sortOn [2, 1 : int] (fun (x : int) => 0)]
       (.list ((Value.sortByKey ([Value.int 2, .int 1].zip [Value.int 0, .int 0])).map Prod.fst)) := by
-    refine .EListSortBy (ks := [.int 0, .int 0]) _ _
+    refine .EListSortOn (ks := [.int 0, .int 0]) _ _
       (.ECons _ _ (.EIntLit 2) (.ECons _ _ (.EIntLit 1) (.ENil _))) (.ELam _ _) rfl ?_ ?_ ?_
     · rintro p hp
       simp at hp
@@ -387,19 +387,19 @@ example : Eval {} ∅ [lgtm| sort [2, 1 : int] (fun (x : int) => 0)] (.list [.in
   simpa [Value.sortByKey] using h
 
 -- A second operand that is not a function leaves this stuck, exactly as it leaves a mapping stuck.
-example (v : Value) : ¬Eval {} ∅ [lgtm| sort[ : int]1] v := by
+example (v : Value) : ¬Eval {} ∅ [lgtm| sortOn[ : int]1] v := by
   intro h
   cases h with
-  | EListSortBy _ _ _ hf _ _ _ _ => cases hf
+  | EListSortOn _ _ _ hf _ _ _ _ => cases hf
 
 -- A key the ordering has no answer about is the thing that can go wrong here and nowhere else: a
 -- `bool` is a value `Value.beq?` answers for and `Value.cmp?` does not, so a projection returning
 -- one leaves the sort stuck — which is exactly what `Ty.orderable` on the projection's result type
 -- rules out.
-example (v : Value) : ¬Eval {} ∅ [lgtm| sort [1 : int] (fun (x : int) => true)] v := by
+example (v : Value) : ¬Eval {} ∅ [lgtm| sortOn [1 : int] (fun (x : int) => true)] v := by
   intro h
   cases h with
-  | @EListSortBy _ _ _ _ _ _ ks _ _ hl hf hlen _ hev hcmp =>
+  | @EListSortOn _ _ _ _ _ _ ks _ _ hl hf hlen _ hev hcmp =>
       cases hl with
       | ECons _ _ h₁ h₂ =>
           cases h₁ with
@@ -423,7 +423,7 @@ example (v : Value) : ¬Eval {} ∅ [lgtm| sort [1 : int] (fun (x : int) => true
 /-- `xs` largest first: the shortest declaration the form is in, and the one place a list is
 reordered by something read off its elements rather than by where they were. -/
 lgtm private def sortDesc as "sort-desc" (xs : list int) : list int :=
-  sort xs (fun (x : int) => 0 - x)
+  sortOn xs (fun (x : int) => 0 - x)
 
 #guard (sortDesc.check {} []).isOk
 
@@ -437,7 +437,7 @@ example : FuncDecl.Apply sortDesc {} [] [.list [.int 1, .int 2]] (.list [.int 2,
           Prod.fst)) := by
     refine .EApply _ (.cons "xs" (hasType_intList (is := [1, 2])) .nil) ?_
     refine
-      .EListSortBy (ks := [.int (0 - 1), .int (0 - 2)]) _ _ (.EVarRef "xs" rfl) (.ELam _ _) rfl ?_
+      .EListSortOn (ks := [.int (0 - 1), .int (0 - 2)]) _ _ (.EVarRef "xs" rfl) (.ELam _ _) rfl ?_
         ?_ ?_
     · rintro p hp
       simp at hp
@@ -461,7 +461,7 @@ example (vs : List Value) (v : Value) (h : FuncDecl.Apply sortDesc {} [] [.list 
 /-- `sortDesc` with a `string` key, which is where a sort's two types part company: the key is what
 the order was decided by, and the elements come back at the type they went in at. -/
 private def sortByLabel : FuncDecl :=
-  { sortDesc with body := [lgtm| sort xs (fun (x : int) => "a")] }
+  { sortDesc with body := [lgtm| sortOn xs (fun (x : int) => "a")] }
 
 #guard (sortByLabel.check {} []).isOk
 
@@ -471,11 +471,11 @@ private def sortByLabel : FuncDecl :=
 
 -- Only a list can be sorted, and only by a key with an ordering: a body sorting by a `bool` is
 -- turned down where the same body under `map list` would be accepted.
-example : ¬({ sortDesc with body := [lgtm| sort n f] } : FuncDecl).WellTyped {} [] := by
+example : ¬({ sortDesc with body := [lgtm| sortOn n f] } : FuncDecl).WellTyped {} [] := by
   simp [sortDesc, List.lookup]
 
 example :
-    ¬({ sortDesc with body := [lgtm| sort xs (fun (x : int) => true)] } : FuncDecl).WellTyped {}
+    ¬({ sortDesc with body := [lgtm| sortOn xs (fun (x : int) => true)] } : FuncDecl).WellTyped {}
         [] := by
   simp [sortDesc, List.lookup]
 
@@ -486,10 +486,10 @@ The counterpart of `bumpAll.length_of_eval`, and for the same reason — a lengt
 in place of a set of keys — except that here it is not a premise of the rule: the result is the
 pairs sorted, and `Value.length_sortByKey` is what says a sort rearranges them and nothing else. -/
 private theorem sortDesc.length_of_eval {vs vs' : List Value}
-    (h : Eval {} ⟨[("xs", .list vs)], []⟩ [lgtm| sort xs (fun (x : int) => 0 - x)] (.list vs')) :
+    (h : Eval {} ⟨[("xs", .list vs)], []⟩ [lgtm| sortOn xs (fun (x : int) => 0 - x)] (.list vs')) :
     vs.length = vs'.length := by
   cases h with
-  | @EListSortBy _ _ _ _ _ _ ks _ _ hl _ hlen _ _ _ =>
+  | @EListSortOn _ _ _ _ _ _ ks _ _ hl _ hlen _ _ _ =>
       cases hl with
       | EVarRef _ hlx =>
           simp [Env.lookup, List.lookup] at hlx

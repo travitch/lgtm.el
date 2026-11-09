@@ -234,12 +234,12 @@ For a list `l` of type `list a`, and a function `f` of type `(a) -> b`, `map l f
   | listReverse : Expression → Expression
   /-- Sort the given list, applying the given function to project out the sort key.
 
-> sort lst (fun (item : ty) item.foo)
+> sortOn lst (fun (item : ty) item.foo)
 
 The first argument must be a list.
 The projection function in the second argument takes a single argument of the same type as the elements of the list.  The return
 type of the projection function must be comparable with the DSL less than operation. -/
-  | listSortBy : Expression → Expression → Expression
+  | listSortOn : Expression → Expression → Expression
   | hashmapEmpty : Ty → Ty → Expression
   /-- Augment the given hashmap `m` with a binding of `k` to `v`
 
