@@ -81,7 +81,7 @@ lgtm struct ServerId {
 lgtm struct Comment {
   ref : struct CommentRef,
   backendId : option (struct ServerId),
-  location : struct CommentLocation,
+  location : inductive CommentLocation,
   author : string,
   createdTimestamp : int,
   updatedTimestamp : int,
@@ -168,7 +168,7 @@ lgtm struct State {
   activeReviewedFile : option (struct ModifiedFileRef),
   commentBeingEdited : option (struct Comment),
   commentManager : struct CommentManager,
-  fileManager : struct FileManager
+  fileManager : struct ModifiedFileManager
 }
 
 /-! ## What this module contributes to the model

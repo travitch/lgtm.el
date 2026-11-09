@@ -1913,3 +1913,151 @@ lgtm def pred(n : int) : int := if 0 < n then {n - 1} else {unreachable"n is pos
               body := [lgtm| if 0 < n then {n - 1} else {unreachable"n is positive" : string}] } :
             FuncDecl).check
         {} []).isOk
+
+/-! ## What a command checks where it is written
+
+The declarations below are wrong on purpose, and what is checked is the message each draws and the
+token it lands on: `#guard_msgs` fails if a command reports anything other than what is written
+above it, which is also how it is checked that a *correct* declaration reports nothing at all.
+
+The commands report rather than throw, so the Lean declaration is still made and the errors of one
+declaration do not bury the next.  See the "What the commands do besides declare" section of
+`LgtmDeepLean.Lang.Syntax`. -/
+
+lgtm struct ChkPt{x : int, y : int}
+
+lgtm inductive ChkHue{Dark, Rgb(int, int, int)}
+
+lgtm def chkPtX(p : struct ChkPt) : int := p.x
+
+/-! ### Names
+
+A name is resolved against the parameters and `let`s it is written under and the declarations in
+scope, and one neither of them has is reported on the token itself. -/
+
+/-- error: no variable named 'q' is in scope; did you mean 'p'? -/
+#guard_msgs (error) in
+lgtm def chkUnbound(p : struct ChkPt) : int := q
+
+-- A dotted name is either one declaration or a field read of a variable, so one that is neither is
+-- reported over the whole of it: what it was meant to be is far more often the declaration.
+/-- error: nothing named 'q.x' is declared, and 'q' is not a variable in scope -/
+#guard_msgs (error) in
+lgtm def chkDotted(p : struct ChkPt) : int := q.x
+
+lgtm def Threads.asAlist.sortThreadLists(n : int) : int := n
+
+-- Four edits apart and over twenty characters long is a rename rather than a coincidence, and is
+-- said to be.  This is the mistake the model had in it when the checking was added.
+/--
+error: nothing named 'Threads.asAlist.sortThreads' is declared, and 'Threads' is not a variable in scope; did you mean 'Threads.asAlist.sortThreadLists'?
+-/
+#guard_msgs (error) in
+lgtm def chkRenamed(n : int) : int := Threads.asAlist.sortThreads(n)
+
+/-- error: 'ChkPt' is a struct, not an inductive type: write `struct ChkPt` -/
+#guard_msgs (error) in
+lgtm def chkWrongKind(p : inductive ChkPt) : int := 1
+
+/-- error: 'ChkHue' is an inductive type, not a struct: write `inductive ChkHue` -/
+#guard_msgs (error) in
+lgtm def chkWrongKind2(h : struct ChkHue) : int := 1
+
+-- A field's type is a name like any other, which `Program.check` never looks at: it checks the
+-- bodies of declarations, so a field of a type nothing declares is a mistake only this reports.
+/-- error: no struct named 'Nope' is declared -/
+#guard_msgs (error) in
+lgtm struct ChkNoSuchField{f : struct Nope}
+
+/-- error: struct 'ChkPt' has no field named 'z'; did you mean 'x'? -/
+#guard_msgs (error) in
+lgtm def chkBadField : struct ChkPt := new ChkPt{z = 1, y = 2}
+
+/-- error: inductive 'ChkHue' has no constructor named 'Darkk'; did you mean 'Dark'? -/
+#guard_msgs (error) in
+lgtm def chkBadCtor : inductive ChkHue := new ChkHue.Darkk()
+
+/-- error: constructor 'Rgb' of inductive 'ChkHue' carries 3 value(s), but 1 are given here -/
+#guard_msgs (error) in
+lgtm def chkBadCtorArity : inductive ChkHue := new ChkHue.Rgb(1)
+
+/-- error: 'chkPtX' takes 1 argument(s), but 2 are given here -/
+#guard_msgs (error) in
+lgtm def chkBadArity(p : struct ChkPt) : int := chkPtX(p, p)
+
+-- A `let` binds for its body and nowhere else, so the second mention of `m` is out of scope rather
+-- than ill typed, and is reported on the name.
+/-- error: no variable named 'm' is in scope; did you mean 'n'? -/
+#guard_msgs (error) in
+lgtm def chkLetEscapes(n : int) : int := (let m = n + 1 in m) + m
+
+/-! ### Types
+
+A declaration whose names all resolve is type checked, and what is reported lands on the innermost
+part of it that does not check rather than on the whole body. -/
+
+/-- error: the left operand of `+` has type struct ChkPt where int was expected -/
+#guard_msgs (error) in
+lgtm def chkDeepTypeError(p : struct ChkPt)(n : int) : int :=
+  let a = n + 1 in
+  (a + (p + 1)) + 3
+
+/-- error: the `else` branch of an `if` has type string where int was expected -/
+#guard_msgs (error) in
+lgtm def chkBadBranch(b : bool)(n : int) : int := n + (if b then {1} else {"two"})
+
+-- A body that checks but not at the type declared for it is a disagreement between the two rather
+-- than a mistake inside the body, and is reported on the body.
+/-- error: this expression has type int where string was expected -/
+#guard_msgs (error) in
+lgtm def chkWrongResult(n : int) : string := n + 1
+
+-- A name nothing declares is reported once.  The type checker would reach it again, one form out,
+-- and say the same thing about more of the term, so a declaration that has had something said
+-- about it is not then checked.
+/-- error: no variable named 'zzqqxx' is in scope -/
+#guard_msgs (error) in
+lgtm def chkOneErrorOnly(n : int) : string := zzqqxx + 1
+
+/-! ### What is not reported
+
+A correct declaration reports nothing, and neither does a bare `[lgtm| ...]`: a fragment has no
+context in which a name could be wrong, so it is read but not resolved. -/
+
+#guard_msgs (error) in
+lgtm def chkFine(p : struct ChkPt) : int := chkPtX(p) + p.y
+
+#guard_msgs (error) in
+example : [lgtm| anything.at.all + unknownName] =
+    Expression.plus (.structGet (.structGet (.varRef "anything") "at") "all")
+      (.varRef "unknownName") :=
+  rfl
+
+-- A declaration may call itself: its own name and signature are in scope for its body.
+#guard_msgs (error) in
+lgtm def chkCountdown(n : int) : int := chkCountdown(n - 1)
+
+-- And a struct may hold a value of its own type.
+#guard_msgs (error) in
+lgtm struct ChkNest{kids : list (struct ChkNest)}
+
+-- Two that call each other need `lgtm forward`, which declares a signature and no Lean declaration.
+#guard_msgs (error) in
+lgtm forward def chkEvenish(n : int) : bool
+
+#guard_msgs (error) in
+lgtm def chkOddish(n : int) : bool := chkEvenish(n - 1)
+
+#guard_msgs (error) in
+lgtm def chkEvenish(n : int) : bool := chkOddish(n - 1)
+
+/-! ### A term with a splice in it is not checked here
+
+A splice is a Lean term, so the value a command builds around one has a marker where an expression
+should be and is not what the writer wrote.  Nothing is reported about it, and `Program.check` is
+what checks it. -/
+
+#guard_msgs (error) in
+lgtm def chkSpliced(n : int) : string := ~(Expression.plus (.varRef "n") (.intLit 1))
+
+#guard !(chkSpliced.check {} []).isOk

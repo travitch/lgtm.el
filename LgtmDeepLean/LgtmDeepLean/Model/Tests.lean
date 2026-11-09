@@ -12,11 +12,26 @@ Checks three things:
 2. Declaration names are unique
 3. All declarations in the model are included in the program (using metaprogramming)
 
--/
+The first is also done by each `lgtm` command over the declarations in scope where it is written,
+which is where an error reaches the editor; the second and third are conditions only a whole program
+has. -/
 
-/-! ## Every declaration type checks -/
+/-! ## Every declaration type checks
 
-#guard (modelProgram.check).isOk
+Each `lgtm` command checks its own declaration where it is written, against the declarations in
+scope at that point, so an error normally lands in the editor on the body that has it rather than
+here — see `LgtmDeepLean.Lang.Syntax`.  This is the backstop: it is the only check that sees the
+table the proofs are stated about, every module's declarations at once, so it catches what a
+per-module check cannot — two modules declaring one name, and a declaration whose own module did
+not yet have everything it mentions.
+
+`run_meta` rather than `#guard`: `#guard` tests a `Bool` and so reports only that the program did
+not check, while the checker's message says which declaration and what about it. -/
+
+run_meta do
+  match modelProgram.check with
+  | .ok _ => pure ()
+  | .error m => Lean.throwError m
 
 /-! ## No two declarations share a name -/
 

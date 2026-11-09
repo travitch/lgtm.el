@@ -4,6 +4,8 @@ public import LgtmDeepLean.Lang.IR
 public import LgtmDeepLean.Lang.TypeCheck
 meta import LgtmDeepLean.Lang.IR
 meta import LgtmDeepLean.Lang.TypeCheck
+public meta import LgtmDeepLean.Lang.IR.ToExpr
+public meta import LgtmDeepLean.Lang.Syntax.Scope
 
 /-! # Surface syntax for the IR
 
@@ -12,28 +14,41 @@ An `Expression` written out of its constructors stops being readable at about th
 adds notation for `Ty`, `Expression`, and `FuncDecl` so the same programs can be written the way the
 docstrings elsewhere already describe them — `fun (x : int) => x + 1`, `g(x)`, `x :: xs`.
 
-Four entry points:
+Five entry points:
 
 * `[lgtm_ty| (int) -> string]` elaborates to a `Ty`.
 * `[lgtm| fun (x : int) => x + 1]` elaborates to an `Expression`.
 * `lgtm def` is a command that declares a `FuncDecl`.
 * `lgtm struct` is a command that declares a `StructDecl`.
 * `lgtm inductive` is a command that declares an `InductiveDecl`.
+* `lgtm forward def` is a command that declares a signature and nothing else, for two declarations
+  that call each other.
 
-Everything is a macro, so these expand to ordinary constructor applications and cost nothing at
-run time.  A DSL term is *not* checked by `Expression.infer` when it elaborates — `[lgtm| 1 + "a"]`
-is a perfectly good `Expression` that happens to be ill typed.  Type checking stays where it was,
-in `Expression.check` and `FuncDecl.check`.
+What a DSL term elaborates to is an ordinary constructor application and costs nothing at run time,
+the way it did when all of this was a macro.  What is no longer the same is when it is checked.
+
+A *term* is still not checked: `[lgtm| 1 + "a"]` is a perfectly good `Expression` that happens to be
+ill typed, and `[lgtm| x + 1]` mentions an `x` that nothing need have bound, because a fragment has
+no context for either to be wrong in.
+
+A *declaration* is checked by the command that makes it, against the declarations in scope at that
+point, and what the check finds is reported on the part of the declaration that has it — the token
+of a name nothing declares, the innermost subexpression that does not type check.  That is what the
+elaborators below are for: they read a form into the value it denotes rather than into syntax for
+that value, so one pass holds the declaration and the syntax every part of it came from.
+`Program.check` is still the authority and still what `LgtmDeepLean.Model.Tests` runs; see the
+"What the commands do besides declare" section below for what the two see differently.
 
 Scoping is the IR's, not Lean's: an identifier becomes a `varRef` of its own name, so the `x` in
 `[lgtm| fun (x : int) => x]` refers to the DSL binder and never to a Lean variable called `x`.  To
 reach a Lean term of type `Expression` or `Ty`, splice it with `~(...)`.
 
-Lean names are consulted for one thing only, and it decides nothing about scoping: a *dotted*
-identifier is either one IR name or a field read, and which one it is cannot be read off the
-syntax.  `Foo.bar` is the IR name `Foo.bar` when an `lgtm` declaration has taken that Lean name,
-and otherwise the variable `Foo` with its field `bar` read.  The name it becomes is the one written,
-not the Lean name it was found under.
+Nothing about a DSL term is decided by what Lean names are in scope.  A *dotted* identifier is
+either one IR name or a field read, and which one it is cannot be read off the syntax: `Foo.bar` is
+the IR name `Foo.bar` when an `lgtm` command has declared that IR name, and otherwise the variable
+`Foo` with its field `bar` read.  What is consulted is the IR names an ordinary `import` brings in
+(`LgtmDeepLean.Lang.Syntax.Scope`), where it used to be the Lean names a `meta import` brought in —
+so a module calling another's declarations no longer needs to import it twice.
 
 The keywords inside a DSL term — `bool`, `int`, `string`, `list`, `option`, `hashmap`, `tuple`,
 `true`, `false`, `some`, `none`, `reverse`, `length`, `map`, `sort`, `toList`, `unreachable`, `var`,
@@ -126,25 +141,220 @@ syntax :max "~" "(" term ")" : lgtmTy
 /-- `[lgtm_ty| t]` is the `Ty` that `t` denotes. -/
 syntax :max "[lgtm_ty| " lgtmTy "]" : term
 
-macro_rules
-  | `([lgtm_ty| bool]) => `(Ty.bool)
-  | `([lgtm_ty| int]) => `(Ty.int)
-  | `([lgtm_ty| string]) => `(Ty.string)
-  | `([lgtm_ty| list $t]) => `(Ty.list [lgtm_ty| $t])
-  | `([lgtm_ty| option $t]) => `(Ty.option [lgtm_ty| $t])
-  | `([lgtm_ty| hashmap $k $v]) => `(Ty.hashmap [lgtm_ty| $k] [lgtm_ty| $v])
-  | `([lgtm_ty| tuple($ts,*)]) => do
-      let tys ← ts.getElems.mapM fun t => `([lgtm_ty| $t])
-      `(Ty.tuple [$tys,*])
-  | `([lgtm_ty| struct $n:ident]) => `(Ty.struct $(Lean.quote n.getId.toString))
-  | `([lgtm_ty| struct $n:str]) => `(Ty.struct $n)
-  | `([lgtm_ty| inductive $n:ident]) => `(Ty.ind $(Lean.quote n.getId.toString))
-  | `([lgtm_ty| inductive $n:str]) => `(Ty.ind $n)
-  | `([lgtm_ty| ($t)]) => `([lgtm_ty| $t])
-  | `([lgtm_ty| ($ts,*) -> $r]) => do
-      let ps ← ts.getElems.mapM fun t => `([lgtm_ty| $t])
-      `(Ty.fn [$ps,*] [lgtm_ty| $r])
-  | `([lgtm_ty| ~($t)]) => `(($t : Ty))
+/-! ## Elaborating a DSL term
+
+A form is read into the value it denotes — a `Ty`, an `Expression` — rather than into syntax for
+that value, and the Lean term the quotation becomes is recovered from the value with `ToExpr`
+(`LgtmDeepLean.Lang.IR.ToExpr`).  What that buys is the one thing a macro cannot have: a pass
+holding the value *and* the syntax it came from at once, which is what lets the `lgtm` commands
+check the declaration they are elaborating and report what they find where the writer can see it.
+
+The cost is that a splice stops being transparent.  `~(e)` is a *Lean* term, so a pass building
+values cannot read a value out of it — in `[lgtm| ~(f x)]` there need not be one yet, and
+`Eval/Tests.lean` splices expressions that are free variables of the theorem around them.  A splice
+is therefore elaborated to an `Expr` and left standing in the value as a marked variable, which
+`plugSplices` puts back when the value becomes a term.  What the marker costs is the checking: a
+value with one in it is not the expression the writer wrote, so a declaration containing a splice is
+left to `Program.check`, which sees it after Lean has evaluated it. -/
+
+open Lean
+
+/-- The reserved prefix of the variable a spliced term stands as while a DSL term is being built.
+
+A name beginning with it is one `plugSplices` would rewrite, which is what spells `var "~splice#0"`
+and `struct "~splice#0"` out of the language.  Neither is reachable by accident: `~` starts no Lean
+identifier, so writing one takes the string escape hatch deliberately. -/
+meta def spliceMarker : String := "~splice#"
+
+/-- The variable the `i`th splice of a term stands as. -/
+meta def spliceVar (i : Nat) : String := s!"{spliceMarker}{i}"
+
+/-- The index of the splice `s` marks, if it marks one. -/
+private meta def spliceIndex? (s : String) : Option Nat :=
+  if s.startsWith spliceMarker then (s.drop spliceMarker.length).toNat? else none
+
+/-- `e` with every splice marker in it replaced by the term that splice elaborated to.
+
+Done on the `Expr` rather than on the value: a marker is a `varRef` or a `struct` of a reserved
+name, so `toExpr` turns it into a term of exactly one shape, and recognising that shape is a
+traversal of ten lines where recognising it in the value would be one case per form of the IR. -/
+meta def plugSplices (splices : Array Expr) (e : Expr) : Expr :=
+  if splices.isEmpty then e
+  else
+    e.replace fun sub =>
+      match sub with
+      | .app (.const c _) (.lit (.strVal s)) =>
+          if c == ``Expression.varRef || c == ``Ty.struct then
+            (spliceIndex? s).bind fun i => splices[i]?
+          else
+            none
+      | _ => none
+
+/-- How far reading a DSL term has got: where its splices went, and whether anything has been
+reported about it.
+
+`reported` is what keeps one mistake from being described twice.  A name nothing declares is also a
+name the type checker can say nothing useful about — it would report the same mistake a second time,
+one form further out — so a term that has had something said about it is not then checked. -/
+meta structure LgtmElabState where
+  splices : Array Expr := #[]
+  reported : Bool := false
+  /-- Every expression the term was built from, each with the syntax it was written as and the
+  context it stands in, in the order they were finished — so a child comes before its parent, and
+  the first entry that does not type check is the innermost one that does not.
+
+  Recorded only for a declaration, since a fragment is not checked.  What it is for is saying
+  *where*: `Expression.inferE` reports the innermost thing it could not do but not which part of
+  the source that was, and this is how the two are put back together. -/
+  nodes : Array (Syntax × Expression × Context) := #[]
+
+/-- What a DSL term is read against: the declarations in scope, and whether to report a name that
+nothing in scope declares.
+
+Names are resolved either way — which of the two things a dotted identifier means depends on it —
+but reported only for a declaration.  A bare `[lgtm| ...]` is a fragment and may mention anything:
+`[lgtm| x + 1]` is the expression it says, and has no context in which `x` could be wrong.  A
+declaration is the opposite: its parameters and the globals are the whole of what its body may
+mention, so a name outside them is a mistake and the commands ask to hear about it. -/
+meta structure LgtmElabCtx where
+  scope : LgtmScope
+  /-- What the term may mention besides what is in scope: the declaration being elaborated, so that
+  its body may call itself and a struct may have a field of its own type.
+
+  A declaration's signature is read before its body and a type name before the fields under it, so
+  a provisional entry carrying as much of the declaration as has been read is enough — which is all
+  a mention of it needs, since what a caller reads is the signature. -/
+  extra : LgtmScope := {}
+  report : Bool
+
+/-- The globals a term may call: those in scope, and the declaration being elaborated. -/
+meta def LgtmElabCtx.allGlobals (ctx : LgtmElabCtx) : Globals := ctx.scope.globals ++ ctx.extra.globals
+
+/-- The structs a term may name, the same way. -/
+meta def LgtmElabCtx.allStructs (ctx : LgtmElabCtx) : Structs := ctx.scope.structs ++ ctx.extra.structs
+
+/-- The inductive types a term may name, the same way. -/
+meta def LgtmElabCtx.allInductives (ctx : LgtmElabCtx) : Inductives :=
+  ctx.scope.inductives ++ ctx.extra.inductives
+
+/-- The type declarations a term is read and checked against. -/
+meta def LgtmElabCtx.allTypeDecls (ctx : LgtmElabCtx) : TypeDecls where
+  ss := ctx.allStructs
+  is := ctx.allInductives
+
+/-- The monad a DSL term is read in: `TermElabM` because a splice is a Lean term and has to be
+elaborated, with the scope to resolve names against and the splices met so far. -/
+meta abbrev LgtmElabM :=
+  ReaderT LgtmElabCtx (StateRefT LgtmElabState Elab.TermElabM)
+
+/-- Point `ref` at the Lean declaration that `irName`'s `lgtm` command generated, so that the
+editor can follow a mention of an IR name to where it was declared.
+
+What this records is the node an identifier's elaboration would have left had the name been a Lean
+one: goto-definition and hover both read it, so a call inside a DSL body becomes navigable and
+shows the declaration's docstring, for the cost of a lookup the name resolution has already done.
+
+Silent when the name is one no command declared — a parameter, a `let` — since there is no
+declaration for it to point at. -/
+private meta def addIrNameInfo (ref : Syntax) (irName : String) : LgtmElabM Unit := do
+  let ctx ← read
+  let some entry := (ctx.extra.find? irName).orElse fun _ => ctx.scope.find? irName | return
+  if (← getEnv).contains entry.leanName then
+    Elab.addConstInfo ref entry.leanName
+
+/-- The type a binder is recorded at when what it binds has none: a `let` whose bound expression is
+ill typed, or a `match` on something that is not of the kind being taken apart.
+
+Only the recording is affected, never the checking.  Whatever had no type is itself a node that
+does not type check and was finished first, so it is what gets reported, and nothing is ever said
+about a binder standing at this. -/
+meta def unknownTy : Ty := .tuple []
+
+/-- Report `message` at `ref`, unless this term is a fragment nothing is reported about. -/
+private meta def reportAt (ref : Syntax) (message : String) : LgtmElabM Unit := do
+  if (← read).report then
+    logErrorAt ref message
+    modify fun s => { s with reported := true }
+
+/-- Elaborate the spliced term `t` at type `ty`, and give back the name of the marker standing for
+it. -/
+private meta def elabSplice (t : Term) (ty : Name) : LgtmElabM String := do
+  let e ← Elab.Term.elabTerm t (mkConst ty)
+  let i := (← get).splices.size
+  modify fun s => { s with splices := s.splices.push e }
+  return spliceVar i
+
+/-- Report at `ref` unless `name` is a struct in scope, saying which of the two kinds it is when it
+is the other one. -/
+private meta def checkStructName (ref : Syntax) (name : String) : LgtmElabM Unit := do
+  let ctx ← read
+  if (ctx.allStructs.lookup name).isSome then
+    addIrNameInfo ref name
+    return
+  if (ctx.allInductives.lookup name).isSome then
+    reportAt ref s!"'{name}' is an inductive type, not a struct: write `inductive {name}`"
+  else
+    reportAt ref
+      (withSuggestion name (ctx.allStructs.map Prod.fst) s!"no struct named '{name}' is declared")
+
+/-- Report at `ref` unless `name` is an inductive type in scope, the way `checkStructName` does. -/
+private meta def checkIndName (ref : Syntax) (name : String) : LgtmElabM Unit := do
+  let ctx ← read
+  if (ctx.allInductives.lookup name).isSome then
+    addIrNameInfo ref name
+    return
+  if (ctx.allStructs.lookup name).isSome then
+    reportAt ref s!"'{name}' is a struct, not an inductive type: write `struct {name}`"
+  else
+    reportAt ref
+      (withSuggestion name (ctx.allInductives.map Prod.fst)
+        s!"no inductive named '{name}' is declared")
+
+/-- Build the `Ty` that `stx` denotes. -/
+meta partial def elabLgtmTy (stx : TSyntax `lgtmTy) : LgtmElabM Ty := do
+  match stx with
+  | `(lgtmTy| bool) => return .bool
+  | `(lgtmTy| int) => return .int
+  | `(lgtmTy| string) => return .string
+  | `(lgtmTy| list $t) => return .list (← elabLgtmTy t)
+  | `(lgtmTy| option $t) => return .option (← elabLgtmTy t)
+  | `(lgtmTy| hashmap $k $v) => return .hashmap (← elabLgtmTy k) (← elabLgtmTy v)
+  | `(lgtmTy| tuple($ts,*)) => return .tuple (← ts.getElems.toList.mapM elabLgtmTy)
+  | `(lgtmTy| struct $n:ident) => do
+      let name := n.getId.toString
+      checkStructName n name
+      return .struct name
+  | `(lgtmTy| struct $n:str) => do
+      checkStructName n n.getString
+      return .struct n.getString
+  | `(lgtmTy| inductive $n:ident) => do
+      let name := n.getId.toString
+      checkIndName n name
+      return .ind name
+  | `(lgtmTy| inductive $n:str) => do
+      checkIndName n n.getString
+      return .ind n.getString
+  | `(lgtmTy| ($t)) => elabLgtmTy t
+  | `(lgtmTy| ($ts,*) -> $r) =>
+      return .fn (← ts.getElems.toList.mapM elabLgtmTy) (← elabLgtmTy r)
+  | `(lgtmTy| ~($t)) => return .struct (← elabSplice t ``Ty)
+  | _ => throwErrorAt stx "not a type of the `lgtm` language"
+
+/-- Run `x` against the declarations in scope, and give back what it built together with the state
+it left: the splices to plug back in, and whether it reported anything. -/
+meta def LgtmElabM.run' (report : Bool) (x : LgtmElabM α) (extra : LgtmScope := {}) :
+    Elab.TermElabM (α × LgtmElabState) := do
+  let scope ← getLgtmScope
+  StateRefT'.run (x.run { scope, extra, report }) {}
+
+/-- The term a DSL value elaborates to: what `ToExpr` makes of it, with the splices put back. -/
+meta def lgtmTerm [ToExpr α] (v : α) (st : LgtmElabState) : Expr :=
+  plugSplices st.splices (toExpr v)
+
+elab_rules : term
+  | `([lgtm_ty| $t]) => do
+      let (v, st) : Ty × LgtmElabState ← LgtmElabM.run' (report := false) (elabLgtmTy t)
+      return lgtmTerm v st
 
 /-! ## Expressions
 
@@ -318,13 +528,17 @@ syntax :max lgtmExpr:max noWs "[" lgtmExpr "]" : lgtmExpr
 /-! `map` is one keyword over two forms — a list's mapping and a hashmap's — so it is written with a
 tag saying which: `map list xs f` and `map hashmap m f`.
 
-The tag is not something a type checker could supply in its place.  `[lgtm| ...]` is a macro, so by
-the time it expands nothing has inferred a type for either operand — the DSL's types are not Lean's,
-and `Expression.infer` runs on the `Expression` this *produces*.  What the two forms do differ in is
-the arity of the function, one parameter against two, but that is readable only where the function is
-written out as a `fun` and says nothing about `map xs f` for a named `f`.  So the tag is written
-rather than deduced, and it is written once per `map` rather than being a form of its own, because
-the two mappings are the same operation over the two things the IR has to map over. -/
+The tag is written rather than deduced, and stays written now that the elaborator has types to hand.
+The `Expression` a term denotes must not depend on what was inferred about it: a type is available
+here only where everything the operand is built from was itself resolved — not through a splice, not
+under a `let` whose bound expression is ill typed (see `unknownTy`) — so a `map` that chose its
+constructor by inference would be a different expression depending on whether the term around it had
+a mistake in it, which is a worse thing than a tag.  What the two forms do also differ in is the
+arity of the function, one parameter against two, but that is readable only where the function is
+written out as a `fun` and says nothing about `map xs f` for a named `f`.
+
+It is written once per `map` rather than being a form of its own because the two mappings are the
+same operation over the two things the IR has to map over. -/
 
 /-- `map list xs f` is `xs` with `f` applied to each of its elements: a list of the same length,
 each element replaced by what `f` returned for it.
@@ -523,163 +737,316 @@ syntax :10 "let " ident " = " lgtmExpr " in " lgtmExpr:10 : lgtmExpr
 /-- `[lgtm| e]` is the `Expression` that `e` denotes. -/
 syntax :max "[lgtm| " lgtmExpr "]" : term
 
-/-- The `optionMatch` on `scrut` that `alts` describes, when they are the option forms:
-`| none => e` first and `| some(x) => e` second, each alternative given as its constructor name, the
-names it binds, and its body.
+/-- The alternatives of a `match` read as an option's, when they are: the body of its `none` case,
+the name its `some` case binds, and the body under it.
 
-`none` when no alternative names either, which is every other `match` and is an `indMatch`; an error
-when one does and the rest of the shape is not an option's, because there is no second reading to
-fall back on — a `match` mentioning `none` is one the writer meant for an option.
+`none` when no alternative names either `none` or `some`, which is every other `match` and is an
+`indMatch`; an error when one does and the rest of the shape is not an option's, because there is no
+second reading to fall back on — a `match` mentioning `none` is one the writer meant for an option.
 
-`meta` because it runs while a macro expands, and `public` for the reason `throwOnRepeatedName` is:
-a `module` hides even the names its own macros expand to. -/
-public meta def optionMatchAlts (scrut : Lean.TSyntax `lgtmExpr)
-    (alts : Array (Lean.Ident × Array Lean.Ident × Lean.TSyntax `lgtmExpr)) :
-    Lean.MacroM (Option (Lean.TSyntax `term)) := do
-  let isOptionCtor (c : Lean.Ident) : Bool := c.getId == `none || c.getId == `some
+Only the shape is decided here.  The three pieces come back as syntax for `elabLgtmExpr` to read,
+which is what keeps the recursion in one place. -/
+meta def optionMatchAlts
+    (alts : Array (Ident × Array Ident × TSyntax `lgtmExpr)) :
+    LgtmElabM (Option (TSyntax `lgtmExpr × String × TSyntax `lgtmExpr)) := do
+  let isOptionCtor (c : Ident) : Bool := c.getId == `none || c.getId == `some
   let some (named, _, _) := alts.find? (fun (c, _, _) => isOptionCtor c) | return none
   let #[(nc, nxs, nbody), (sc, sxs, sbody)] := alts
     |
-    Lean.Macro.throwErrorAt named
+    throwErrorAt named
         "a match on an option has two alternatives: `| none => ... | some(x) => ...`"
   unless nc.getId == `none && sc.getId == `some do
-    Lean.Macro.throwErrorAt named "a match on an option takes `none` first and `some` second"
+    throwErrorAt named "a match on an option takes `none` first and `some` second"
   unless nxs.isEmpty do
-    Lean.Macro.throwErrorAt nc "`none` holds nothing, so its alternative binds no names"
+    throwErrorAt nc "`none` holds nothing, so its alternative binds no names"
   let #[x] := sxs
     |
-    Lean.Macro.throwErrorAt sc
+    throwErrorAt sc
         "`some` holds one value, so its alternative binds one name: `| some(x) => ...`"
-  return some
-      (←
-        `(Expression.optionMatch [lgtm| $scrut] [lgtm| $nbody] $(Lean.quote x.getId.toString)
-              [lgtm| $sbody]))
+  return some (nbody, x.getId.toString, sbody)
 
-/-- Whether `n` is the Lean name of a declaration already in scope, which is how a dotted identifier
-is told apart from a field read.
+/-! ## Resolving names
 
-The name is looked for in the current namespace and then at the root, the way `Lean` resolves one it
-is given unqualified.  What is in scope is what the module has imported `meta`, which is why a module
-calling a declaration of another takes a `meta import` of it as well as an ordinary one.
+A name the DSL mentions is resolved against the parameters and `let`s it is written under and the
+declarations in scope, and a name neither of them has is reported where it is written.  That is the
+half of the checking a type checker is the wrong thing to do: `Expression.inferE` reports a name it
+cannot find too, but one form out and about the body it was reached through, where this reports it
+on the token itself and can say which declared name it looks like.
 
-`meta` because it runs while a macro expands rather than at run time, and `public` for the reason
-`lgtmVis` is: a `module` hides even the names its own macros expand to. -/
-public meta def isDeclInScope (n : Lean.Name) : Lean.MacroM Bool := do
-  if ← Lean.Macro.hasDecl ((← Lean.Macro.getCurrNamespace) ++ n) then
-    return true
-  Lean.Macro.hasDecl n
+What can be resolved this way is what a name alone decides: a variable, a struct or inductive type,
+a constructor of a named type, a field of a `new`, and how many arguments a named declaration takes.
+What cannot is anything needing a type first — the alternatives of a `match`, the field of a
+`p.x` — since the type of what is being taken apart is exactly what inference is for. -/
 
-macro_rules
-  | `([lgtm| $x:ident]) => do
+/-- Report at `ref` unless `name` is a variable bound by the term or a declaration in scope. -/
+private meta def checkVarName (ref : Syntax) (bound : List String) (name : String) :
+    LgtmElabM Unit := do
+  if bound.contains name then
+    addIrNameInfo ref name
+    return
+  let ctx ← read
+  if (ctx.allGlobals.lookup name).isSome then
+    addIrNameInfo ref name
+    return
+  reportAt ref
+    (withSuggestion name (bound ++ ctx.allGlobals.map Prod.fst)
+      s!"no variable named '{name}' is in scope")
+
+/-- Report at `ref` unless the dotted `name` reads as a field of something: its first component
+`root` has to be a variable, since the whole of it is not a declaration.
+
+Reported over the whole name rather than over `root`, and against the declared names as well as the
+variables, because the mistake is almost always in the whole: a dotted name is how one declaration
+calls another, so one that reaches neither is a call of something misspelled or renamed far more
+often than a field read of a variable that does not exist. -/
+private meta def checkDottedName (ref : Syntax) (bound : List String) (name root : String) :
+    LgtmElabM Unit := do
+  if bound.contains root then return
+  let ctx ← read
+  if (ctx.allGlobals.lookup root).isSome then return
+  reportAt ref
+    (withSuggestion name (ctx.scope.names ++ ctx.extra.names ++ bound)
+      s!"nothing named '{name}' is declared, and '{root}' is not a variable in scope")
+
+/-- Report at `ref` unless `ctor` is a constructor of the inductive type `tyName` and carries
+`arity` values.
+
+Silent when `tyName` names nothing: the mistake is then the type name, which `checkIndName` has
+already reported, and saying anything further about the constructor of a type that does not exist
+would be describing the same mistake twice. -/
+private meta def checkCtorArity (ref : Syntax) (tyName ctor : String) (arity : Nat) :
+    LgtmElabM Unit := do
+  let some d := (← read).allInductives.lookup tyName | return
+  match d.constructors.lookup ctor with
+  | none =>
+      reportAt ref
+        (withSuggestion ctor (d.constructors.map Prod.fst)
+          s!"inductive '{tyName}' has no constructor named '{ctor}'")
+  | some ts =>
+      unless ts.length == arity do
+        reportAt ref
+          s!"constructor '{ctor}' of inductive '{tyName}' carries {ts.length} value(s), but \
+            {arity} are given here"
+
+/-- Report at `ref` unless `field` is one the struct `name` declares. -/
+private meta def checkFieldName (ref : Syntax) (name field : String) : LgtmElabM Unit := do
+  let some d := (← read).allStructs.lookup name | return
+  if (d.fields.lookup field).isSome then return
+  reportAt ref
+    (withSuggestion field (d.fields.map Prod.fst) s!"struct '{name}' has no field named '{field}'")
+
+/-- Report at `ref` when `f` is a declaration in scope and is given the wrong number of arguments.
+
+Nothing is said about a call of anything else: what is applied has a type the type checker finds
+rather than a declaration to count the parameters of. -/
+private meta def checkCallArity (ref : Syntax) (f : Expression) (arity : Nat) : LgtmElabM Unit := do
+  let .varRef name := f | return
+  let some d := (← read).allGlobals.lookup name | return
+  unless d.parameters.length == arity do
+    reportAt ref
+      s!"'{name}' takes {d.parameters.length} argument(s), but {arity} are given here"
+
+mutual
+/-- Build the `Expression` that `stx` denotes, under the context `ctx`.
+
+The context carries the types as well as the names, because the two things this pass does with it
+need both: a name nothing binds is reported from the names, and the node recorded for every
+expression is recorded with the context it would be checked in, which is what makes the type
+checker's report land on the part of the term it is about.
+
+What `ctx` holds is what `FuncDecl.check` would hold at the same point — the parameters, the
+globals' types, and a binding per `fun`, `let` and `match` alternative passed through on the way in.
+`unknownTy` is where the two can come apart, and says why they cannot come apart in a way anything
+is reported from. -/
+meta partial def elabLgtmExpr (ctx : Context) (stx : TSyntax `lgtmExpr) :
+    LgtmElabM Expression := do
+  let e ← elabLgtmExprCore ctx stx
+  if (← read).report then
+    modify fun st => { st with nodes := st.nodes.push (stx, e, ctx) }
+  return e
+
+/-- The type `stx`'s expression has, or `unknownTy` when it has none.  Used where a binder's type is
+read off what it is bound to. -/
+meta partial def inferredTy (ctx : Context) (e : Expression) : LgtmElabM Ty := do
+  match e.inferE (← read).allTypeDecls ctx with
+  | .ok t => return t
+  | .error _ => return unknownTy
+
+/-- The cases of `elabLgtmExpr`, which is this with the recording around it. -/
+meta partial def elabLgtmExprCore (ctx : Context) (stx : TSyntax `lgtmExpr) :
+    LgtmElabM Expression := do
+  let names := ctx.map Prod.fst
+  let elabList (es : Array (TSyntax `lgtmExpr)) : LgtmElabM (List Expression) :=
+    es.toList.mapM (elabLgtmExpr ctx)
+  let elabFields (owner : Option String) (fs : Array Ident) (es : Array (TSyntax `lgtmExpr)) :
+      LgtmElabM (List (FieldName × Expression)) :=
+    (fs.zip es).toList.mapM fun (f, e) => do
+      let field := f.getId.toString
+      if let some name := owner then
+        checkFieldName f name field
+      return (field, ← elabLgtmExpr ctx e)
+  match stx with
+  | `(lgtmExpr| $x:ident) => do
       -- `p.x.y` arrives here as one identifier, because that is how it tokenizes, and the two
-      -- things it can mean are told apart by what is in scope.  A name an `lgtm` declaration
+      -- things it can mean are told apart by what is declared.  A name an `lgtm` declaration
       -- already took is a `varRef` of the whole of it, so `CommentThreads.empty()` calls that
       -- declaration.  Any other name is a variable and one field read per component after the
       -- first.
       let name := x.getId.toString
-      if ← isDeclInScope x.getId then
-        return ← `(Expression.varRef $(Lean.quote name))
+      if ((← read).scope.find? name).isSome then
+        addIrNameInfo x name
+        return .varRef name
       match name.splitOn "." with
-      | [] => Lean.Macro.throwUnsupported
-      | root :: fields =>
-          let mut acc ← `(Expression.varRef $(Lean.quote root))
-          for f in fields do
-            acc ← `(Expression.structGet $acc $(Lean.quote f))
-          return acc
-  | `([lgtm| var $s:str]) => `(Expression.varRef $s)
-  | `([lgtm| true]) => `(Expression.boolLit true)
-  | `([lgtm| false]) => `(Expression.boolLit false)
-  | `([lgtm| $n:num]) => `(Expression.intLit $n)
-  | `([lgtm| $s:str]) => `(Expression.stringLit $s)
-  | `([lgtm| ($e)]) => `([lgtm| $e])
-  | `([lgtm| ~($e)]) => `(($e : Expression))
-  | `([lgtm| $a + $b]) => `(Expression.plus [lgtm| $a] [lgtm| $b])
-  | `([lgtm| $a - $b]) => `(Expression.minus [lgtm| $a] [lgtm| $b])
-  | `([lgtm| $a :: $b]) => `(Expression.lcons [lgtm| $a] [lgtm| $b])
-  | `([lgtm| $a == $b]) => `(Expression.equals [lgtm| $a] [lgtm| $b])
-  | `([lgtm| $a < $b]) => `(Expression.lt [lgtm| $a] [lgtm| $b])
-  | `([lgtm| $a <= $b]) => `(Expression.le [lgtm| $a] [lgtm| $b])
-  | `([lgtm| $a && $b]) => `(Expression.boolAnd [lgtm| $a] [lgtm| $b])
-  | `([lgtm| $a || $b]) => `(Expression.boolOr [lgtm| $a] [lgtm| $b])
-  | `([lgtm| reverse $e]) => `(Expression.listReverse [lgtm| $e])
-  | `([lgtm| length $e]) => `(Expression.listLength [lgtm| $e])
-  | `([lgtm| [$es,* : $t]]) => do
-      let mut acc ← `(Expression.lnil [lgtm_ty| $t])
-      for e in es.getElems.reverse do
-        acc ← `(Expression.lcons [lgtm| $e] $acc)
-      return acc
-  | `([lgtm| $f($args,*)]) => do
-      let as ← args.getElems.mapM fun a => `([lgtm| $a])
-      `(Expression.app [lgtm| $f] [$as,*])
-  | `([lgtm| fun $[($xs:ident : $ts:lgtmTy)]* => $b]) => do
-      let ps ← (xs.zip ts).mapM fun (x, t) =>
-        `(($(Lean.quote x.getId.toString), [lgtm_ty| $t]))
-      `(Expression.lam [$ps,*] [lgtm| $b])
-  | `([lgtm| let $x:ident = $e in $b]) =>
-      `(Expression.let_ $(Lean.quote x.getId.toString) [lgtm| $e] [lgtm| $b])
-  | `([lgtm| if $c then { $thn } else { $els }]) =>
-      `(Expression.ite [lgtm| $c] [lgtm| $thn] [lgtm| $els])
-  | `([lgtm| new $n:ident { $[$fs:ident = $es:lgtmExpr],* }]) => do
-      let bs ← (fs.zip es).mapM fun (f, e) => `(($(Lean.quote f.getId.toString), [lgtm| $e]))
-      `(Expression.structNew $(Lean.quote n.getId.toString) [$bs,*])
-  | `([lgtm| new $n:str { $[$fs:ident = $es:lgtmExpr],* }]) => do
-      let bs ← (fs.zip es).mapM fun (f, e) => `(($(Lean.quote f.getId.toString), [lgtm| $e]))
-      `(Expression.structNew $n [$bs,*])
-  | `([lgtm| $e.$f:ident]) => do
-      let mut acc ← `([lgtm| $e])
-      for g in f.getId.toString.splitOn "." do
-        acc ← `(Expression.structGet $acc $(Lean.quote g))
-      return acc
-  | `([lgtm| { $e with $[$fs:ident = $es:lgtmExpr],* }]) => do
-      let bs ← (fs.zip es).mapM fun (f, e) => `(($(Lean.quote f.getId.toString), [lgtm| $e]))
-      `(Expression.structUpdate [lgtm| $e] [$bs,*])
-  | `([lgtm| new $n:ident($args,*)]) => do
+      | [] => throwErrorAt x "an identifier with no name"
+      | root :: fields => do
+          if fields.isEmpty then
+            checkVarName x names root
+          else
+            checkDottedName x names name root
+          return fields.foldl (init := .varRef root) fun acc f => .structGet acc f
+  | `(lgtmExpr| var $s:str) => do
+      checkVarName s names s.getString
+      return .varRef s.getString
+  | `(lgtmExpr| true) => return .boolLit true
+  | `(lgtmExpr| false) => return .boolLit false
+  | `(lgtmExpr| $n:num) => return .intLit n.getNat
+  | `(lgtmExpr| $s:str) => return .stringLit s.getString
+  | `(lgtmExpr| ($e)) => elabLgtmExpr ctx e
+  | `(lgtmExpr| ~($e)) => return .varRef (← elabSplice e ``Expression)
+  | `(lgtmExpr| $a + $b) => return .plus (← elabLgtmExpr ctx a) (← elabLgtmExpr ctx b)
+  | `(lgtmExpr| $a - $b) => return .minus (← elabLgtmExpr ctx a) (← elabLgtmExpr ctx b)
+  | `(lgtmExpr| $a :: $b) => return .lcons (← elabLgtmExpr ctx a) (← elabLgtmExpr ctx b)
+  | `(lgtmExpr| $a == $b) => return .equals (← elabLgtmExpr ctx a) (← elabLgtmExpr ctx b)
+  | `(lgtmExpr| $a < $b) => return .lt (← elabLgtmExpr ctx a) (← elabLgtmExpr ctx b)
+  | `(lgtmExpr| $a <= $b) => return .le (← elabLgtmExpr ctx a) (← elabLgtmExpr ctx b)
+  | `(lgtmExpr| $a && $b) => return .boolAnd (← elabLgtmExpr ctx a) (← elabLgtmExpr ctx b)
+  | `(lgtmExpr| $a || $b) => return .boolOr (← elabLgtmExpr ctx a) (← elabLgtmExpr ctx b)
+  | `(lgtmExpr| reverse $e) => return .listReverse (← elabLgtmExpr ctx e)
+  | `(lgtmExpr| length $e) => return .listLength (← elabLgtmExpr ctx e)
+  | `(lgtmExpr| [$es,* : $t]) => do
+      let t ← elabLgtmTy t
+      let es ← elabList es.getElems
+      return es.foldr (init := .lnil t) .lcons
+  | `(lgtmExpr| $f($args,*)) => do
+      let f' ← elabLgtmExpr ctx f
+      let as ← elabList args.getElems
+      checkCallArity stx f' as.length
+      return .app f' as
+  | `(lgtmExpr| fun $[($xs:ident : $ts:lgtmTy)]* => $b) => do
+      let ps ← (xs.zip ts).toList.mapM fun (x, t) => do
+        return (x.getId.toString, ← elabLgtmTy t)
+      return .lam ps (← elabLgtmExpr (ps ++ ctx) b)
+  | `(lgtmExpr| let $x:ident = $e in $b) => do
+      let bnd ← elabLgtmExpr ctx e
+      let x := x.getId.toString
+      return .let_ x bnd (← elabLgtmExpr ((x, ← inferredTy ctx bnd) :: ctx) b)
+  | `(lgtmExpr| if $c then { $thn } else { $els }) =>
+      return .ite (← elabLgtmExpr ctx c) (← elabLgtmExpr ctx thn) (← elabLgtmExpr ctx els)
+  | `(lgtmExpr| new $n:ident { $[$fs:ident = $es:lgtmExpr],* }) => do
+      let name := n.getId.toString
+      checkStructName n name
+      return .structNew name (← elabFields (some name) fs es)
+  | `(lgtmExpr| new $n:str { $[$fs:ident = $es:lgtmExpr],* }) => do
+      checkStructName n n.getString
+      return .structNew n.getString (← elabFields (some n.getString) fs es)
+  | `(lgtmExpr| $e.$f:ident) => do
+      let e ← elabLgtmExpr ctx e
+      return (f.getId.toString.splitOn ".").foldl (init := e) fun acc g => .structGet acc g
+  | `(lgtmExpr| { $e with $[$fs:ident = $es:lgtmExpr],* }) => do
+      -- The type of what is being updated is what says which fields it has, so the names are the
+      -- type checker's business here where a `new` names the struct and settles them.
+      return .structUpdate (← elabLgtmExpr ctx e) (← elabFields none fs es)
+  | `(lgtmExpr| new $n:ident($args,*)) => do
       match n.getId.toString.splitOn "." with
-      | [ty, c] =>
-          let as ← args.getElems.mapM fun a => `([lgtm| $a])
-          `(Expression.indNew $(Lean.quote ty) $(Lean.quote c) [$as,*])
+      | [ty, c] => do
+          checkIndName n ty
+          let as ← elabList args.getElems
+          checkCtorArity n ty c as.length
+          return .indNew ty c as
       | _ =>
-          Lean.Macro.throwErrorAt n
+          throwErrorAt n
             "a constructor is written `new Type.Ctor(...)`, with the type and the constructor it \
              belongs to"
-  | `([lgtm| new $ty:str $c:str($args,*)]) => do
-      let as ← args.getElems.mapM fun a => `([lgtm| $a])
-      `(Expression.indNew $ty $c [$as,*])
-  | `([lgtm| hashmap($k, $v)]) => `(Expression.hashmapEmpty [lgtm_ty| $k] [lgtm_ty| $v])
-  | `([lgtm| $m[$k]]) => `(Expression.hashmapGet [lgtm| $m] [lgtm| $k])
-  | `([lgtm| map list $l $f]) => `(Expression.listMap [lgtm| $l] [lgtm| $f])
-  | `([lgtm| sort $l $f]) => `(Expression.listSortBy [lgtm| $l] [lgtm| $f])
-  | `([lgtm| map hashmap $m $f]) => `(Expression.hashmapMap [lgtm| $m] [lgtm| $f])
-  | `([lgtm| toList $m]) => `(Expression.hashmapToList [lgtm| $m])
-  | `([lgtm| { $m with $bs:lgtmKeyBinding,* }]) => do
-      let mut acc ← `([lgtm| $m])
+  | `(lgtmExpr| new $ty:str $c:str($args,*)) => do
+      checkIndName ty ty.getString
+      let as ← elabList args.getElems
+      checkCtorArity c ty.getString c.getString as.length
+      return .indNew ty.getString c.getString as
+  | `(lgtmExpr| hashmap($k, $v)) => return .hashmapEmpty (← elabLgtmTy k) (← elabLgtmTy v)
+  | `(lgtmExpr| $m[$k]) => return .hashmapGet (← elabLgtmExpr ctx m) (← elabLgtmExpr ctx k)
+  | `(lgtmExpr| map list $l $f) => return .listMap (← elabLgtmExpr ctx l) (← elabLgtmExpr ctx f)
+  | `(lgtmExpr| sort $l $f) =>
+      return .listSortBy (← elabLgtmExpr ctx l) (← elabLgtmExpr ctx f)
+  | `(lgtmExpr| map hashmap $m $f) =>
+      return .hashmapMap (← elabLgtmExpr ctx m) (← elabLgtmExpr ctx f)
+  | `(lgtmExpr| toList $m) => return .hashmapToList (← elabLgtmExpr ctx m)
+  | `(lgtmExpr| { $m with $bs:lgtmKeyBinding,* }) => do
+      let mut acc ← elabLgtmExpr ctx m
       for b in bs.getElems do
         match b with
         | `(lgtmKeyBinding| [$k] = $v) =>
-            acc ← `(Expression.hashmapPut $acc [lgtm| $k] [lgtm| $v])
-        | _ => Lean.Macro.throwUnsupported
+            acc := .hashmapPut acc (← elabLgtmExpr ctx k) (← elabLgtmExpr ctx v)
+        | _ => throwErrorAt b "not a binding of a hashmap update"
       return acc
-  | `([lgtm| tuple($es,*)]) => do
-      let as ← es.getElems.mapM fun e => `([lgtm| $e])
-      `(Expression.tupleNew [$as,*])
-  | `([lgtm| $e.$i:num]) => `(Expression.tupleGet [lgtm| $e] $i)
-  | `([lgtm| some($e)]) => `(Expression.optionSome [lgtm| $e])
-  | `([lgtm| none : $t]) => `(Expression.optionNone [lgtm_ty| $t])
-  | `([lgtm| unreachable $why:str : $t]) => `(Expression.unreachable [lgtm_ty| $t] $why)
-  | `([lgtm| match $e with $alts:lgtmAlt*]) => do
+  | `(lgtmExpr| tuple($es,*)) => return .tupleNew (← elabList es.getElems)
+  | `(lgtmExpr| $e.$i:num) => return .tupleGet (← elabLgtmExpr ctx e) i.getNat
+  | `(lgtmExpr| some($e)) => return .optionSome (← elabLgtmExpr ctx e)
+  | `(lgtmExpr| none : $t) => return .optionNone (← elabLgtmTy t)
+  | `(lgtmExpr| unreachable $why:str : $t) => return .unreachable (← elabLgtmTy t) why.getString
+  | `(lgtmExpr| match $e with $alts:lgtmAlt*) => do
       let parsed ← alts.mapM fun alt =>
         match alt with
         | `(lgtmAlt| | $c:ident $[($xs:ident,*)]? => $b:lgtmExpr) =>
             return (c, (xs.map (·.getElems)).getD #[], b)
-        | _ => Lean.Macro.throwUnsupported
+        | _ => throwErrorAt alt "not an alternative of a match"
+      let scrut ← elabLgtmExpr ctx e
+      let scrutTy ← inferredTy ctx scrut
       -- An alternative named `none` or `some` is a match on an option rather than on a declared
       -- inductive type, and is the one form taking it apart.
-      if let some m ← optionMatchAlts e parsed then
-        return m
-      let as ← parsed.mapM fun (c, xs, b) => do
-        let ns : Array (Lean.TSyntax `term) := xs.map fun x => Lean.quote x.getId.toString
-        `(($(Lean.quote c.getId.toString), [$ns,*], [lgtm| $b]))
-      `(Expression.indMatch [lgtm| $e] [$as,*])
+      if let some (nbody, x, sbody) ← optionMatchAlts parsed then
+        -- `some(x)` binds at what the option holds, which is read off the scrutinee the way
+        -- `Expression.inferE` reads it.
+        let elemTy := match scrutTy with
+          | .option t => t
+          | _ => unknownTy
+        return .optionMatch scrut (← elabLgtmExpr ctx nbody) x
+          (← elabLgtmExpr ((x, elemTy) :: ctx) sbody)
+      -- An alternative binds at the types its constructor carries, which the declaration of the
+      -- scrutinee's type is what gives.
+      let inds := (← read).allInductives
+      let ctors : List (CtorName × List Ty) := match scrutTy with
+        | .ind name => ((inds.lookup name).map InductiveDecl.constructors).getD []
+        | _ => []
+      let as ← parsed.toList.mapM fun (c, xs, b) => do
+        let ns := xs.toList.map fun x => x.getId.toString
+        let ts := (ctors.lookup c.getId.toString).getD []
+        let binders := ns.zip (ts ++ List.replicate ns.length unknownTy)
+        return (c.getId.toString, ns, ← elabLgtmExpr (binders ++ ctx) b)
+      return .indMatch scrut as
+  | _ => throwErrorAt stx "not an expression of the `lgtm` language"
+end
+
+/-- The first expression of `nodes` that does not type check, with the message saying why.
+
+The entries are in the order they were finished, so the first one failing is the innermost: what
+`Expression.inferE` reports of a nest of forms is what it could not do innermost, and this is the
+part of the source that was.
+
+`none` when every node checks, which a declaration that does not check can still manage — a body
+whose type is not the one declared for it is a disagreement between the body and its signature
+rather than anything wrong inside the body. -/
+meta def firstIllTyped? (td : TypeDecls) (nodes : Array (Syntax × Expression × Context)) :
+    Option (Syntax × String) :=
+  nodes.findSome? fun (stx, e, ctx) =>
+    match e.inferE td ctx with
+    | .ok _ => none
+    | .error m => some (stx, m)
+
+elab_rules : term
+  | `([lgtm| $e]) => do
+      let (v, st) : Expression × LgtmElabState ←
+        LgtmElabM.run' (report := false) (elabLgtmExpr [] e)
+      return lgtmTerm v st
 
 /-! ## Declarations -/
 
@@ -701,23 +1068,126 @@ in; they are not Lean binders.
 syntax (docComment)? "lgtm " (lgtmVis)? "def " ident (&"as" str)? ("(" ident " : " lgtmTy ")")*
   " : " lgtmTy " := " lgtmExpr : command
 
-macro_rules
+/-! ## What the commands do besides declare
+
+A command has the two things needed to check what it is declaring: the declaration, and the syntax
+every part of it came from.  So it checks it, and reports what it finds where the writer is looking
+rather than leaving it to the module that collects the declarations — which in this development is
+`LgtmDeepLean.Model.Tests`, at the top of the import graph, where nothing is reported until
+everything has been built.
+
+Three things happen after the Lean declaration is made:
+
+1. the declaration is added to the scope, so that everything after it — here and in every module
+   importing this one — can resolve its name;
+2. unless something has already been reported about it, it is type checked against the declarations
+   in scope with itself among them, and a failure is reported on its body; and
+3. nothing, when the term contains a splice: a value with a splice marker in it is not the
+   expression the writer wrote, so there is nothing to check it against.
+
+Step 2 is skipped after step 1 has reported a name nothing declares, because the type checker would
+then report the same mistake a second time and less precisely — it reaches the name through the
+expression around it, where the name itself is where the mistake is.
+
+What this check is *not* is the authority.  It sees the declarations in scope, which is a prefix of
+the program the proofs are about, so it reports nothing the whole-program check would not; the
+reverse does not hold, and `Program.check` is still what `Model.Tests` runs.  See
+`LgtmDeepLean.Lang.Syntax.Scope`. -/
+
+/-- The Lean constant a command's `$n` declared, which is what a mention of the IR name points at.
+
+Resolved rather than assembled from the current namespace, since a `private` declaration is stored
+under a name that mangles the module it is in.  `none` if it cannot be found, which costs only the
+navigation. -/
+meta def resolveDeclName (n : Ident) : Elab.Command.CommandElabM (Option Name) := do
+  try
+    return some (← Elab.Command.liftCoreM <| Elab.realizeGlobalConstNoOverloadWithInfo n)
+  catch _ =>
+    return none
+
+elab_rules : command
   | `($[$doc:docComment]? lgtm $[$vis:lgtmVis]? def $n:ident $[as $ir:str]?
         $[($xs:ident : $ts:lgtmTy)]* : $rt:lgtmTy := $body:lgtmExpr) => do
-      let ps ← (xs.zip ts).mapM fun (x, t) =>
-        `(($(Lean.quote x.getId.toString), [lgtm_ty| $t]))
-      let irName := ir.getD (Lean.quote n.getId.toString)
+      let irName := (ir.map (·.getString)).getD n.getId.toString
       let docText := match doc with
         | some d => d.getDocString.trimAscii.toString
         | none => ""
+      -- The Lean declaration, built the way it always was: the value is what the quotations
+      -- elaborate to, which is the same pass the check below runs, so the two cannot disagree.
+      let ps ← (xs.zip ts).mapM fun (x, t) =>
+        `(($(Lean.quote x.getId.toString), [lgtm_ty| $t]))
       let val ← `({ docstring := $(Lean.quote docText)
-                    name := $irName
+                    name := $(Lean.quote irName)
                     parameters := [$ps,*]
                     body := [lgtm| $body]
                     resultType := [lgtm_ty| $rt] : FuncDecl })
-      match vis with
-      | some _ => `($[$doc:docComment]? private def $n : FuncDecl := $val)
-      | none => `($[$doc:docComment]? def $n : FuncDecl := $val)
+      Elab.Command.elabCommand <| ←
+        match vis with
+        | some _ => `($[$doc:docComment]? private def $n : FuncDecl := $val)
+        | none => `($[$doc:docComment]? def $n : FuncDecl := $val)
+      let leanName := (← resolveDeclName n).getD n.getId
+      -- The declaration again, as a value this time, with its name and its signature in scope for
+      -- its body so that it may call itself.
+      Elab.Command.liftTermElabM do
+        let ((d, td), st) : (FuncDecl × TypeDecls) × LgtmElabState ←
+          LgtmElabM.run' (report := true) do
+          let parameters ← (xs.zip ts).toList.mapM fun (x, t) => do
+            return (x.getId.toString, ← elabLgtmTy t)
+          let resultType ← elabLgtmTy rt
+          let self : FuncDecl :=
+            { docstring := docText, name := irName, parameters, resultType,
+              body := .unreachable resultType "the declaration being elaborated" }
+          let entry : LgtmEntry := { irName, leanName, decl := .fn self }
+          withReader (fun ctx => { ctx with extra := ctx.extra.addEntry entry }) do
+            -- The context the body is checked in, which is the one it is read in: the parameters
+            -- and every global's type, exactly what `FuncDecl.check` puts in front of it.
+            let globals := (← read).allGlobals
+            let ctx := parameters ++ Globals.types globals
+            let bodyExpr ← elabLgtmExpr ctx body
+            return ({ self with body := bodyExpr }, (← read).allTypeDecls)
+        addLgtmEntry { irName, leanName, decl := .fn d }
+        unless st.reported || !st.splices.isEmpty do
+          let gs := (← getLgtmScope).globals
+          match d.body.check td (d.parameters ++ Globals.types gs) d.resultType with
+          | .ok _ => pure ()
+          | .error m =>
+              -- The declaration does not check, so something in it does not: report on the
+              -- innermost part that does not, and on the body itself when the disagreement is
+              -- between the body and the type declared for it.
+              match firstIllTyped? td st.nodes with
+              | some (stx, m') => logErrorAt stx m'
+              | none => logErrorAt body m
+
+/-- `lgtm forward def f (x : int) : int` says that `f` is declared further down, so that something
+written before it may call it.
+
+What it declares is a signature and nothing else: no Lean declaration is generated and nothing is
+added to any `Program`, so the promise is kept by writing the `lgtm def` itself, and broken by not
+writing it — which `Program.check` is what catches, since a caller of something no program declares
+is a caller of nothing.
+
+This is the escape hatch for mutual recursion, which is the one thing checking a declaration where
+it is written cannot do on its own: `ping` calling `pong` and `pong` calling `ping` means one of
+them is written before the other is declared, and a table built as the declarations go by does not
+have it yet. -/
+syntax (docComment)? "lgtm " &"forward" "def " ident (&"as" str)? ("(" ident " : " lgtmTy ")")*
+  " : " lgtmTy : command
+
+elab_rules : command
+  | `($[$doc:docComment]? lgtm forward def $n:ident $[as $ir:str]?
+        $[($xs:ident : $ts:lgtmTy)]* : $rt:lgtmTy) => do
+      let irName := (ir.map (·.getString)).getD n.getId.toString
+      let docText := match doc with
+        | some d => d.getDocString.trimAscii.toString
+        | none => ""
+      Elab.Command.liftTermElabM do
+        let (d, _) ← LgtmElabM.run' (report := true) do
+          let parameters ← (xs.zip ts).toList.mapM fun (x, t) => do
+            return (x.getId.toString, ← elabLgtmTy t)
+          let resultType ← elabLgtmTy rt
+          return ({ docstring := docText, name := irName, parameters, resultType,
+                    body := .unreachable resultType "forward declaration" } : FuncDecl)
+        addLgtmEntry { irName, leanName := n.getId, decl := .fn d }
 
 /-- Fail at the first of `ns` that repeats a name an earlier one already used, saying so in terms of
 `what` — "field", "constructor".
@@ -729,14 +1199,14 @@ declaration failing either.  Failing here as well is what keeps the surface synt
 at all, and it is the better place to say it: the error lands on the name that repeats rather than
 on the program the declaration ends up in.
 
-`meta` because it runs while a macro expands rather than at run time, and `public` for the reason
-`lgtmVis` is: a `module` hides even the names its own macros expand to. -/
-public meta def throwOnRepeatedName (what : String) (ns : Array Lean.Ident) : Lean.MacroM Unit := do
+`meta` because it runs while the command elaborates rather than at run time. -/
+meta def throwOnRepeatedName (what : String) (ns : Array Ident) :
+    Elab.Command.CommandElabM Unit := do
   let mut seen : Array String := #[]
   for n in ns do
     let s := n.getId.toString
     if seen.contains s then
-      Lean.Macro.throwErrorAt n s!"duplicate {what} `{s}`: a declaration names each {what} once"
+      throwErrorAt n s!"duplicate {what} `{s}`: a declaration names each {what} once"
     seen := seen.push s
 
 /-- `lgtm struct Point { x : int, y : int }` declares `Point : StructDecl`.
@@ -754,17 +1224,29 @@ in, unlike a `FuncDecl`. -/
 syntax (docComment)? "lgtm " (lgtmVis)? &"struct" ident (&"as" str)? "{" (ident " : " lgtmTy),*
   "}" : command
 
-macro_rules
+elab_rules : command
   | `($[$doc:docComment]? lgtm $[$vis:lgtmVis]? struct $n:ident $[as $ir:str]?
         { $[$fs:ident : $ts:lgtmTy],* }) => do
       throwOnRepeatedName "field" fs
+      let irName := (ir.map (·.getString)).getD n.getId.toString
       let fields ← (fs.zip ts).mapM fun (f, t) =>
         `(($(Lean.quote f.getId.toString), [lgtm_ty| $t]))
-      let irName := ir.getD (Lean.quote n.getId.toString)
-      let val ← `({ name := $irName, fields := [$fields,*] : StructDecl })
-      match vis with
-      | some _ => `($[$doc:docComment]? private def $n : StructDecl := $val)
-      | none => `($[$doc:docComment]? def $n : StructDecl := $val)
+      let val ← `({ name := $(Lean.quote irName), fields := [$fields,*] : StructDecl })
+      Elab.Command.elabCommand <| ←
+        match vis with
+        | some _ => `($[$doc:docComment]? private def $n : StructDecl := $val)
+        | none => `($[$doc:docComment]? def $n : StructDecl := $val)
+      let leanName := (← resolveDeclName n).getD n.getId
+      -- The declaration's own name is in scope for its field types, so a struct may hold a value
+      -- of itself: `lgtm struct Tree { kids : list (struct Tree) }` names something declared.
+      Elab.Command.liftTermElabM do
+        let (d, _) ← LgtmElabM.run' (report := true)
+            (extra := LgtmScope.addEntry {}
+              { irName, leanName, decl := .st { name := irName, fields := [] } }) do
+          let fields ← (fs.zip ts).toList.mapM fun (f, t) => do
+            return (f.getId.toString, ← elabLgtmTy t)
+          return ({ name := irName, fields } : StructDecl)
+        addLgtmEntry { irName, leanName, decl := .st d }
 
 /-- One constructor of a `lgtm inductive`: its name, and the types of the data it carries.  A
 constructor that carries nothing takes no parentheses, which is what makes a plain enumeration look
@@ -788,19 +1270,34 @@ A doc comment documents the Lean declaration only.  An `InductiveDecl` has no do
 it in, as a `StructDecl` has not. -/
 syntax (docComment)? "lgtm " (lgtmVis)? "inductive " ident (&"as" str)? "{" lgtmCtor,* "}" : command
 
-macro_rules
+/-- The name and the types of one `lgtmCtor`, which is the one shape both passes over a `lgtm
+inductive` read it in. -/
+meta def lgtmCtorParts (c : TSyntax `lgtmCtor) :
+    Elab.Command.CommandElabM (Ident × Array (TSyntax `lgtmTy)) := do
+  match c with
+  | `(lgtmCtor| $cn:ident $[($ts:lgtmTy,*)]?) => return (cn, (ts.map (·.getElems)).getD #[])
+  | _ => throwErrorAt c "not a constructor of a `lgtm inductive`"
+
+elab_rules : command
   | `($[$doc:docComment]? lgtm $[$vis:lgtmVis]? inductive $n:ident $[as $ir:str]?
         { $cs:lgtmCtor,* }) => do
-      let ctors ← cs.getElems.mapM fun c =>
-        match c with
-        | `(lgtmCtor| $cn:ident $[($ts:lgtmTy,*)]?) => do
-            let tys ← ((ts.map (·.getElems)).getD #[]).mapM fun t => `([lgtm_ty| $t])
-            return (cn, ← `(($(Lean.quote cn.getId.toString), [$tys,*])))
-        | _ => Lean.Macro.throwUnsupported
-      throwOnRepeatedName "constructor" (ctors.map Prod.fst)
-      let cs := ctors.map Prod.snd
-      let irName := ir.getD (Lean.quote n.getId.toString)
-      let val ← `({ name := $irName, constructors := [$cs,*] : InductiveDecl })
-      match vis with
-      | some _ => `($[$doc:docComment]? private def $n : InductiveDecl := $val)
-      | none => `($[$doc:docComment]? def $n : InductiveDecl := $val)
+      let parts ← cs.getElems.mapM lgtmCtorParts
+      throwOnRepeatedName "constructor" (parts.map Prod.fst)
+      let irName := (ir.map (·.getString)).getD n.getId.toString
+      let ctors ← parts.mapM fun (cn, ts) => do
+        let tys ← ts.mapM fun t => `([lgtm_ty| $t])
+        `(($(Lean.quote cn.getId.toString), [$tys,*]))
+      let val ← `({ name := $(Lean.quote irName), constructors := [$ctors,*] : InductiveDecl })
+      Elab.Command.elabCommand <| ←
+        match vis with
+        | some _ => `($[$doc:docComment]? private def $n : InductiveDecl := $val)
+        | none => `($[$doc:docComment]? def $n : InductiveDecl := $val)
+      let leanName := (← resolveDeclName n).getD n.getId
+      Elab.Command.liftTermElabM do
+        let (d, _) ← LgtmElabM.run' (report := true)
+            (extra := LgtmScope.addEntry {}
+              { irName, leanName, decl := .ind { name := irName, constructors := [] } }) do
+          let constructors ← parts.toList.mapM fun (cn, ts) => do
+            return (cn.getId.toString, ← ts.toList.mapM elabLgtmTy)
+          return ({ name := irName, constructors } : InductiveDecl)
+        addLgtmEntry { irName, leanName, decl := .ind d }

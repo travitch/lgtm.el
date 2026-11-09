@@ -1102,7 +1102,11 @@ lgtm private def countdown(n : int) : int := countdown(n - 1)
 
 #guard !(countdown.check {} []).isOk
 
-/-- Mutual recursion needs nothing further: both are in the context both are checked against. -/
+/-- Mutual recursion needs nothing further *of the type checker*: both are in the context both are
+checked against.  What it does need is `lgtm forward`, since the command checking `ping` where it is
+written has only the declarations before it, and `pong` is not one of them yet. -/
+lgtm forward def pong(n : int) : int
+
 lgtm private def ping(n : int) : int := pong(n - 1)
 
 lgtm private def pong(n : int) : int := ping(n - 1)

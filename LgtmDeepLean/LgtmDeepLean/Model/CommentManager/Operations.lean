@@ -2,7 +2,6 @@ module
 
 public import LgtmDeepLean.Model.Basic
 meta import LgtmDeepLean.Lang.Syntax
-meta import LgtmDeepLean.Model.Basic
 
 @[expose] public section
 
