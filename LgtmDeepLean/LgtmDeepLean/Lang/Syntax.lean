@@ -262,6 +262,32 @@ private meta def addIrNameInfo (ref : Syntax) (irName : String) : LgtmElabM Unit
   if (← getEnv).contains entry.leanName then
     Elab.addConstInfo ref entry.leanName
 
+/-- Record that the source `ref` was written at the DSL type `t`, so that hovering over it shows the
+type.
+
+A `DelabTermInfo` rather than a `TermInfo`, because its `mkDocString?` is the one place in an info
+node arbitrary text can be put: what a `TermInfo` hover shows is the *Lean* type of a Lean
+expression, and the type of a DSL expression is a `Ty` rather than a Lean type at all — the value
+`toExpr t` has the Lean type `Ty` however interesting the `Ty` is.  `expr` is still filled in with
+the type as a value, since hover is not the only thing that reads an info node.
+
+Pushed for a declaration only, and so only where a type is known: a fragment is not checked, and
+nothing is recorded about an expression `Expression.inferE` could say nothing about. -/
+meta def addTyInfo (ref : Syntax) (t : Ty) : Elab.TermElabM Unit := do
+  -- The documentation of the form `ref` is written as, which is what the editor showed over it
+  -- before there was a type to show: the hover of an info node replaces the one the parser's
+  -- docstring would have given, so the type is put above it rather than in place of it.
+  let formDoc? ← findDocString? (← getEnv) ref.getKind
+  let text := s!"```lgtm\n{t.render}\n```" ++ (formDoc?.map (s!"\n***\n" ++ ·)).getD ""
+  Elab.pushInfoLeaf <| .ofDelabTermInfo {
+    elaborator := `LgtmDeepLean.tyInfo
+    stx := ref
+    lctx := .empty
+    expectedType? := none
+    expr := toExpr t
+    mkDocString? := some fun _ => return text
+  }
+
 /-- The type a binder is recorded at when what it binds has none: a `let` whose bound expression is
 ill typed, or a `match` on something that is not of the kind being taken apart.
 
@@ -748,7 +774,7 @@ Only the shape is decided here.  The three pieces come back as syntax for `elabL
 which is what keeps the recursion in one place. -/
 meta def optionMatchAlts
     (alts : Array (Ident × Array Ident × TSyntax `lgtmExpr)) :
-    LgtmElabM (Option (TSyntax `lgtmExpr × String × TSyntax `lgtmExpr)) := do
+    LgtmElabM (Option (TSyntax `lgtmExpr × Ident × TSyntax `lgtmExpr)) := do
   let isOptionCtor (c : Ident) : Bool := c.getId == `none || c.getId == `some
   let some (named, _, _) := alts.find? (fun (c, _, _) => isOptionCtor c) | return none
   let #[(nc, nxs, nbody), (sc, sxs, sbody)] := alts
@@ -763,7 +789,7 @@ meta def optionMatchAlts
     |
     throwErrorAt sc
         "`some` holds one value, so its alternative binds one name: `| some(x) => ...`"
-  return some (nbody, x.getId.toString, sbody)
+  return some (nbody, x, sbody)
 
 /-! ## Resolving names
 
@@ -845,6 +871,19 @@ private meta def checkCallArity (ref : Syntax) (f : Expression) (arity : Nat) : 
   unless d.parameters.length == arity do
     reportAt ref
       s!"'{name}' takes {d.parameters.length} argument(s), but {arity} are given here"
+
+/-- Record on the name that binds it the type a binder stands at.
+
+The expressions of a declaration are recorded by `addNodeTyInfo`, which has nothing to say about a
+binder: the name in `let x = ...` is a token of the form that binds it rather than an expression of
+its own, so the innermost expression written over it is the whole `let`, whose type is its body's.
+
+Silent for a fragment, which is not checked, and for a binder standing at `unknownTy`, which is what
+is recorded when what it binds has no type — there is nothing to show and the expression that had no
+type is itself reported. -/
+private meta def addBinderTyInfo (x : Ident) (t : Ty) : LgtmElabM Unit := do
+  if (← read).report && t != unknownTy then
+    addTyInfo x t
 
 mutual
 /-- Build the `Expression` that `stx` denotes, under the context `ctx`.
@@ -934,12 +973,16 @@ meta partial def elabLgtmExprCore (ctx : Context) (stx : TSyntax `lgtmExpr) :
       return .app f' as
   | `(lgtmExpr| fun $[($xs:ident : $ts:lgtmTy)]* => $b) => do
       let ps ← (xs.zip ts).toList.mapM fun (x, t) => do
-        return (x.getId.toString, ← elabLgtmTy t)
+        let t ← elabLgtmTy t
+        addBinderTyInfo x t
+        return (x.getId.toString, t)
       return .lam ps (← elabLgtmExpr (ps ++ ctx) b)
   | `(lgtmExpr| let $x:ident = $e in $b) => do
       let bnd ← elabLgtmExpr ctx e
-      let x := x.getId.toString
-      return .let_ x bnd (← elabLgtmExpr ((x, ← inferredTy ctx bnd) :: ctx) b)
+      let t ← inferredTy ctx bnd
+      addBinderTyInfo x t
+      let name := x.getId.toString
+      return .let_ name bnd (← elabLgtmExpr ((name, t) :: ctx) b)
   | `(lgtmExpr| if $c then { $thn } else { $els }) =>
       return .ite (← elabLgtmExpr ctx c) (← elabLgtmExpr ctx thn) (← elabLgtmExpr ctx els)
   | `(lgtmExpr| new $n:ident { $[$fs:ident = $es:lgtmExpr],* }) => do
@@ -1009,8 +1052,10 @@ meta partial def elabLgtmExprCore (ctx : Context) (stx : TSyntax `lgtmExpr) :
         let elemTy := match scrutTy with
           | .option t => t
           | _ => unknownTy
-        return .optionMatch scrut (← elabLgtmExpr ctx nbody) x
-          (← elabLgtmExpr ((x, elemTy) :: ctx) sbody)
+        addBinderTyInfo x elemTy
+        let name := x.getId.toString
+        return .optionMatch scrut (← elabLgtmExpr ctx nbody) name
+          (← elabLgtmExpr ((name, elemTy) :: ctx) sbody)
       -- An alternative binds at the types its constructor carries, which the declaration of the
       -- scrutinee's type is what gives.
       let inds := (← read).allInductives
@@ -1021,6 +1066,8 @@ meta partial def elabLgtmExprCore (ctx : Context) (stx : TSyntax `lgtmExpr) :
         let ns := xs.toList.map fun x => x.getId.toString
         let ts := (ctors.lookup c.getId.toString).getD []
         let binders := ns.zip (ts ++ List.replicate ns.length unknownTy)
+        for (x, (_, t)) in xs.toList.zip binders do
+          addBinderTyInfo x t
         return (c.getId.toString, ns, ← elabLgtmExpr (binders ++ ctx) b)
       return .indMatch scrut as
   | _ => throwErrorAt stx "not an expression of the `lgtm` language"
@@ -1041,6 +1088,22 @@ meta def firstIllTyped? (td : TypeDecls) (nodes : Array (Syntax × Expression ×
     match e.inferE td ctx with
     | .ok _ => none
     | .error m => some (stx, m)
+
+/-- Record the type of every expression of a declaration on the source it was written as, so that
+hovering over any part of a DSL body shows the type that part has.
+
+The same `nodes` and the same `inferE` the check reads, so the two cannot disagree about what a
+subexpression's type is: what is shown is what was checked.  A node whose type `inferE` cannot find
+is skipped — it is either the one being reported or a node under a splice — so a body with a mistake
+in it still shows types for the parts that have them.
+
+An expression nested in another is recorded over a range nested in the other's, and the hover of an
+innermost node is what the editor shows, so the nesting needs nothing said about it here. -/
+meta def addNodeTyInfo (td : TypeDecls) (nodes : Array (Syntax × Expression × Context)) :
+    Elab.TermElabM Unit :=
+  nodes.forM fun (stx, e, ctx) => do
+    if let .ok t := e.inferE td ctx then
+      addTyInfo stx t
 
 elab_rules : term
   | `([lgtm| $e]) => do
@@ -1105,6 +1168,34 @@ meta def resolveDeclName (n : Ident) : Elab.Command.CommandElabM (Option Name) :
   catch _ =>
     return none
 
+/-- A doc comment carrying `text`, for the generated Lean declaration to be documented with.
+
+Assembled rather than written, because what it documents the declaration with is partly the
+declaration itself: the signature of a `lgtm def` is written in the DSL, and what a mention of it
+hovers to is the Lean constant it generated — so the signature goes in the docstring of that
+constant, where it is the one place an editor will show it.
+
+The two characters that end a doc comment are spaced apart wherever they occur in `text`: the
+signature is source text and a splice in it is a Lean term, which may contain anything. -/
+meta def mkDocComment (text : String) : TSyntax ``Lean.Parser.Command.docComment :=
+  let text := text.replace "-/" "- /"
+  ⟨mkNode ``Lean.Parser.Command.docComment #[mkAtom "/--", mkAtom (text ++ "-/")]⟩
+
+/-- The documentation the Lean declaration of a `lgtm def` is given: its DSL signature as written,
+and the doc comment it was written with under it.
+
+The signature is the source text of the parameters and the result type rather than the `Ty`s they
+elaborate to, so what is shown is what the writer wrote — `~(t)` included, where a rendered `Ty`
+would show the splice's value or nothing at all.
+
+`***` is the separator Lean's own hovers use between a signature and the documentation under it. -/
+meta def declDocString (irName : String) (xs : Array Ident) (ts : Array (TSyntax `lgtmTy))
+    (rt : TSyntax `lgtmTy) (docText : String) : String :=
+  let src (stx : Syntax) : String := (stx.reprint.getD "").trimAscii.toString
+  let ps := (xs.zip ts).toList.map fun (x, t) => s!" ({x.getId} : {src t})"
+  let sig := s!"lgtm def {irName}{String.join ps} : {src rt}"
+  s!"```lgtm\n{sig}\n```" ++ if docText.isEmpty then "" else s!"\n***\n{docText}"
+
 elab_rules : command
   | `($[$doc:docComment]? lgtm $[$vis:lgtmVis]? def $n:ident $[as $ir:str]?
         $[($xs:ident : $ts:lgtmTy)]* : $rt:lgtmTy := $body:lgtmExpr) => do
@@ -1121,10 +1212,13 @@ elab_rules : command
                     parameters := [$ps,*]
                     body := [lgtm| $body]
                     resultType := [lgtm_ty| $rt] : FuncDecl })
+      -- The Lean declaration is documented with the DSL signature as well as with the doc comment,
+      -- since a mention of the IR name hovers to this constant.
+      let leanDoc := mkDocComment (declDocString irName xs ts rt docText)
       Elab.Command.elabCommand <| ←
         match vis with
-        | some _ => `($[$doc:docComment]? private def $n : FuncDecl := $val)
-        | none => `($[$doc:docComment]? def $n : FuncDecl := $val)
+        | some _ => `($leanDoc:docComment private def $n : FuncDecl := $val)
+        | none => `($leanDoc:docComment def $n : FuncDecl := $val)
       let leanName := (← resolveDeclName n).getD n.getId
       -- The declaration again, as a value this time, with its name and its signature in scope for
       -- its body so that it may call itself.
@@ -1146,6 +1240,7 @@ elab_rules : command
             let bodyExpr ← elabLgtmExpr ctx body
             return ({ self with body := bodyExpr }, (← read).allTypeDecls)
         addLgtmEntry { irName, leanName, decl := .fn d }
+        addNodeTyInfo td st.nodes
         unless st.reported || !st.splices.isEmpty do
           let gs := (← getLgtmScope).globals
           match d.body.check td (d.parameters ++ Globals.types gs) d.resultType with
