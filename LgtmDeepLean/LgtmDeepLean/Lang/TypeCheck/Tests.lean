@@ -403,6 +403,120 @@ private def ctx : Context :=
   !((Expression.listSortOn (.varRef "xs") (.lam [("x", .int)] (.stringLit "a"))).check types ctx
         (.list .string)).isOk
 
+-- A sort by a comparison passes its operand's type through as well, and the comparison's own type is
+-- fixed: two parameters at the element type, and a `bool` back.
+#guard
+  (Expression.listSortBy (.varRef "xs")
+          (.lam [("a", .int), ("b", .int)] (.le (.varRef "a") (.varRef "b")))).infer
+      types ctx ==
+    some (.list .int)
+
+#guard
+  (Expression.listSortBy (.lnil (.struct "Point"))
+          (.lam [("p", .struct "Point"), ("q", .struct "Point")]
+            (.lt (.structGet (.varRef "p") "x") (.structGet (.varRef "q") "x")))).infer
+      types ctx ==
+    some (.list (.struct "Point"))
+
+-- Two parameters, both at the element type: one is the arity a projection has, and either parameter
+-- at another type is the comparison of another list.
+#guard
+  (Expression.listSortBy (.varRef "xs") (.lam [("x", .int)] (.boolLit true))).infer types ctx ==
+    none
+
+#guard
+  (Expression.listSortBy (.varRef "xs")
+          (.lam [("a", .int), ("b", .int), ("c", .int)] (.boolLit true))).infer
+      types ctx ==
+    none
+
+#guard
+  (Expression.listSortBy (.varRef "xs")
+          (.lam [("a", .int), ("b", .string)] (.boolLit true))).infer
+      types ctx ==
+    none
+
+#guard
+  (Expression.listSortBy (.varRef "xs")
+          (.lam [("a", .string), ("b", .string)] (.boolLit true))).infer
+      types ctx ==
+    none
+
+#guard (Expression.listSortBy (.varRef "xs") (.varRef "n")).infer types ctx == none
+
+#guard
+  (Expression.listSortBy (.varRef "m")
+          (.lam [("a", .int), ("b", .int)] (.boolLit true))).infer
+      types ctx ==
+    none
+
+#guard
+  (Expression.listSortBy (.varRef "n")
+          (.lam [("a", .int), ("b", .int)] (.boolLit true))).infer
+      types ctx ==
+    none
+
+-- The result has to be a `bool`, which is where the two sorts part company: a comparison answering
+-- with an `int` is turned down where a projection returning one is exactly what `sortOn` wants.
+#guard
+  (Expression.listSortBy (.varRef "xs")
+          (.lam [("a", .int), ("b", .int)] (.plus (.varRef "a") (.varRef "b")))).infer
+      types ctx ==
+    none
+
+#guard
+  (Expression.listSortBy (.varRef "xs")
+          (.lam [("a", .int), ("b", .int)] (.optionSome (.boolLit true)))).infer
+      types ctx ==
+    none
+
+-- And nothing is asked of the element type, which is the other half of the same point: the elements
+-- go into the comparison and nowhere else, so a list of the types no ordering reaches can be sorted
+-- where `sortOn` could only order it by a key read off it.
+#guard
+  (Expression.listSortBy (.lnil (.fn [.int] .int))
+          (.lam [("g", .fn [.int] .int), ("h", .fn [.int] .int)] (.boolLit true))).infer
+      types ctx ==
+    some (.list (.fn [.int] .int))
+
+#guard
+  (Expression.listSortBy (.lnil (.hashmap .string .int))
+          (.lam [("m1", .hashmap .string .int), ("m2", .hashmap .string .int)]
+            (.boolLit true))).infer
+      types ctx ==
+    some (.list (.hashmap .string .int))
+
+#guard
+  (Expression.listSortBy (.lnil .bool)
+          (.lam [("a", .bool), ("b", .bool)] (.varRef "a"))).infer
+      types ctx ==
+    some (.list .bool)
+
+-- What it produces is a list like any other, so the list forms nest into each other here too — the
+-- two sorts among them.
+#guard
+  (Expression.listSortBy (.listSortOn (.varRef "xs") (.lam [("x", .int)] (.varRef "x")))
+          (.lam [("a", .int), ("b", .int)] (.le (.varRef "a") (.varRef "b")))).infer
+      types ctx ==
+    some (.list .int)
+
+#guard
+  (Expression.listSortBy (.hashmapToList (.varRef "m"))
+          (.lam [("p", .tuple [.string, .int]), ("q", .tuple [.string, .int])]
+            (.le (.tupleGet (.varRef "p") 1) (.tupleGet (.varRef "q") 1)))).infer
+      types ctx ==
+    some (.list (.tuple [.string, .int]))
+
+#guard
+  ((Expression.listSortBy (.varRef "xs")
+        (.lam [("a", .int), ("b", .int)] (.le (.varRef "a") (.varRef "b")))).check types ctx
+      (.list .int)).isOk
+
+#guard
+  !((Expression.listSortBy (.varRef "xs")
+          (.lam [("a", .int), ("b", .int)] (.le (.varRef "a") (.varRef "b")))).check types ctx
+        (.list .bool)).isOk
+
 -- A `lam` takes its parameter types from its annotation and its result type from its body.
 #guard (Expression.lam [("x", .int)] (.varRef "x")).infer types ctx == some (.fn [.int] .int)
 
@@ -2865,6 +2979,25 @@ private def message (r : Except String Unit) : String :=
         (.list .int)) ==
     "a sort key must be a type with an ordering, but this projection returns inductive Color, \
       which cannot be ordered"
+
+-- A comparison's arity is reported the way a projection's is, with the element type named twice:
+-- there is one parameter per element it is asked about.
+#guard
+  message
+      ((Expression.listSortBy (.varRef "xs") (.lam [("x", .int)] (.boolLit true))).check types ctx
+        (.list .int)) ==
+    "`sortBy` over a list of int needs a comparison taking two int parameters, \
+      but this one takes (int)"
+
+-- And its result is the condition that takes the place of `sortOn`'s on the key: the answer is the
+-- ordering here, so what is wrong with a comparison returning something else is what it returned.
+#guard
+  message
+      ((Expression.listSortBy (.varRef "xs")
+            (.lam [("a", .int), ("b", .int)] (.plus (.varRef "a") (.varRef "b")))).check types ctx
+        (.list .int)) ==
+    "a comparison must answer whether one element comes first, but this one returns int \
+      rather than a bool"
 
 #guard
   message ((Expression.hashmapGet (.varRef "n") (.stringLit "k")).check types ctx (.option .int)) ==

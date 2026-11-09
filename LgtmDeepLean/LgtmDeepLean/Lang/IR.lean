@@ -240,6 +240,19 @@ The first argument must be a list.
 The projection function in the second argument takes a single argument of the same type as the elements of the list.  The return
 type of the projection function must be comparable with the DSL less than operation. -/
   | listSortOn : Expression → Expression → Expression
+  /-- Sort the given list, applying the given function to compare two elements
+
+> sortBy lst (fun (item1 : ty) (item2 : ty) => item1 <= item2)
+
+The first argument must be a list.
+The second argument is a function that compares two elements and returns a boolean if
+the first is less than or equal to the second.
+
+`listSortOn`'s other half: a key is read off one element and the ordering is the key type's own, where
+a comparison is handed two and answers for the pair itself.  So this is the one sort that asks nothing
+of any type — `Ty.orderable` is what a key must satisfy and a `bool` is a `bool` — which is what lets
+a list of structs be sorted by something no ordering reaches. -/
+  | listSortBy : Expression → Expression → Expression
   | hashmapEmpty : Ty → Ty → Expression
   /-- Augment the given hashmap `m` with a binding of `k` to `v`
 

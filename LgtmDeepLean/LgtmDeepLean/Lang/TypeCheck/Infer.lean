@@ -581,6 +581,25 @@ public def Expression.inferE (td : TypeDecls) (ctx : Context) : Expression → E
       | .error m => .error m
     | .ok t => .error s!"`sortOn` needs a list, but its first operand has type {t}"
     | .error m => .error m
+  | .listSortBy l f =>
+    match l.inferE td ctx with
+    | .ok (.list t) =>
+      match f.inferE td ctx with
+      | .ok (.fn ps r) =>
+        if ps != [t, t] then
+          .error
+            s!"`sortBy` over a list of {t} needs a comparison taking two {t} parameters, \
+            but this one takes ({Ty.renderGroup ps})"
+        else
+          if r == .bool then .ok (.list t)
+          else
+            .error
+              s!"a comparison must answer whether one element comes first, but this one \
+              returns {r} rather than a bool"
+      | .ok ft => .error s!"`sortBy` needs a comparison, but its second operand has type {ft}"
+      | .error m => .error m
+    | .ok t => .error s!"`sortBy` needs a list, but its first operand has type {t}"
+    | .error m => .error m
   | .hashmapEmpty kt vt =>
     if Ty.comparable td kt then .ok (.hashmap kt vt) else .error (Ty.keyProblem kt)
   | .hashmapPut m k v =>
@@ -849,6 +868,28 @@ public theorem Expression.infer_listSortOn_eq_some {td : TypeDecls} {ctx : Conte
       ∃ t' r,
         l.infer td ctx = some (.list t') ∧
           f.infer td ctx = some (.fn [t'] r) ∧ Ty.orderable r = true ∧ t = .list t' := by
+  simp only [Expression.infer, Expression.inferE, Except.toOption_eq_some_iff]
+  split <;> simp_all <;> grind
+
+/-- A `listSortBy` is typeable when its first operand is a list and its second is a function of two
+parameters at that list's element type returning a `bool` — and then it has the list's own type.
+
+`listSortOn`'s rule with the key taken out of it.  Both pass the list's type through, because both
+hand back the elements they were given; what differs is where the ordering comes from, and that is
+the whole of the difference between the two rules.  A projection's result is a *key*, so it is
+existential here and `Ty.orderable` is asked of it; a comparison's result is the answer itself, so it
+is pinned to `.bool` and no type is asked anything.
+
+That makes this the one list form imposing no condition on a type.  A comparison over a list of
+functions or of hashmaps is as well typed as one over a list of `int`s — the elements go into the
+function and nowhere else, where a key goes into `Value.cmp?`. -/
+@[simp, grind =]
+public theorem Expression.infer_listSortBy_eq_some {td : TypeDecls} {ctx : Context}
+    {l f : Expression} {t : Ty} :
+    (Expression.listSortBy l f).infer td ctx = some t ↔
+      ∃ t',
+        l.infer td ctx = some (.list t') ∧
+          f.infer td ctx = some (.fn [t', t'] .bool) ∧ t = .list t' := by
   simp only [Expression.infer, Expression.inferE, Except.toOption_eq_some_iff]
   split <;> simp_all <;> grind
 

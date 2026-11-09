@@ -259,6 +259,35 @@ reach the bottom of. -/
       (∀ p ∈ vs.zip ks, Eval td (Env.extend ⟨cbindings, cglobals⟩ ps [p.1]) body p.2) →
       (∀ k ∈ ks, ∀ k' ∈ ks, (Value.cmp? k k').isSome) →
       Eval td env (.listSortOn e f) (.list ((Value.sortByKey (vs.zip ks)).map Prod.fst))
+  /-- A sort by a comparison evaluates the list and the comparison, calls the comparison on each pair
+of elements, and hands the elements back in the order those answers put them in.
+
+`cmp` is the function the whole rule turns on: `Value.sortWith` needs a `Value → Value → Bool` and a
+DSL function is not one, so the rule asks for a Lean function and then holds it to the DSL one —
+`Eval ... body (.bool (cmp a b))` at every pair of elements is what says the two agree.  A comparison
+that gets stuck on some pair of them is a sort with no such `cmp` to be had, and so no value, exactly
+as `EListSortOn` has none where a key cannot be compared.  Over pairs rather than over the elements
+singly, which is what sets this apart from every other rule that calls a function: a key is read off
+one element and a comparison is asked about two.
+
+Only pairs drawn from the list are spoken for, which is all `mergeSort` ever asks about; what `cmp`
+answers elsewhere decides nothing.
+
+The calls are `EListSortOn`'s otherwise, premise for premise: `ArgsHaveType` holding the two
+elements to the closure's parameters rather than entering a function they do not fit, and the body
+evaluated in the environment the closure captured.  There is no premise over the answers, where
+`EListSortOn` has one over the keys: a `bool` is the answer and there is nothing further to compare.
+
+`Value.sortWith` is stable, so elements the comparison does not separate come back in the order they
+were in. -/
+  |
+  EListSortBy (e f : Expression) :
+    Eval td env e (.list vs) →
+      Eval td env f (.closure cbindings cglobals ps body) →
+      (∀ a ∈ vs, ∀ b ∈ vs, ArgsHaveType td ps [a, b]) →
+      (∀ a ∈ vs,
+        ∀ b ∈ vs, Eval td (Env.extend ⟨cbindings, cglobals⟩ ps [a, b]) body (.bool (cmp a b))) →
+      Eval td env (.listSortBy e f) (.list (Value.sortWith cmp vs))
   /-- The empty hashmap, binding nothing.  Its two annotations go nowhere, for the reason `ENil` drops
 `lnil`'s and `ENone` drops `optionNone`'s: a value carries no type, so what they are for is
 `Expression.infer` alone. -/
@@ -545,6 +574,13 @@ public theorem Eval.hasType {td : TypeDecls} {env : Env} {ctx : Context} {e : Ex
     -- induction hypothesis for its *first* operand, which is where `EListMap` needs none.
     cases ihl henv hl with
     | list hall => exact .list (Value.hasType_sortByKey hall)
+  | EListSortBy e f _ _ _ _ ihl _
+    _ =>
+    obtain ⟨t', hl, -, rfl⟩ := Expression.infer_listSortBy_eq_some.mp ht
+    -- The comparison contributes nothing to the type either, and here there is not even a key for
+    -- it to have produced: its answers settled the order and are `bool`s whatever the elements were.
+    cases ihl henv hl with
+    | list hall => exact .list (Value.hasType_sortWith hall)
   | EHashmapPut m k v _ _ _ herase ihm ihk
     ihv =>
     obtain ⟨kt, vt, hm, hk, hv, -, rfl⟩ := Expression.infer_hashmapPut_eq_some.mp ht

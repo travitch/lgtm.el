@@ -1643,6 +1643,83 @@ example :
 example : [lgtm| var"sortOn"] = Expression.varRef "sortOn" :=
   rfl
 
+-- `sortBy` reads its two operands exactly as `sortOn` reads its two: the keyword is the whole of what
+-- tells the two sorts apart here, since what the function takes is readable only where it is written
+-- out and says nothing about a named `f`.
+example : [lgtm| sortBy xs f] = Expression.listSortBy (.varRef "xs") (.varRef "f") :=
+  rfl
+
+example :
+    [lgtm| sortBy p.items f] =
+      Expression.listSortBy (.structGet (.varRef "p") "items") (.varRef "f") :=
+  rfl
+
+example :
+    [lgtm| sortBy g(1)f] = Expression.listSortBy (.app (.varRef "g") [.intLit 1]) (.varRef "f") :=
+  rfl
+
+example :
+    [lgtm| sortBy[2, 1 : int]f] =
+      Expression.listSortBy (.lcons (.intLit 2) (.lcons (.intLit 1) (.lnil .int))) (.varRef "f") :=
+  rfl
+
+example : [lgtm| sortBy[ : int]f] = Expression.listSortBy (.lnil .int) (.varRef "f") :=
+  rfl
+
+-- The comparison takes two parameters where a projection takes one, and returns the answer rather
+-- than a key: a `fun` written out is where that becomes visible.
+example :
+    [lgtm| sortBy xs (fun (a : int) (b : int) => b <= a)] =
+      Expression.listSortBy (.varRef "xs")
+        (.lam [("a", .int), ("b", .int)] (.le (.varRef "b") (.varRef "a"))) :=
+  rfl
+
+example :
+    [lgtm| sortBy ps (fun (p : struct Point) (q : struct Point) => p.x < q.x)] =
+      Expression.listSortBy (.varRef "ps")
+        (.lam [("p", .struct "Point"), ("q", .struct "Point")]
+          (.lt (.structGet (.varRef "p") "x") (.structGet (.varRef "q") "x"))) :=
+  rfl
+
+-- What it produces is a list, so every form that reads one reads this, and it reads whatever produces
+-- one: the two sorts nest into each other as readily as either nests with a mapping.
+example :
+    [lgtm| reverse(sortBy xs f)] =
+      Expression.listReverse (.listSortBy (.varRef "xs") (.varRef "f")) :=
+  rfl
+
+example :
+    [lgtm| length(sortBy xs f)] = Expression.listLength (.listSortBy (.varRef "xs") (.varRef "f")) :=
+  rfl
+
+example :
+    [lgtm| x :: sortBy xs f] =
+      Expression.lcons (.varRef "x") (.listSortBy (.varRef "xs") (.varRef "f")) :=
+  rfl
+
+example :
+    [lgtm| map list(sortBy xs f)g] =
+      Expression.listMap (.listSortBy (.varRef "xs") (.varRef "f")) (.varRef "g") :=
+  rfl
+
+example :
+    [lgtm| sortBy(sortOn xs f)g] =
+      Expression.listSortBy (.listSortOn (.varRef "xs") (.varRef "f")) (.varRef "g") :=
+  rfl
+
+example :
+    [lgtm| sortOn(sortBy xs f)g] =
+      Expression.listSortOn (.listSortBy (.varRef "xs") (.varRef "f")) (.varRef "g") :=
+  rfl
+
+example :
+    [lgtm| sortBy(toList m)f] = Expression.listSortBy (.hashmapToList (.varRef "m")) (.varRef "f") :=
+  rfl
+
+-- `sortBy` is a keyword too, and takes the same escape hatch.
+example : [lgtm| var"sortBy"] = Expression.varRef "sortBy" :=
+  rfl
+
 /-- The empty map from `string` to `int`: the shortest declaration that returns one, and the one
 place the annotations are all there is to go on. -/
 lgtm def noneBound as"none-bound" : hashmap string int := hashmap(string, int)

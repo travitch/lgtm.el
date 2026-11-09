@@ -51,7 +51,8 @@ the IR name `Foo.bar` when an `lgtm` command has declared that IR name, and othe
 so a module calling another's declarations no longer needs to import it twice.
 
 The keywords inside a DSL term — `bool`, `int`, `string`, `list`, `option`, `hashmap`, `tuple`,
-`true`, `false`, `some`, `none`, `reverse`, `length`, `map`, `sortOn`, `toList`, `unreachable`, `var`,
+`true`, `false`, `some`, `none`, `reverse`, `length`, `map`, `sortOn`, `sortBy`, `toList`,
+`unreachable`, `var`,
 `struct`, `new`, and
 `as` — are declared
 with `&`, Lean's
@@ -396,12 +397,14 @@ are parse errors rather than one of the two readings each could have had.
 A list literal carries its element type, because `lnil` does: `[1, 2 : int]` is
 `.lcons (.intLit 1) (.lcons (.intLit 2) (.lnil .int))`, and the empty list is `[: int]`.
 
-The four list operations are `reverse xs`, `length xs`, `map list xs f` and `sortOn xs f`, all prefix
-keywords binding as tightly as application.  They differ in what comes back out: a reversal and a
-sort are lists of the same type, a mapping is a list of whatever its function returns, and a length
-is an `int` whatever the elements were.  A sort takes a function as a mapping does and still
-produces a list of the type it was given, because what the function returns is the key each element
-is ordered by rather than what it becomes.  `map` is written with a tag because it is also a
+The five list operations are `reverse xs`, `length xs`, `map list xs f`, `sortOn xs f` and
+`sortBy xs f`, all prefix
+keywords binding as tightly as application.  They differ in what comes back out: a reversal and the
+two sorts are lists of the same type, a mapping is a list of whatever its function returns, and a
+length is an `int` whatever the elements were.  A sort takes a function as a mapping does and still
+produces a list of the type it was given, because what the function returns is how the elements are
+ordered rather than what they become: a key apiece under `sortOn`, and the comparison itself under
+`sortBy`.  `map` is written with a tag because it is also a
 hashmap's operation — see the note on the two forms below.
 
 The two option values are written `some(1)` and `none : int`, and a `match` whose alternatives are
@@ -612,6 +615,27 @@ parentheses while a projection written out does: `sortOn xs (fun (x : int) => 0 
 `sortOn` is a keyword, so it is not available as a variable name inside a DSL term; `var "sortOn"`
 is the escape hatch, the same one `reverse` and `map` leave. -/
 syntax :max &"sortOn" lgtmExpr:max lgtmExpr:max : lgtmExpr
+
+/-- `sortBy xs f` is `xs` with its elements in the order `f`'s answers put them in: `f` is applied to
+two elements and says whether the first comes first.
+
+The comparison takes two parameters at the element type and returns a `bool`, so it is of type
+`(int, int) -> bool` over a `list int` — and what comes back is a `list int`, as `sortOn`'s does.
+Being a `bool` is all that is asked of its result, which is the type checker's business rather than
+the parser's, and it is the whole of what separates the two sorts: a key must be of a type with an
+ordering, where a comparison *is* the ordering and so needs none.  That is what lets this sort a list
+of anything at all, including the types `sortOn` could order by nothing.
+
+Elements the comparison does not separate keep the order they were in, which is what `Eval` says of
+the form rather than anything here.
+
+The two operands bind as tightly as `sortOn`'s, so `sortBy xs f` and `sortBy p.items g(1)` need no
+parentheses while a comparison written out does:
+`sortBy xs (fun (a : int) (b : int) => b <= a)`.
+
+`sortBy` is a keyword, so it is not available as a variable name inside a DSL term; `var "sortBy"`
+is the escape hatch, the same one `sortOn` and `map` leave. -/
+syntax :max &"sortBy" lgtmExpr:max lgtmExpr:max : lgtmExpr
 
 /-- `toList m` is the bindings of `m` as a list, one `tuple(k, v)` per binding, in the order the map
 carries them.
@@ -1020,6 +1044,8 @@ meta partial def elabLgtmExprCore (ctx : Context) (stx : TSyntax `lgtmExpr) :
   | `(lgtmExpr| map list $l $f) => return .listMap (← elabLgtmExpr ctx l) (← elabLgtmExpr ctx f)
   | `(lgtmExpr| sortOn $l $f) =>
       return .listSortOn (← elabLgtmExpr ctx l) (← elabLgtmExpr ctx f)
+  | `(lgtmExpr| sortBy $l $f) =>
+      return .listSortBy (← elabLgtmExpr ctx l) (← elabLgtmExpr ctx f)
   | `(lgtmExpr| map hashmap $m $f) =>
       return .hashmapMap (← elabLgtmExpr ctx m) (← elabLgtmExpr ctx f)
   | `(lgtmExpr| toList $m) => return .hashmapToList (← elabLgtmExpr ctx m)

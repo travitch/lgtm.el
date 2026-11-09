@@ -496,6 +496,184 @@ private theorem sortDesc.length_of_eval {vs vs' : List Value}
           subst hlx
           simp [hlen]
 
+/-! A sort by a comparison is a call per *pair* of elements, which is the one thing no other rule
+does: a projection is handed one element and a comparison two.  What the calls produce is the answer
+itself rather than a key, so there is no premise over them — a `bool` is a `bool` — and the list that
+comes back holds the values that went in, in the order those answers put them.
+
+`Value.sortWith` needs a `Value → Value → Bool` and a DSL function is not one, so the rule asks for
+a Lean function and holds it to the DSL one at every pair of elements.  That is what the examples
+below supply as `cmp`, and `leValues` is what it comes to wherever the comparison written out is the
+DSL's own `<=`.
+
+What can go wrong is what a mapping's two operands can, plus one thing of its own: a comparison that
+answers with something other than a `bool` is one no `cmp` agrees with, so there is no such function
+to be had and the sort has no value — which is `sortOn`'s incomparable key in the place the two forms
+differ. -/
+
+/-- `x <= y` as a function on values: what a DSL comparison written `a <= b` answers, read as the
+`Bool` `Value.sortWith` takes.
+
+The same comparison `Value.sortByKey` is defined over, which is no accident: `sortBy` with this is
+`sortOn` by the elements themselves, and the point of the form is the comparisons that are *not*
+this one. -/
+private def leValues (x y : Value) : Bool :=
+  Value.le? x y == some true
+
+-- An empty list sorts to an empty list: there is no pair for the comparison to be asked about, so
+-- both premises over the elements are vacuous and the function is never entered.
+example : Eval {} ∅ [lgtm| sortBy [ : int] (fun (a : int) (b : int) => a <= b)] (.list []) := by
+  have h : Eval {} ∅ [lgtm| sortBy [ : int] (fun (a : int) (b : int) => a <= b)]
+      (.list (Value.sortWith leValues [])) :=
+    .EListSortBy (cmp := leValues) _ _ (.ENil _) (.ELam _ _) (by simp) (by simp)
+  simpa [Value.sortWith] using h
+
+-- A comparison that is the elements' own ordering puts them in it, so a list out of order comes back
+-- in order.
+example : Eval {} ∅ [lgtm| sortBy [2, 1 : int] (fun (a : int) (b : int) => a <= b)]
+    (.list [.int 1, .int 2]) := by
+  have h : Eval {} ∅ [lgtm| sortBy [2, 1 : int] (fun (a : int) (b : int) => a <= b)]
+      (.list (Value.sortWith leValues [.int 2, .int 1])) := by
+    refine .EListSortBy (cmp := leValues) _ _
+      (.ECons _ _ (.EIntLit 2) (.ECons _ _ (.EIntLit 1) (.ENil _))) (.ELam _ _) ?_ ?_
+    · rintro a ha b hb
+      simp at ha hb
+      rcases ha with rfl | rfl <;> rcases hb with rfl | rfl <;>
+        exact .cons "a" (by constructor) (.cons "b" (by constructor) .nil)
+    · rintro a ha b hb
+      simp at ha hb
+      rcases ha with rfl | rfl <;> rcases hb with rfl | rfl <;>
+        exact .ELe _ _ (.EVarRef "a" rfl) (.EVarRef "b" rfl) (by simp [leValues])
+  simpa [Value.sortWith, leValues] using h
+
+-- A comparison read the other way round puts the list the other way round, and it is the comparison
+-- that was turned around rather than a key: the two operands are the pair it was asked about.
+example : Eval {} ∅ [lgtm| sortBy [1, 2 : int] (fun (a : int) (b : int) => b <= a)]
+    (.list [.int 2, .int 1]) := by
+  have h : Eval {} ∅ [lgtm| sortBy [1, 2 : int] (fun (a : int) (b : int) => b <= a)]
+      (.list (Value.sortWith (fun x y => leValues y x) [.int 1, .int 2])) := by
+    refine .EListSortBy (cmp := fun x y => leValues y x) _ _
+      (.ECons _ _ (.EIntLit 1) (.ECons _ _ (.EIntLit 2) (.ENil _))) (.ELam _ _) ?_ ?_
+    · rintro a ha b hb
+      simp at ha hb
+      rcases ha with rfl | rfl <;> rcases hb with rfl | rfl <;>
+        exact .cons "a" (by constructor) (.cons "b" (by constructor) .nil)
+    · rintro a ha b hb
+      simp at ha hb
+      rcases ha with rfl | rfl <;> rcases hb with rfl | rfl <;>
+        exact .ELe _ _ (.EVarRef "b" rfl) (.EVarRef "a" rfl) (by simp [leValues])
+  simpa [Value.sortWith, leValues] using h
+
+-- A comparison that answers the same for every pair leaves the list alone, which is what being
+-- stable comes to: a pair it does not separate keeps the order it came in.
+example : Eval {} ∅ [lgtm| sortBy [2, 1 : int] (fun (a : int) (b : int) => true)]
+    (.list [.int 2, .int 1]) := by
+  have h : Eval {} ∅ [lgtm| sortBy [2, 1 : int] (fun (a : int) (b : int) => true)]
+      (.list (Value.sortWith (fun _ _ => true) [.int 2, .int 1])) := by
+    refine .EListSortBy (cmp := fun _ _ => true) _ _
+      (.ECons _ _ (.EIntLit 2) (.ECons _ _ (.EIntLit 1) (.ENil _))) (.ELam _ _) ?_ ?_
+    · rintro a ha b hb
+      simp at ha hb
+      rcases ha with rfl | rfl <;> rcases hb with rfl | rfl <;>
+        exact .cons "a" (by constructor) (.cons "b" (by constructor) .nil)
+    · rintro a ha b hb
+      simp at ha hb
+      rcases ha with rfl | rfl <;> rcases hb with rfl | rfl <;> exact .EBoolLit true
+  simpa [Value.sortWith] using h
+
+-- A second operand that is not a function leaves this stuck, exactly as it leaves a mapping and the
+-- other sort stuck.
+example (v : Value) : ¬Eval {} ∅ [lgtm| sortBy[ : int]1] v := by
+  intro h
+  cases h with
+  | EListSortBy _ _ _ hf _ _ => cases hf
+
+-- A comparison that does not answer with a `bool` is the thing that can go wrong here and nowhere
+-- else: `cmp` is a `Bool`-valued function, so there is none that agrees with a body evaluating to an
+-- `int`, and the sort has no value at all — which is exactly what the comparison's result type being
+-- held to `bool` rules out.
+example (v : Value) : ¬Eval {} ∅ [lgtm| sortBy [1 : int] (fun (a : int) (b : int) => 0)] v := by
+  intro h
+  cases h with
+  | EListSortBy _ _ hl hf _ hev =>
+      cases hl with
+      | ECons _ _ h₁ h₂ =>
+          cases h₁ with
+          | EIntLit _ =>
+          cases h₂ with
+          | ENil _ =>
+              cases hf with
+              | ELam _ _ => cases hev (.int 1) (by simp) (.int 1) (by simp)
+
+/-- `xs` largest first, by a comparison rather than by a key: the same reordering `sortDesc` performs,
+and the place the two forms can be read against each other. -/
+lgtm private def sortDescBy as "sort-desc-by" (xs : list int) : list int :=
+  sortBy xs (fun (a : int) (b : int) => b <= a)
+
+#guard (sortDescBy.check {} []).isOk
+
+-- The closure the comparison evaluates to captures the call's environment, the way a projection's
+-- does, so the answers are computed over the two parameters of the `fun` rather than over `xs`.
+example : FuncDecl.Apply sortDescBy {} [] [.list [.int 1, .int 2]] (.list [.int 2, .int 1]) := by
+  have h :
+    FuncDecl.Apply sortDescBy {} [] [.list [.int 1, .int 2]]
+      (.list (Value.sortWith (fun x y => leValues y x) [.int 1, .int 2])) := by
+    refine .EApply _ (.cons "xs" (hasType_intList (is := [1, 2])) .nil) ?_
+    refine .EListSortBy (cmp := fun x y => leValues y x) _ _ (.EVarRef "xs" rfl) (.ELam _ _) ?_ ?_
+    · rintro a ha b hb
+      simp at ha hb
+      rcases ha with rfl | rfl <;> rcases hb with rfl | rfl <;>
+        exact .cons "a" (by constructor) (.cons "b" (by constructor) .nil)
+    · rintro a ha b hb
+      simp at ha hb
+      rcases ha with rfl | rfl <;> rcases hb with rfl | rfl <;>
+        exact .ELe _ _ (.EVarRef "b" rfl) (.EVarRef "a" rfl) (by simp [leValues])
+  simpa [Value.sortWith, leValues] using h
+
+-- Soundness covers the form, and what comes back is the element type: the comparison's result is a
+-- `bool` and appears in no type the sort has.
+example (vs : List Value) (v : Value) (h : FuncDecl.Apply sortDescBy {} [] [.list vs] v) :
+    v.HasType {} (.list .int) :=
+  h.hasType Globals.wellTyped_nil (by simp [sortDescBy, List.lookup])
+
+-- So declaring the comparison's own type as the result type does not check, where the same body
+-- under `map list` would need exactly that.
+#guard
+  !(({ sortDescBy with resultType := [lgtm_ty| list bool] } : FuncDecl).check {} []).isOk
+
+-- Only a list can be sorted, and only by a comparison of two of its elements answering with a
+-- `bool`: a body comparing by one parameter is turned down, and so is one answering with an `int`.
+example : ¬({ sortDescBy with body := [lgtm| sortBy n f] } : FuncDecl).WellTyped {} [] := by
+  simp [sortDescBy, List.lookup]
+
+example :
+    ¬({ sortDescBy with body := [lgtm| sortBy xs (fun (a : int) => true)] } : FuncDecl).WellTyped {}
+        [] := by
+  simp [sortDescBy, List.lookup]
+
+example :
+    ¬({ sortDescBy with body := [lgtm| sortBy xs (fun (a : int) (b : int) => a + b)] } :
+        FuncDecl).WellTyped {} [] := by
+  simp [sortDescBy, List.lookup]
+
+/-- What a sort by a comparison means, for every list rather than for one: the list it produces is as
+long as the list it was given.
+
+`sortDesc.length_of_eval` with `Value.length_sortWith` in place of `Value.length_sortByKey` — the
+same fact about the same `mergeSort`, reached without the keys the other sort pairs the elements
+with. -/
+private theorem sortDescBy.length_of_eval {vs vs' : List Value}
+    (h : Eval {} ⟨[("xs", .list vs)], []⟩
+      [lgtm| sortBy xs (fun (a : int) (b : int) => b <= a)] (.list vs')) :
+    vs.length = vs'.length := by
+  cases h with
+  | EListSortBy _ _ hl _ _ _ =>
+      cases hl with
+      | EVarRef _ hlx =>
+          simp [Env.lookup, List.lookup] at hlx
+          subst hlx
+          simp
+
 /-- The body of the inner lambda of `adderExpr`, `x + n`, which needs an `n` from outside itself. -/
 private def adderInner : Expression :=
   [lgtm| x + n]

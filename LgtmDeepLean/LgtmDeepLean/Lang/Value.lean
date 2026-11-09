@@ -629,6 +629,38 @@ and with a mapping over a list: one element out per element in. -/
     (Value.sortByKey vks).length = vks.length :=
   Value.sortByKey_perm.length_eq
 
+/-! ## Sorting with a comparison
+
+What `Expression.listSortBy` puts a list in order with: its elements, ordered by a comparison given
+as a function on two of them.
+
+The same `List.mergeSort` and the same stability, so the three facts below are the three above; what
+is gone is the pairing, since there are no keys to carry alongside the elements.  The comparison is
+the one thing it takes rather than computes: `Value.le?` is what a key-sort compares with, and here
+`Eval` supplies a `Value → Value → Bool` that its premises hold to what the DSL function answered on
+each pair.  So nothing here is partial — a comparison that could not be evaluated is a sort with no
+such function at all, which is what leaves the form stuck. -/
+
+/-- The elements of `vs` ordered by `cmp`, with elements it does not separate left in the order they
+came in. -/
+@[expose] public def Value.sortWith (cmp : Value → Value → Bool) (vs : List Value) : List Value :=
+  vs.mergeSort cmp
+
+/-- Sorting rearranges and nothing else, exactly as `Value.sortByKey_perm` says of the other sort. -/
+public theorem Value.sortWith_perm {cmp : Value → Value → Bool} {vs : List Value} :
+    (Value.sortWith cmp vs).Perm vs :=
+  List.mergeSort_perm vs _
+
+/-- So an element of a sorted list is an element of the list it came from, and conversely. -/
+@[simp] public theorem Value.mem_sortWith {v : Value} {cmp : Value → Value → Bool}
+    {vs : List Value} : v ∈ Value.sortWith cmp vs ↔ v ∈ vs :=
+  Value.sortWith_perm.mem_iff
+
+/-- And it is as long as the list it came from. -/
+@[simp] public theorem Value.length_sortWith {cmp : Value → Value → Bool} {vs : List Value} :
+    (Value.sortWith cmp vs).length = vs.length :=
+  Value.sortWith_perm.length_eq
+
 /-! ## Reading and rebinding a hashmap
 
 The two walks along a hashmap's bindings, and what each of them finds.  Both are `Value.beq?` run
@@ -1009,6 +1041,13 @@ public theorem Value.hasType_sortByKey {td : TypeDecls} {vs ks : List Value} {t 
   intro v hv
   obtain ⟨p, hp, rfl⟩ := List.mem_map.mp hv
   exact hvs p.1 (List.of_mem_zip (Value.mem_sortByKey.mp hp)).1
+
+/-- The same of a sort by a comparison, and shorter still: there are no keys paired with the elements
+to be dropped on the way out, so every element of the result is already one of the list's own. -/
+public theorem Value.hasType_sortWith {td : TypeDecls} {cmp : Value → Value → Bool}
+    {vs : List Value} {t : Ty} (hvs : ∀ v ∈ vs, Value.HasType td v t) :
+    ∀ v ∈ Value.sortWith cmp vs, Value.HasType td v t :=
+  fun v hv => hvs v (Value.mem_sortWith.mp hv)
 
 /-- What it takes for a hashmap value to have a type: the type is a hashmap type, and the two halves
 of it are what the keys and the values are held to.
