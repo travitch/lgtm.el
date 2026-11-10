@@ -597,6 +597,30 @@ escape hatch, the same one `reverse` and `toList` leave.  `list` is one too, now
 mapping, and `var "list"` is the same escape hatch for it. -/
 syntax :max &"map" &"hashmap" lgtmExpr:max lgtmExpr:max : lgtmExpr
 
+/-- `flatMap xs f` is `f` applied to each element of `xs` and the lists that came back run together:
+one list per element, concatenated in the order the elements were in.
+
+The function takes one parameter as a list's mapping's does, but it returns a *list*, so it is of
+type `(int) -> list string` over a `list int` — and what comes back is a `list string` rather than a
+list of lists.  That it must return a list at all is the type checker's business rather than the
+parser's, and it is the whole of what separates this from `map list`: the same function under the
+other keyword would give a `list (list string)`.
+
+So this is the one list form whose result is not as long as its operand.  A call returning `[: int]`
+drops the element it was given and one returning several puts several in its place, which is why
+there is a form for it rather than a `map list` with something after it.
+
+It is a keyword of its own rather than a third `map` tag, since the tags are what tell apart the two
+things the IR maps *over* — a list and a hashmap — where this is the other thing to do with the
+results of mapping over a list.
+
+The two operands bind as tightly as `map list`'s, so `flatMap xs f` and `flatMap p.items g(1)` need
+no parentheses while a function written out does: `flatMap xs (fun (x : int) => [x, x : int])`.
+
+`flatMap` is a keyword, so it is not available as a variable name inside a DSL term; `var "flatMap"`
+is the escape hatch, the same one `map` and `sortOn` leave. -/
+syntax :max &"flatMap" lgtmExpr:max lgtmExpr:max : lgtmExpr
+
 /-- `sortOn xs f` is `xs` with its elements in the order `f`'s results put them in: `f` is applied to
 each element to get the key that element is ordered by.
 
@@ -1042,6 +1066,8 @@ meta partial def elabLgtmExprCore (ctx : Context) (stx : TSyntax `lgtmExpr) :
   | `(lgtmExpr| hashmap($k, $v)) => return .hashmapEmpty (← elabLgtmTy k) (← elabLgtmTy v)
   | `(lgtmExpr| $m[$k]) => return .hashmapGet (← elabLgtmExpr ctx m) (← elabLgtmExpr ctx k)
   | `(lgtmExpr| map list $l $f) => return .listMap (← elabLgtmExpr ctx l) (← elabLgtmExpr ctx f)
+  | `(lgtmExpr| flatMap $l $f) =>
+      return .listFlatMap (← elabLgtmExpr ctx l) (← elabLgtmExpr ctx f)
   | `(lgtmExpr| sortOn $l $f) =>
       return .listSortOn (← elabLgtmExpr ctx l) (← elabLgtmExpr ctx f)
   | `(lgtmExpr| sortBy $l $f) =>

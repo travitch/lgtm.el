@@ -217,6 +217,33 @@ the same length as the input. -/
       (∀ p ∈ vs.zip vs', ArgsHaveType td ps [p.1]) →
       (∀ p ∈ vs.zip vs', Eval td (Env.extend ⟨cbindings, cglobals⟩ ps [p.1]) body p.2) →
       Eval td env (.listMap e f) (.list vs')
+  /-- A flat mapping over a list is `EListMap`'s call per element with the results run together: each
+call produces a list, and what comes back is those lists one after another.
+
+`vss` is a `List (List Value)` where a mapping's `vs'` is a `List Value`, and that is the whole of
+the difference between the two rules.  The lengths that agree are still the operand's and the calls'
+— one list produced per element — so the premises line up premise for premise; `List.flatten` is
+what then makes the result a list of elements again, and it is a function rather than a premise for
+the reason `Value.sortByKey` is one: the order the pieces go in is settled by the list that was
+given, so there is nothing for a premise to pin down.
+
+The length is what no premise mentions, unlike `EListMap`, whose first premise over the elements is
+exactly the guarantee that the result is as long as its operand.  A call returning the empty list
+drops its element and one returning several puts several in its place, which is what a mapping
+cannot do and what this form is for.
+
+The calls are `EListMap`'s otherwise: the element is the one argument, `ArgsHaveType` holds it to
+the closure's parameter, and the body is evaluated in the environment the closure captured.  What
+each one must produce is a `.list`, which is the one thing asked of a call's result here and is what
+typing guarantees. -/
+  |
+  EListFlatMap (e f : Expression) :
+    Eval td env e (.list vs) →
+      Eval td env f (.closure cbindings cglobals ps body) →
+      vs.length = vss.length →
+      (∀ p ∈ vs.zip vss, ArgsHaveType td ps [p.1]) →
+      (∀ p ∈ vs.zip vss, Eval td (Env.extend ⟨cbindings, cglobals⟩ ps [p.1]) body (.list p.2)) →
+      Eval td env (.listFlatMap e f) (.list vss.flatten)
   /-- A length evaluates the list and hands back how many elements it has, as an `int`.
 
 `List.length` is a `Nat` and `Value.int` holds an `Int`, so the count is cast on the way out: the IR
@@ -566,6 +593,19 @@ public theorem Eval.hasType {td : TypeDecls} {env : Env} {ctx : Context} {e : Ex
       .list
         (Value.hasType_listMap hlen fun p hp =>
           ihev p hp (Env.hasType_extend (hat p hp) hcenv) (by simpa using hbodyty))
+  | @EListFlatMap _ _ _ _ _ _ vss e f _ _ hlen hat _ _ ihf
+    ihev =>
+    obtain ⟨t', r, -, hf, rfl⟩ := Expression.infer_listFlatMap_eq_some.mp ht
+    -- `EListMap`'s case with one more step: the closure's result type is a *list* type here, so what
+    -- each call produced is a list of the elements the flattening hands back, and taking that list's
+    -- own `Value.HasType` apart is what gets down to them.  The list the form was given contributes
+    -- nothing, exactly as it contributes nothing there.
+    obtain ⟨cctx, r', hcenv, hbodyty, heqf⟩ := Value.hasType_closure_iff.mp (ihf henv hf)
+    injection heqf with _ hr
+    subst hr
+    refine .list (Value.hasType_listFlatMap hlen fun p hp => ?_)
+    cases ihev p hp (Env.hasType_extend (hat p hp) hcenv) (by simpa using hbodyty) with
+    | list hall => exact hall
   | EListSortOn e f _ _ _ _ _ _ ihl _
     _ =>
     obtain ⟨t', r, hl, -, -, rfl⟩ := Expression.infer_listSortOn_eq_some.mp ht

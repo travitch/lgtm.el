@@ -1027,6 +1027,36 @@ public theorem Value.hasType_listMap {td : TypeDecls} {vs vs' : List Value} {t :
           · exact hvs (w, v) (by simp)
           · exact ih (by simpa using hlen) (fun p hp => hvs p (by simp [hp])) v hv'
 
+/-- The elements a flat mapping over a list produces are all of the element type of the lists its
+function returns: every element of the result came out of one of those lists.
+
+`Value.hasType_listMap` one layer in, and the one place in the development where a list of lists is
+what a premise speaks for.  A mapping's calls each produced an element, so the pairs are an element
+beside an element; here each produced a *list*, so a pair is an element beside the list it became and
+the premise has to reach into that list to say anything about what ends up in the result.
+
+The lengths still agree — one list produced per element — but that says nothing about how long the
+result is, which is the whole of what flattening costs: a mapping's result is as long as its
+operand, where this one's length is the lengths of the calls' lists added up and no premise here
+mentions it. -/
+public theorem Value.hasType_listFlatMap {td : TypeDecls} {vs : List Value}
+    {vss : List (List Value)} {t : Ty} (hlen : vs.length = vss.length)
+    (hvs : ∀ p ∈ vs.zip vss, ∀ v ∈ p.2, Value.HasType td v t) :
+    ∀ v ∈ vss.flatten, Value.HasType td v t := by
+  induction vs generalizing vss with
+  | nil =>
+      obtain rfl : vss = [] := by simpa using hlen.symm
+      simp
+  | cons w vs ih =>
+      cases vss with
+      | nil => simp
+      | cons ws vss =>
+          intro v hv
+          rw [List.flatten_cons] at hv
+          rcases List.mem_append.mp hv with hv' | hv'
+          · exact hvs (w, ws) (by simp) v hv'
+          · exact ih (by simpa using hlen) (fun p hp => hvs p (by simp [hp])) v hv'
+
 /-- The elements a sort produces are of the type the elements it was given were: every element of
 the result is one of the list's own, carried over into another order.
 

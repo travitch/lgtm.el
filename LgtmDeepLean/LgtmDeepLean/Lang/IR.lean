@@ -229,6 +229,11 @@ This is a special form (instead of `indMatch`) because options get compiled away
 For a list `l` of type `list a`, and a function `f` of type `(a) -> b`, `map l f` produces a `list b`.
 -/
   | listMap : Expression → Expression → Expression
+  /-- Map a function over lists to produce lists to concatenate.
+
+  > flatMap (l : list a) (f : a → list b) : list b
+  -/
+  | listFlatMap : Expression → Expression → Expression
   /-- Calculate the length of the given list. -/
   | listLength : Expression → Expression
   | listReverse : Expression → Expression

@@ -552,6 +552,26 @@ public def Expression.inferE (td : TypeDecls) (ctx : Context) : Expression → E
       | .error m => .error m
     | .ok t => .error s!"`map list` needs a list, but its first operand has type {t}"
     | .error m => .error m
+  | .listFlatMap l f =>
+    match l.inferE td ctx with
+    | .ok (.list t) =>
+      match f.inferE td ctx with
+      | .ok (.fn ps r) =>
+        if ps != [t] then
+          .error
+            s!"`flatMap` over a list of {t} needs a function of one {t} parameter, \
+            but this one takes ({Ty.renderGroup ps})"
+        else
+          match r with
+          | .list r' => .ok (.list r')
+          | _ =>
+            .error
+              s!"`flatMap` concatenates what its function returns, so that must be a list, \
+              but this one returns {r}"
+      | .ok ft => .error s!"`flatMap` needs a function, but its second operand has type {ft}"
+      | .error m => .error m
+    | .ok t => .error s!"`flatMap` needs a list, but its first operand has type {t}"
+    | .error m => .error m
   | .listLength l =>
     match l.inferE td ctx with
     | .ok (.list _) => .ok .int
@@ -845,6 +865,30 @@ public theorem Expression.infer_listMap_eq_some {td : TypeDecls} {ctx : Context}
     (Expression.listMap l f).infer td ctx = some t ↔
       ∃ t' r,
         l.infer td ctx = some (.list t') ∧ f.infer td ctx = some (.fn [t'] r) ∧ t = .list r := by
+  simp only [Expression.infer, Expression.inferE, Except.toOption_eq_some_iff]
+  split <;> simp_all <;> grind
+
+/-- A `listFlatMap` is typeable when its first operand is a list and its second is a function of one
+parameter at that list's element type returning a list — and then it has the type that function
+returns.
+
+`listMap`'s rule with the function's result read one layer in.  A mapping's result is a list *of*
+what the function returned; here the function already returns a list and the results are run
+together, so the form's type is the function's own rather than a list built around it.  That is the
+one thing a `.list` pattern on the result type buys, and it is why this is the only list form asking
+anything of the *shape* of what its function returns — `listSortOn` asks `Ty.orderable` of a key and
+`listSortBy` pins an answer to `.bool`, where this asks for a list and then takes it as given.
+
+How many elements come back is what the two mappings part company on, and nothing in the rule
+mentions it: `listMap` is one element per element, where a function returning lists of any lengths
+makes this a form whose result length is not its operand's. -/
+@[simp, grind =]
+public theorem Expression.infer_listFlatMap_eq_some {td : TypeDecls} {ctx : Context}
+    {l f : Expression} {t : Ty} :
+    (Expression.listFlatMap l f).infer td ctx = some t ↔
+      ∃ t' r,
+        l.infer td ctx = some (.list t') ∧
+          f.infer td ctx = some (.fn [t'] (.list r)) ∧ t = .list r := by
   simp only [Expression.infer, Expression.inferE, Except.toOption_eq_some_iff]
   split <;> simp_all <;> grind
 

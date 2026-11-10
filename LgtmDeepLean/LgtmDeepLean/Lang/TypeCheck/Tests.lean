@@ -282,6 +282,97 @@ private def ctx : Context :=
   !((Expression.listMap (.varRef "xs") (.lam [("x", .int)] (.varRef "x"))).check types ctx
         (.list .string)).isOk
 
+-- A flat mapping takes its element type from *inside* what the function returns, which is the one
+-- place a result type is read a layer in rather than whole: the same function under `map list` gives
+-- a list of lists where this gives the list those were run together into.
+#guard
+  (Expression.listFlatMap (.varRef "xs") (.lam [("x", .int)] (.lnil .string))).infer types ctx ==
+    some (.list .string)
+
+#guard
+  (Expression.listMap (.varRef "xs") (.lam [("x", .int)] (.lnil .string))).infer types ctx ==
+    some (.list (.list .string))
+
+#guard
+  (Expression.listFlatMap (.varRef "xs")
+          (.lam [("x", .int)] (.lcons (.varRef "x") (.lnil .int)))).infer
+      types ctx ==
+    some (.list .int)
+
+#guard
+  (Expression.listFlatMap (.lnil (.struct "Point"))
+          (.lam [("p", .struct "Point")] (.lcons (.structGet (.varRef "p") "x") (.lnil .int)))).infer
+      types ctx ==
+    some (.list .int)
+
+-- A function returning a list of lists flattens one layer and no further, which is what makes this
+-- a form that can be written twice over the same operand.
+#guard
+  (Expression.listFlatMap (.varRef "xs") (.lam [("x", .int)] (.lnil (.list .string)))).infer types
+      ctx ==
+    some (.list (.list .string))
+
+-- What the function returns has to be a list: that is the whole of what this asks over `map list`,
+-- and it is asked of the function's result type rather than of any element.
+#guard
+  (Expression.listFlatMap (.varRef "xs") (.lam [("x", .int)] (.varRef "x"))).infer types ctx == none
+
+#guard
+  (Expression.listFlatMap (.varRef "xs") (.lam [("x", .int)] (.optionSome (.varRef "x")))).infer
+      types ctx ==
+    none
+
+#guard
+  (Expression.listFlatMap (.varRef "xs") (.lam [("x", .int)] (.hashmapEmpty .string .int))).infer
+      types ctx ==
+    none
+
+-- The function takes one parameter at the list's element type, as a mapping's does, and either
+-- operand being the wrong kind of thing is enough.
+#guard
+  (Expression.listFlatMap (.varRef "xs") (.lam [("x", .string)] (.lnil .int))).infer types ctx ==
+    none
+
+#guard (Expression.listFlatMap (.varRef "xs") (.lam [] (.lnil .int))).infer types ctx == none
+
+#guard
+  (Expression.listFlatMap (.varRef "xs") (.lam [("x", .int), ("y", .int)] (.lnil .int))).infer types
+      ctx ==
+    none
+
+#guard (Expression.listFlatMap (.varRef "xs") (.varRef "f")).infer types ctx == none
+
+#guard
+  (Expression.listFlatMap (.varRef "m") (.lam [("x", .int)] (.lnil .int))).infer types ctx == none
+
+#guard
+  (Expression.listFlatMap (.varRef "n") (.lam [("x", .int)] (.lnil .int))).infer types ctx == none
+
+#guard
+  (Expression.listFlatMap (.varRef "nope") (.lam [("x", .int)] (.lnil .int))).infer types ctx ==
+    none
+
+-- What it produces is a list like any other, so the list forms nest into each other.
+#guard
+  (Expression.listLength (.listFlatMap (.varRef "xs") (.lam [("x", .int)] (.lnil .string)))).infer
+      types ctx ==
+    some .int
+
+#guard
+  (Expression.listFlatMap (.hashmapToList (.varRef "m"))
+          (.lam [("q", .tuple [.string, .int])]
+            (.lcons (.tupleGet (.varRef "q") 1) (.lnil .int)))).infer
+      types ctx ==
+    some (.list .int)
+
+#guard
+  ((Expression.listFlatMap (.varRef "xs") (.lam [("x", .int)] (.lnil .string))).check types ctx
+      (.list .string)).isOk
+
+#guard
+  !((Expression.listFlatMap (.varRef "xs") (.lam [("x", .int)] (.lnil .string))).check types ctx
+        (.list (.list .string))).isOk
+
 -- A sort passes its operand's type through, the way `reverse` does: the projection's result is the
 -- key each element is ordered by, so it goes into the ordering and not into the type.
 #guard
@@ -2963,6 +3054,22 @@ private def message (r : Except String Unit) : String :=
         (.list .string)) ==
     "`map list` over a list of int needs a function of one int parameter, \
       but this one takes (string)"
+
+#guard
+  message
+      ((Expression.listFlatMap (.varRef "xs") (.lam [("x", .string)] (.lnil .int))).check types ctx
+        (.list .int)) ==
+    "`flatMap` over a list of int needs a function of one int parameter, \
+      but this one takes (string)"
+
+-- And the condition that separates it from a mapping says what the function returned, since what is
+-- wrong with returning something other than a list is that type and nothing the shape shows.
+#guard
+  message
+      ((Expression.listFlatMap (.varRef "xs") (.lam [("x", .int)] (.varRef "x"))).check types ctx
+        (.list .int)) ==
+    "`flatMap` concatenates what its function returns, so that must be a list, \
+      but this one returns int"
 
 #guard
   message

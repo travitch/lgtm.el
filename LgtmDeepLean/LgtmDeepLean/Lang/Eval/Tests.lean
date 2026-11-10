@@ -302,6 +302,123 @@ private theorem bumpAll.length_of_eval {vs vs' : List Value}
           subst hlx
           exact hlen
 
+/-! A flat mapping over a list is the same call again, and the results run together: each call
+produces a list, and `List.flatten` puts those lists one after another in the order the elements were
+in.
+
+`EListMap` with a `List (List Value)` where that has a `List Value`, which is the whole of the
+difference.  The lengths that agree are still the operand's and the calls' — one list produced per
+element — so what the form does *not* guarantee is how long its result is, and that is what these
+examples are for.  What can go wrong is what a mapping's calls can: a second operand that is not a
+function, and a function the element does not fit. -/
+
+-- An empty list flat maps to an empty list: there is no element for the function to be applied to,
+-- so both premises over the elements are vacuous and the function is never entered.
+example : Eval {} ∅ [lgtm| flatMap [: int] (fun (x : int) => [x, x : int])] (.list []) :=
+  .EListFlatMap (vss := []) _ _ (.ENil _) (.ELam _ _) rfl (by simp) (by simp)
+
+-- One element is one call, and the list that call produced takes that element's place: two elements
+-- out of one is the thing no mapping can do, since a mapping's result is as long as its operand.
+example :
+    Eval {} ∅ [lgtm| flatMap [1 : int] (fun (x : int) => [x, x : int])]
+      (.list [.int 1, .int 1]) :=
+  .EListFlatMap (vss := [[.int 1, .int 1]]) _ _ (.ECons _ _ (.EIntLit 1) (.ENil _)) (.ELam _ _) rfl
+    (by rintro p hp
+        simp at hp
+        obtain ⟨rfl, rfl⟩ := hp
+        exact .cons "x" (.int 1) .nil)
+    (by rintro p hp
+        simp at hp
+        obtain ⟨rfl, rfl⟩ := hp
+        exact .ECons _ _ (.EVarRef "x" rfl) (.ECons _ _ (.EVarRef "x" rfl) (.ENil _)))
+
+-- And the other direction: a call returning the empty list drops the element it was given, so a
+-- non-empty list flat maps to an empty one.
+example : Eval {} ∅ [lgtm| flatMap [1 : int] (fun (x : int) => [: int])] (.list []) :=
+  .EListFlatMap (vss := [[]]) _ _ (.ECons _ _ (.EIntLit 1) (.ENil _)) (.ELam _ _) rfl
+    (by rintro p hp
+        simp at hp
+        obtain ⟨rfl, rfl⟩ := hp
+        exact .cons "x" (.int 1) .nil)
+    (by rintro p hp
+        simp at hp
+        obtain ⟨rfl, rfl⟩ := hp
+        exact .ENil _)
+
+-- A second operand that is not a function leaves this stuck, exactly as it leaves a mapping stuck.
+example (v : Value) : ¬Eval {} ∅ [lgtm| flatMap[ : int]1] v := by
+  intro h
+  cases h with
+  | EListFlatMap _ _ _ hf _ _ _ => cases hf
+
+/-- Every element of `xs` twice over: the shortest declaration the form is in, and the one place a
+list comes back longer than it went in. -/
+lgtm private def dupAll as "dup-all" (xs : list int) : list int :=
+  flatMap xs (fun (x : int) => [x, x : int])
+
+#guard (dupAll.check {} []).isOk
+
+-- The closure the function evaluates to captures the call's environment, the same way a mapping's
+-- does, and the lists its calls produced come back in the order the elements were in.
+example :
+    FuncDecl.Apply dupAll {} [] [.list [.int 1, .int 2]]
+      (.list [.int 1, .int 1, .int 2, .int 2]) :=
+  .EApply _ (.cons "xs" (hasType_intList (is := [1, 2])) .nil)
+    (.EListFlatMap (vss := [[.int 1, .int 1], [.int 2, .int 2]]) _ _ (.EVarRef "xs" rfl)
+      (.ELam _ _) rfl
+      (by
+        rintro p hp
+        simp at hp
+        rcases hp with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ <;> exact .cons "x" (by constructor) .nil)
+      (by
+        rintro p hp
+        simp at hp
+        rcases hp with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ <;>
+          exact .ECons _ _ (.EVarRef "x" rfl) (.ECons _ _ (.EVarRef "x" rfl) (.ENil _))))
+
+-- Soundness covers the form: the declared list type comes back whatever the list held, with the
+-- element type read out of what the function returns rather than off the function's result whole.
+example (vs : List Value) (v : Value) (h : FuncDecl.Apply dupAll {} [] [.list vs] v) :
+    v.HasType {} (.list .int) :=
+  h.hasType Globals.wellTyped_nil (by simp [dupAll])
+
+/-- What a flat mapping means, for every list rather than for one: this one doubles, so the list it
+produces is twice as long as the list it was given.
+
+`bumpAll.length_of_eval`'s counterpart, and the reason the two forms are not one: a mapping's
+length equality is a premise of the rule and holds whatever the function is, where this is a fact
+about *this* function and comes out of what its calls produced.  Inverting the rule leaves the
+lengths of the calls' lists to be added up, which is what `List.length_flatten` does. -/
+private theorem dupAll.length_of_eval {vs vs' : List Value}
+    (h : Eval {} ⟨[("xs", .list vs)], []⟩
+      [lgtm| flatMap xs (fun (x : int) => [x, x : int])] (.list vs')) :
+    vs'.length = 2 * vs.length := by
+  cases h with
+  | @EListFlatMap _ _ _ _ _ _ vss _ _ hl hf hlen _ hev =>
+      cases hl with
+      | EVarRef _ hlx =>
+          cases hf with
+          | ELam _ _ =>
+              simp [Env.lookup, List.lookup] at hlx
+              subst hlx
+              -- Every call produced a two-element list, which is what the body being a two-element
+              -- literal is read off: inverting its evaluation is what pins the length down, and it
+              -- needs the closure's body in hand rather than the opaque one the rule mentions.
+              have hws : ∀ p ∈ vs.zip vss, p.2.length = 2 := by
+                rintro ⟨w, ws⟩ hp
+                cases hev (w, ws) hp with
+                | ECons _ _ _ htl =>
+                    cases htl with
+                    | ECons _ _ _ htl' =>
+                        cases htl' with
+                        | ENil _ => rfl
+              -- The lengths are two apiece over as many calls as there were elements, so the sum
+              -- the flattening's length comes to is what the list's own length doubles to.
+              rw [List.length_flatten, ← List.map_snd_zip (Nat.le_of_eq hlen.symm), List.map_map]
+              simp only [Function.comp_def]
+              rw [List.map_congr_left hws]
+              simp [List.map_const', List.sum_replicate_nat, List.length_zip, hlen, Nat.mul_comm]
+
 /-! A sort is a call per element too, and the same call a mapping makes: the element is the one
 argument, `ArgsHaveType` holds it to the closure's parameter, and the body runs in the environment
 the closure captured.  What the calls produce is the difference — a key apiece rather than an

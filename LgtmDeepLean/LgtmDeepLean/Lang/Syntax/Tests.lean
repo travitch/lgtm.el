@@ -1567,6 +1567,81 @@ example : [lgtm| var"map"] = Expression.varRef "map" :=
 example : [lgtm| var"list"] = Expression.varRef "list" :=
   rfl
 
+-- `flatMap` reads its two operands the way `map list` reads its two, and takes no tag: a list is the
+-- one thing there is to flat map over, where there are two to map over.
+example : [lgtm| flatMap xs f] = Expression.listFlatMap (.varRef "xs") (.varRef "f") :=
+  rfl
+
+example :
+    [lgtm| flatMap p.items f] =
+      Expression.listFlatMap (.structGet (.varRef "p") "items") (.varRef "f") :=
+  rfl
+
+example :
+    [lgtm| flatMap g(1)f] =
+      Expression.listFlatMap (.app (.varRef "g") [.intLit 1]) (.varRef "f") :=
+  rfl
+
+example :
+    [lgtm| flatMap[1, 2 : int]f] =
+      Expression.listFlatMap (.lcons (.intLit 1) (.lcons (.intLit 2) (.lnil .int)))
+        (.varRef "f") :=
+  rfl
+
+example : [lgtm| flatMap[ : int]f] = Expression.listFlatMap (.lnil .int) (.varRef "f") :=
+  rfl
+
+-- Its function takes one parameter as a list's mapping's does, and returns a list: the keyword is
+-- the whole of what tells the two forms apart here, since what the function returns is readable only
+-- where it is written out and says nothing about a named `f`.
+example :
+    [lgtm| flatMap xs (fun (x : int) => [x, x : int])] =
+      Expression.listFlatMap (.varRef "xs")
+        (.lam [("x", .int)] (.lcons (.varRef "x") (.lcons (.varRef "x") (.lnil .int)))) :=
+  rfl
+
+-- What it produces is a list, so every form that reads one reads this, and it reads whatever
+-- produces one: a reversal, a length, a cons, a mapping, and another flat mapping.
+example :
+    [lgtm| reverse(flatMap xs f)] =
+      Expression.listReverse (.listFlatMap (.varRef "xs") (.varRef "f")) :=
+  rfl
+
+example :
+    [lgtm| length(flatMap xs f)] =
+      Expression.listLength (.listFlatMap (.varRef "xs") (.varRef "f")) :=
+  rfl
+
+example :
+    [lgtm| x :: flatMap xs f] =
+      Expression.lcons (.varRef "x") (.listFlatMap (.varRef "xs") (.varRef "f")) :=
+  rfl
+
+example :
+    [lgtm| map list(flatMap xs f)g] =
+      Expression.listMap (.listFlatMap (.varRef "xs") (.varRef "f")) (.varRef "g") :=
+  rfl
+
+example :
+    [lgtm| flatMap(map list xs g)f] =
+      Expression.listFlatMap (.listMap (.varRef "xs") (.varRef "g")) (.varRef "f") :=
+  rfl
+
+example :
+    [lgtm| flatMap(flatMap xs f)g] =
+      Expression.listFlatMap (.listFlatMap (.varRef "xs") (.varRef "f")) (.varRef "g") :=
+  rfl
+
+example :
+    [lgtm| flatMap(toList m)f] =
+      Expression.listFlatMap (.hashmapToList (.varRef "m")) (.varRef "f") :=
+  rfl
+
+-- `flatMap` is a keyword, so it is no variable name inside a DSL term, and `var` is the escape
+-- hatch.
+example : [lgtm| var"flatMap"] = Expression.varRef "flatMap" :=
+  rfl
+
 -- `sortOn` reads its two operands the way `map list` reads its two, and takes no tag: there is one
 -- thing to sort, where there are two to map over.
 example : [lgtm| sortOn xs f] = Expression.listSortOn (.varRef "xs") (.varRef "f") :=
