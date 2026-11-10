@@ -42,7 +42,11 @@ lgtm def CommentThreads.asAlist (threads : struct CommentThreads) (manager : str
   let threadsSortedAtLocations = map list locatedRootComments sortThreadsAtLocation in
   sortBy threadsSortedAtLocations (fun (lt1 : tuple(inductive ThreadLocation, list (struct CommentThread))) (lt2 : tuple(inductive ThreadLocation, list (struct CommentThread))) => ThreadLocation.compare(lt1.0, lt2.0))
 
+lgtm def CommentThreads.toThreadsOrdered (threads : struct CommentThreads) (manager : struct CommentManager) : list (struct CommentThread) :=
+  flatMap CommentThreads.asAlist(threads, manager) (fun (locThreads : tuple(inductive ThreadLocation, list (struct CommentThread))) => locThreads.1)
+
+
 def Model.CommentThreads.funcDecls : List FuncDecl :=
-  [CommentThreads.isEmpty, CommentThreads.commentCount, CommentThreads.asAlist.sortThreadLists, CommentThreads.asAlist]
+  [CommentThreads.isEmpty, CommentThreads.commentCount, CommentThreads.asAlist.sortThreadLists, CommentThreads.asAlist, CommentThreads.toThreadsOrdered]
 
 end
