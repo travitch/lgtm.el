@@ -4,6 +4,7 @@ public import LgtmDeepLean.Model.Basic
 meta import LgtmDeepLean.Lang.Syntax
 
 public import LgtmDeepLean.Model.CommentManager.Operations
+public import LgtmDeepLean.Model.Location.Operations
 
 @[expose] public section
 
@@ -13,14 +14,6 @@ lgtm def CommentThreads.isEmpty (threads : struct CommentThreads) : bool :=
 
 lgtm def CommentThreads.commentCount (threads : struct CommentThreads) : int :=
   length (toList threads.commentTreeNodes)
-
-/- lgtm def compareThreadsByTimestamp (manager : struct CommentManager) (t1 : struct CommentThread) (t2 : struct CommentThread) : bool :=
- -   match CommentManager.get(manager, t1.value) with
- -   | none => unreachable "a thread's comment is in the manager" : bool
- -   | some(c1) =>
- -     match CommentManager.get(manager, t2.value) with
- -     | none => unreachable "a thread's comment is in the manager" : bool
- -     | some(c2) => c1.createdTimestamp < c2.createdTimestamp -/
 
 -- Sort the thread lists at each thread location
 lgtm def CommentThreads.asAlist.sortThreadLists (threads : struct CommentThreads) (manager : struct CommentManager) (commentThreadRoots : tuple(inductive ThreadLocation, list (struct Comment))) : tuple(inductive ThreadLocation, list (struct CommentThread)) :=
@@ -47,8 +40,7 @@ lgtm def CommentThreads.asAlist (threads : struct CommentThreads) (manager : str
   let sortThreadsAtLocation = fun (locatedThreads : tuple(inductive ThreadLocation, list (struct Comment))) =>
          (CommentThreads.asAlist.sortThreadLists(threads, manager, locatedThreads)) in
   let threadsSortedAtLocations = map list locatedRootComments sortThreadsAtLocation in
---  sortOn threadsSortedAtLocations (fun (
-  [:tuple(inductive ThreadLocation, list (struct CommentThread))]
+  sortBy threadsSortedAtLocations (fun (lt1 : tuple(inductive ThreadLocation, list (struct CommentThread))) (lt2 : tuple(inductive ThreadLocation, list (struct CommentThread))) => ThreadLocation.compare(lt1.0, lt2.0))
 
 def Model.CommentThreads.funcDecls : List FuncDecl :=
   [CommentThreads.isEmpty, CommentThreads.commentCount, CommentThreads.asAlist.sortThreadLists, CommentThreads.asAlist]
