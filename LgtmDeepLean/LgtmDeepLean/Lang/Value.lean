@@ -156,12 +156,60 @@ otherwise, and introduces nothing. -/
         simp
       · simpa [h] using ih
 
+/-- The value `f` is bound to in `fvs` beside the fields that are left, or `none` where `fvs` does
+not bind `f`.
+
+`List.lookup` with the binding it found taken out.  `Value.beqFields?` walks a struct value's fields
+with this, so a field is matched by name rather than by position; taking the binding out is what
+keeps two fields of one name from both matching the same field on the other side.  The first binding
+for `f` is the one found and the one removed, the way `List.lookup` stops at the first. -/
+@[expose] public def FieldValues.extract? (f : FieldName) :
+    FieldValues → Option (Value × FieldValues)
+  | [] => none
+  | (g, b) :: fvs =>
+    if f == g then some (b, fvs)
+    else (FieldValues.extract? f fvs).map fun p => (p.1, (g, b) :: p.2)
+
+/-- What an extraction found is what a lookup finds: both stop at the first binding for the name.
+
+This is what ties the walk to `Value.HasType`'s struct case, which reads a value's fields by `lookup`
+and never by position. -/
+public theorem FieldValues.lookup_of_extract? {fvs : FieldValues} {f : FieldName} {b : Value}
+    {rest : FieldValues} (h : FieldValues.extract? f fvs = some (b, rest)) :
+    fvs.lookup f = some b := by
+  induction fvs generalizing b rest with
+  | nil => simp [FieldValues.extract?] at h
+  | cons p fvs ih =>
+      obtain ⟨g, b'⟩ := p
+      rw [FieldValues.extract?] at h
+      split at h
+      · next hfg =>
+          obtain ⟨rfl, -⟩ : b = b' ∧ rest = fvs := by simpa using h.symm
+          simp [List.lookup_cons, hfg]
+      · next hfg =>
+          obtain ⟨⟨b'', rest'⟩, hq, hpair⟩ := Option.map_eq_some_iff.mp h
+          obtain ⟨rfl, -⟩ : b = b'' ∧ rest = (g, b') :: rest' := by simpa using hpair.symm
+          simpa [List.lookup_cons, hfg] using ih hq
+
+/-- And an extraction finds a binding exactly when a lookup does, so a field the other value binds
+is one this walk never gives up on — which is how typing makes `Value.beqFields?` total. -/
+@[simp] public theorem FieldValues.extract?_isSome {fvs : FieldValues} {f : FieldName} :
+    (FieldValues.extract? f fvs).isSome = (fvs.lookup f).isSome := by
+  induction fvs with
+  | nil => simp [FieldValues.extract?]
+  | cons p fvs ih =>
+      obtain ⟨g, b⟩ := p
+      by_cases hfg : f == g
+      · simp [FieldValues.extract?, List.lookup_cons, hfg]
+      · simp [FieldValues.extract?, List.lookup_cons, hfg, Option.isSome_map, ih]
+
 /-! ## Structural equality
 
 What `Expression.equals` compares two values with, and where a value of function type stops it.
 
 It is a function rather than a rule of `Eval` because there is nothing about *evaluation* in it: two
-values are the same value or they are not, and this says which, given that it can be said at all.
+values are equal or they are not, and this says which, given that it can be said at all — equal up
+to the order a struct carries its fields in, which is `Value.Equiv`.
 `Ty.comparable` is the type-level counterpart — the types from which no function type is reachable,
 which are exactly the types whose values hold no closure anywhere — so an `equals` that type checks is
 one this never has to give up on. -/
@@ -173,8 +221,14 @@ mutual
 Deep and structural: two lists are equal when they hold the same values in the same order, two
 tuples when they do — the same walk, since a tuple is positional too — two options when they are
 both empty or both hold the same value, two struct values when they are of the same struct and every
-field holds the same value, and two values of an inductive type when they are of the same type, were
-built by the same constructor, and that constructor's data is the same value for value.
+field holds the same value under the same name, and two values of an inductive type when they are of
+the same type, were built by the same constructor, and that constructor's data is the same value for
+value.
+
+Every position but a struct's fields is matched up positionally, so what a `true` means is Lean's
+own `=` everywhere a struct does not come into it, and equality up to the order a struct carries its
+fields in where one does.  `Value.Equiv` is that relation, and `Value.beq?_eq_some_iff` is the
+statement that this decides it.
 
 A closure is what `none` is for.  Two functions are the same function when they agree on every
 argument, which is a question about what they *do*: no value carries enough to settle it, and a
@@ -219,82 +273,181 @@ when it could look everywhere it would have had to. -/
     | _, _ => none
   | _, _ => some false
 
-/-- Whether two struct values' fields hold the same values: the same fields, in the same order, each
-with equal values.
+/-- Whether two struct values' fields hold the same values: the same fields, by name, each bound to
+equal values, whatever order either value carries them in.
 
-Positional, because a comparison that said `true` of two values that differ in field order would be
-saying `true` of two values Lean's `=` holds apart, and `Value.eq_of_beq?` — which is what makes the
-form usable in a proof — would not survive it.  So two values of one struct type written in
-different orders get `none` here, the answer a closure gets: not a claim that they differ, but no
-claim either way.  Fields that disagree on a name, or lists of different lengths, get `none` for the
-same reason mismatched value constructors do.
+By name rather than by position, which is what makes this total wherever `Ty.comparable` says a
+comparison can be made.  A `structNew` may write the declaration's fields in any order (see
+`Expression.fieldsComplete`) and the value keeps the order it was written in, so two values of one
+struct type need not carry their fields the same way round; compared positionally, such a pair had
+no answer at all — two well-typed values a comparison gave up on, which is a failure of progress
+rather than a question this cannot be asked.
 
-That `none` is reachable for a well-typed `equals`, since a `structNew` may write the declaration's
-fields in any order (see `Expression.fieldsComplete`) and the value keeps the order it was written
-in.  Two struct values compare only when they were built the same way round — which every value a
-single `structNew` or a chain of updates over one produces is.  Deciding equality up to field order
-would need `beq?` to answer about an equivalence coarser than `=`, which is a change to what this
-whole mutual block means rather than to this one case.
+`FieldValues.extract?` is the walk: each field on the left is found by name on the right and *taken
+out*, so two fields of one name on the left match two distinct fields of that name on the right
+rather than both matching the first.  A name the right value does not bind, and fields of the right
+value left over once the left has run out, are `false` — the answer two lists of different lengths
+get in `Value.beqList?`, and for the same reason: those are genuinely different values.
+
+What that costs is the `=` a `true` used to mean.  Two values of one struct type whose fields are in
+different orders now compare equal, and they are different `Value`s, so what this decides is
+`Value.Equiv` — equality up to the order a struct carries its fields in — and `Value.equiv_of_beq?`
+is what a proof reads a `true` with.  `Value.ne_of_beq?` is unaffected: a `false` is still a pair of
+values Lean's `=` holds apart.
+
+`none` is left for what `Value.beq?` has no answer for anywhere — a closure, or a hashmap, among the
+values two fields of one name hold.
 
 The field names are spelled `String` rather than `FieldName` for the reason `Value.struct` spells
 them that way. -/
 @[expose] public def Value.beqFields? : List (String × Value) → List (String × Value) →
     Option Bool
   | [], [] => some true
-  | (f, a) :: fas, (g, b) :: fbs =>
-    if f == g then
-      match Value.beq? a b, Value.beqFields? fas fbs with
+  | [], _ :: _ => some false
+  | (f, a) :: fas, fbs =>
+    match FieldValues.extract? f fbs with
+    | some (b, rest) =>
+      match Value.beq? a b, Value.beqFields? fas rest with
       | some x, some y => some (x && y)
       | _, _ => none
-    else none
-  | _, _ => none
+    | none => some false
+
+end
+
+/-! ## Equality up to the order a struct carries its fields in
+
+What `Value.beq?` decides.  It is Lean's own `=` at every position but a struct's fields, which are
+matched up by name rather than by position: two values of one struct type may carry the declaration's
+fields in different orders — a `structNew` may write them in any order, and the value keeps the order
+it was written in — and no comparison of two well-typed values should depend on which way round
+either of them was built.
+
+So this is the relation two struct values of one type stand in when they bind the same values to the
+same names, and `=` otherwise.  A closure and a hashmap fall to the last case and are held to `=`:
+`Value.beq?` has no answer for either, so nothing is claimed about them — what the case is for is
+the pairs that disagree about which *constructor* they carry, where `=` is already false.
+
+It mirrors `Value.beq?` case for case, which is what makes `Value.beq?_eq_some_iff` the same
+induction the positional version was.
+
+Reflexivity is what is proved of it here, because that is what `Value.ne_of_beq?` needs.  Symmetry
+and transitivity are not: nothing in the development asks for either yet, and both are a second
+induction over the field walk rather than a consequence of this definition. -/
+
+mutual
+
+@[expose] public def Value.Equiv : Value → Value → Prop
+  | .bool a, .bool b => a = b
+  | .int a, .int b => a = b
+  | .string a, .string b => a = b
+  | .option (some a), .option (some b) => Value.Equiv a b
+  | .list as, .list bs => Value.EquivList as bs
+  | .tuple as, .tuple bs => Value.EquivList as bs
+  | .struct n fas, .struct m fbs => n = m ∧ Value.EquivFields fas fbs
+  | .ind n c as, .ind m d bs => n = m ∧ c = d ∧ Value.EquivList as bs
+  | a, b => a = b
+
+/-- Positionally, which is how a list's elements and a constructor's data are compared. -/
+@[expose] public def Value.EquivList : List Value → List Value → Prop
+  | [], [] => True
+  | a :: as, b :: bs => Value.Equiv a b ∧ Value.EquivList as bs
+  | _, _ => False
+
+/-- By name, which is the one place this is not `=`: `FieldValues.extract?` is the same walk
+`Value.beqFields?` makes, so a field of either value is matched with the field of that name on the
+other side and with no other. -/
+@[expose] public def Value.EquivFields : List (String × Value) → List (String × Value) → Prop
+  | [], [] => True
+  | [], _ :: _ => False
+  | (f, a) :: fas, fbs =>
+    match FieldValues.extract? f fbs with
+    | some (b, rest) => Value.Equiv a b ∧ Value.EquivFields fas rest
+    | none => False
 
 end
 
 mutual
 
-/-- A comparison that has an answer gives the right one: `true` exactly when the two values are the
-same value.
+/-- Every value is equivalent to itself.
+
+Unconditionally, unlike a comparison of a value with itself: `Value.beq?` gives `none` for a closure
+and for a hashmap, where this holds of them by `=`.  It is what `Value.ne_of_beq?` is proved from —
+a comparison that came out `false` of a value and itself would contradict it. -/
+public theorem Value.Equiv.refl : ∀ (a : Value), Value.Equiv a a
+  | .bool b => by simp [Value.Equiv]
+  | .int i => by simp [Value.Equiv]
+  | .string s => by simp [Value.Equiv]
+  | .option none => by simp [Value.Equiv]
+  | .option (some a) => by simpa [Value.Equiv] using Value.Equiv.refl a
+  | .list as => by simpa [Value.Equiv] using Value.EquivList.refl as
+  | .tuple as => by simpa [Value.Equiv] using Value.EquivList.refl as
+  | .hashmap kvs => by simp [Value.Equiv]
+  | .closure cb cg ps body => by simp [Value.Equiv]
+  | .struct n fvs => by simpa [Value.Equiv] using Value.EquivFields.refl fvs
+  | .ind n c vs => by simpa [Value.Equiv] using Value.EquivList.refl vs
+
+public theorem Value.EquivList.refl : ∀ (as : List Value), Value.EquivList as as
+  | [] => by simp [Value.EquivList]
+  | a :: as => by
+    exact ⟨Value.Equiv.refl a, Value.EquivList.refl as⟩
+
+/-- The extraction takes out the very field it matched, so the fields left are the tail — which is
+what makes this hold of a value that binds one name twice, where matching by `lookup` alone would
+compare the second occurrence with the first. -/
+public theorem Value.EquivFields.refl : ∀ (fvs : List (String × Value)), Value.EquivFields fvs fvs
+  | [] => by simp [Value.EquivFields]
+  | (f, a) :: fvs => by
+    have hex : FieldValues.extract? f ((f, a) :: fvs) = some (a, fvs) := by
+      simp [FieldValues.extract?]
+    simp only [Value.EquivFields, hex]
+    exact ⟨Value.Equiv.refl a, Value.EquivFields.refl fvs⟩
+
+end
+
+mutual
+
+/-- A comparison that has an answer gives the right one: `true` exactly when the two values are
+equivalent.
 
 This is what makes the form usable in a proof.  `Eval`'s rule hands back whatever `Value.beq?` said,
 so without this a `bool` that came from an `equals` would be a `bool` and nothing more; with it, the
-`true` an evaluation produced *is* the two values being equal, and Lean's own `=` is what the rest of
-the proof carries on with.
+`true` an evaluation produced *is* the two values standing in `Value.Equiv` — Lean's own `=` wherever
+no struct comes into it.
 
 It is an `iff` under one hypothesis rather than two implications because both directions are the same
 induction: that a comparison never reports `true` of values that differ, and that it never reports
 `false` of values that do not.  Nothing is claimed where the comparison had no answer — there is no
 closure in a value of a comparable type, which is the type checker's side of it.
 
-`Value.eq_of_beq?` and `Value.ne_of_beq?` are the two halves in the form a proof applies. -/
+`Value.equiv_of_beq?` and `Value.ne_of_beq?` are the two halves in the form a proof applies. -/
 public theorem Value.beq?_eq_some_iff : ∀ (a b : Value) (r : Bool),
-    Value.beq? a b = some r → (r = true ↔ a = b)
-  | .bool x, b, r => by cases b <;> simp_all [Value.beq?] <;> grind
-  | .int x, b, r => by cases b <;> simp_all [Value.beq?] <;> grind
-  | .string x, b, r => by cases b <;> simp_all [Value.beq?] <;> grind
+    Value.beq? a b = some r → (r = true ↔ Value.Equiv a b)
+  | .bool x, b, r => by cases b <;> simp_all [Value.beq?, Value.Equiv] <;> grind
+  | .int x, b, r => by cases b <;> simp_all [Value.beq?, Value.Equiv] <;> grind
+  | .string x, b, r => by cases b <;> simp_all [Value.beq?, Value.Equiv] <;> grind
   | .option oa, b, r => by
     cases b with
     | option ob =>
       cases oa with
-      | none => cases ob <;> simp [Value.beq?]
+      | none => cases ob <;> simp [Value.beq?, Value.Equiv]
       | some a =>
         cases ob with
-        | none => simp [Value.beq?]
+        | none => simp [Value.beq?, Value.Equiv]
         | some b =>
           intro h
-          simpa using Value.beq?_eq_some_iff a b r (by simpa [Value.beq?] using h)
+          simpa [Value.Equiv] using Value.beq?_eq_some_iff a b r (by simpa [Value.beq?] using h)
     | _ => simp [Value.beq?]
   | .list as, b, r => by
     cases b with
     | list bs =>
       intro h
-      simpa using Value.beqList?_eq_some_iff as bs r (by simpa [Value.beq?] using h)
+      simpa [Value.Equiv] using Value.beqList?_eq_some_iff as bs r (by simpa [Value.beq?] using h)
     | _ => simp [Value.beq?]
   | .tuple as, b, r => by
     cases b with
     | tuple bs =>
       intro h
-      simpa using Value.beqList?_eq_some_iff as bs r (by simpa [Value.beq?] using h)
+      simpa [Value.Equiv] using Value.beqList?_eq_some_iff as bs r (by simpa [Value.beq?] using h)
     | _ => simp [Value.beq?]
   | .hashmap kvs, b, r => by cases b <;> simp [Value.beq?]
   | .closure cb cg ps body, b, r => by cases b <;> simp [Value.beq?]
@@ -304,7 +457,8 @@ public theorem Value.beq?_eq_some_iff : ∀ (a b : Value) (r : Bool),
       intro h
       by_cases hn : n == m
       · obtain rfl : n = m := by grind
-        simpa using Value.beqFields?_eq_some_iff fas fbs r (by simpa [Value.beq?] using h)
+        simpa [Value.Equiv] using
+          Value.beqFields?_eq_some_iff fas fbs r (by simpa [Value.beq?] using h)
       · simp [Value.beq?, hn] at h
     | _ => simp [Value.beq?]
   | .ind n c as, b, r => by
@@ -315,21 +469,22 @@ public theorem Value.beq?_eq_some_iff : ∀ (a b : Value) (r : Bool),
       · obtain rfl : n = m := by grind
         by_cases hc : c == d
         · obtain rfl : c = d := by grind
-          simpa using Value.beqList?_eq_some_iff as bs r (by simpa [Value.beq?] using h)
+          simpa [Value.Equiv] using
+            Value.beqList?_eq_some_iff as bs r (by simpa [Value.beq?] using h)
         · obtain rfl : r = false := by simpa [Value.beq?, hc] using h.symm
-          simp only [Value.ind.injEq]
+          simp only [Value.Equiv]
           grind
       · simp [Value.beq?, hn] at h
     | _ => simp [Value.beq?]
 
 /-- The positional version of `Value.beq?_eq_some_iff`: the comparison of two lists that has an
-answer is `true` exactly when they are the same list. -/
+answer is `true` exactly when they are equivalent element for element. -/
 public theorem Value.beqList?_eq_some_iff : ∀ (as bs : List Value) (r : Bool),
-    Value.beqList? as bs = some r → (r = true ↔ as = bs)
-  | [], bs, r => by cases bs <;> simp [Value.beqList?]
+    Value.beqList? as bs = some r → (r = true ↔ Value.EquivList as bs)
+  | [], bs, r => by cases bs <;> simp [Value.beqList?, Value.EquivList]
   | a :: as, bs, r => by
     cases bs with
-    | nil => simp [Value.beqList?]
+    | nil => simp [Value.beqList?, Value.EquivList]
     | cons b bs =>
       intro h
       rw [Value.beqList?] at h
@@ -337,42 +492,51 @@ public theorem Value.beqList?_eq_some_iff : ∀ (as bs : List Value) (r : Bool),
       · next x y hx hy =>
         obtain rfl : r = (x && y) := by grind
         rw [Bool.and_eq_true, Value.beq?_eq_some_iff a b x hx, Value.beqList?_eq_some_iff as bs y hy]
-        simp
+        simp [Value.EquivList]
       · simp at h
 
-/-- The by-name version of `Value.beq?_eq_some_iff`, for the field lists two struct values carry. -/
+/-- The by-name version of `Value.beq?_eq_some_iff`, for the field lists two struct values carry.
+Both walks are `FieldValues.extract?`, so the induction follows the comparison step for step: the
+field the comparison matched is the field the relation matches. -/
 public theorem Value.beqFields?_eq_some_iff : ∀ (fas fbs : List (String × Value)) (r : Bool),
-    Value.beqFields? fas fbs = some r → (r = true ↔ fas = fbs)
-  | [], fbs, r => by cases fbs <;> simp [Value.beqFields?]
+    Value.beqFields? fas fbs = some r → (r = true ↔ Value.EquivFields fas fbs)
+  | [], fbs, r => by cases fbs <;> simp [Value.beqFields?, Value.EquivFields]
   | (f, a) :: fas, fbs, r => by
-    cases fbs with
-    | nil => simp [Value.beqFields?]
-    | cons q fbs =>
-      obtain ⟨g, b⟩ := q
-      intro h
-      rw [Value.beqFields?] at h
+    intro h
+    rw [Value.beqFields?] at h
+    split at h
+    · next b rest hex =>
+      simp only [Value.EquivFields, hex]
       split at h
-      · next hfg =>
-        obtain rfl : f = g := by grind
-        split at h
-        · next x y hx hy =>
-          obtain rfl : r = (x && y) := by grind
-          rw [Bool.and_eq_true, Value.beq?_eq_some_iff a b x hx,
-            Value.beqFields?_eq_some_iff fas fbs y hy]
-          simp
-        · simp at h
+      · next x y hx hy =>
+        obtain rfl : r = (x && y) := by grind
+        rw [Bool.and_eq_true, Value.beq?_eq_some_iff a b x hx,
+          Value.beqFields?_eq_some_iff fas rest y hy]
       · simp at h
+    · next hex =>
+      obtain rfl : r = false := by simpa using h.symm
+      simp only [Value.EquivFields, hex]
+      simp
 
 end
 
-/-- Two values a comparison called equal are equal. -/
-public theorem Value.eq_of_beq? {a b : Value} (h : Value.beq? a b = some true) : a = b :=
+/-- Two values a comparison called equal are equivalent: the same value, up to the order a struct
+carries its fields in.
+
+`Value.eq_of_beq?` as it was — Lean's own `=` — is what this gave before `Value.beqFields?` matched
+fields by name, and it is what it still comes to wherever no struct is involved: `Value.Equiv` is `=`
+at every other position. -/
+public theorem Value.equiv_of_beq? {a b : Value} (h : Value.beq? a b = some true) :
+    Value.Equiv a b :=
   (Value.beq?_eq_some_iff a b true h).mp rfl
 
-/-- And two it called unequal are unequal. -/
+/-- And two it called unequal are unequal — Lean's own `≠`, which the `false` half does still give:
+a value is equivalent to itself, so a comparison that said `false` of two equal values would
+contradict `Value.Equiv.refl`. -/
 public theorem Value.ne_of_beq? {a b : Value} (h : Value.beq? a b = some false) : a ≠ b := by
   intro heq
-  simpa using (Value.beq?_eq_some_iff a b false h).mpr heq
+  subst heq
+  simpa using (Value.beq?_eq_some_iff a a false h).mpr (Value.Equiv.refl a)
 
 /-! ## Structural ordering
 
@@ -478,9 +642,12 @@ mutual
 
 /-- A comparison that called two values equal found two equal values.
 
-This is the ordering's counterpart of `Value.eq_of_beq?`, and it is what makes the forms usable in a
-proof: `Eval` hands back whatever `Value.cmp?` said, so without it an `le` that came out `true` of
+This is the ordering's counterpart of `Value.equiv_of_beq?`, and it is what makes the forms usable in
+a proof: `Eval` hands back whatever `Value.cmp?` said, so without it an `le` that came out `true` of
 two values would say nothing about which of the two cases it came out `true` for.
+
+It is Lean's own `=` rather than `Value.Equiv`, which the equality gives: `Ty.orderable` turns a
+struct down, so no field order ever comes into a comparison this answers.
 
 Only this direction holds.  Its converse would be reflexivity — that comparing a value with itself
 says `Ordering.eq` — and that is false of a value this gives up on, a closure among them, so it is a

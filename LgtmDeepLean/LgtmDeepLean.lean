@@ -5,6 +5,7 @@ public import LgtmDeepLean.Basic
 public import LgtmDeepLean.Lang.Eval
 import LgtmDeepLean.Lang.Eval.Tests
 public import LgtmDeepLean.Lang.IR
+public import LgtmDeepLean.Lang.Progress
 public import LgtmDeepLean.Lang.Syntax
 import LgtmDeepLean.Lang.Syntax.Tests
 public import LgtmDeepLean.Lang.TypeCheck

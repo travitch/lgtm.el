@@ -2017,8 +2017,8 @@ example (v : Value) (args : List Value) (h : shapeProgram.Apply "square" args v)
 new here is a rule whose result is computed from the values rather than copied out of one of them, so
 these examples come in two kinds: the `rfl` that says what a particular comparison came to, and the
 theorems that say what a comparison coming out `true` or `false` *means* — which is
-`Value.eq_of_beq?` and `Value.ne_of_beq?`, and which is the whole reason the form is worth having in
-a proof. -/
+`Value.equiv_of_beq?` and `Value.ne_of_beq?`, and which is the whole reason the form is worth having
+in a proof. -/
 
 -- A comparison of literals is decided by the values they evaluate to, and nothing about the type
 -- compared survives into the result: a `bool` comes back from `int`s, `string`s and `bool`s alike.
@@ -2131,14 +2131,15 @@ example (a b v : Value) (h : FuncDecl.Apply sameTree trees [] [a, b] v) : v.HasT
     (by
       simp [sameTree, List.lookup]; decide)
 
-/-- A comparison that came out `true` is the two values being equal — for any two of them, and
+/-- A comparison that came out `true` is the two values being equivalent — for any two of them, and
 whatever `Tree`s they were.
 
 This is what the form is for.  `EEquals` hands back what `Value.beq?` said, and
 `Value.beq?_eq_some_iff` is what says that answer was the right one, so a `true` reached through a
-comparison is Lean's own `=` for the rest of the proof to work with. -/
-private theorem sameTree.eq_of_true {a b : Value}
-    (h : FuncDecl.Apply sameTree trees [] [a, b] (.bool true)) : a = b := by
+comparison is `Value.Equiv` for the rest of the proof to work with — which is Lean's own `=` at
+every position but a struct's fields, and a `Tree` carries none. -/
+private theorem sameTree.equiv_of_true {a b : Value}
+    (h : FuncDecl.Apply sameTree trees [] [a, b] (.bool true)) : Value.Equiv a b := by
   obtain ⟨-, -, hbody⟩ := h
   cases hbody with
   | EEquals _ _ h₁ h₂ hb =>
@@ -2151,9 +2152,11 @@ private theorem sameTree.eq_of_true {a b : Value}
           List.lookup] at hla hlb
         subst hla
         subst hlb
-        exact Value.eq_of_beq? hb
+        exact Value.equiv_of_beq? hb
 
-/-- And one that came out `false` is them being unequal, which is the other half of the same fact. -/
+/-- And one that came out `false` is them being unequal — Lean's own `≠`, which is the half of the
+fact that matching a struct's fields by name costs nothing: two values a comparison separated are
+different values however either of them carries its fields. -/
 private theorem sameTree.ne_of_false {a b : Value}
     (h : FuncDecl.Apply sameTree trees [] [a, b] (.bool false)) : a ≠ b := by
   obtain ⟨-, -, hbody⟩ := h
@@ -2173,8 +2176,9 @@ private theorem sameTree.ne_of_false {a b : Value}
 /-! ### Structs
 
 A struct value is a name and an association list, so comparing two of them is comparing what their
-fields hold, name for name and in the order the declaration wrote them — which every value of one
-struct type carries them in. -/
+fields hold, name for name — whichever order either of them carries its fields in, since a
+`structNew` may write the declaration's fields in any order and the value keeps the order it was
+written in. -/
 
 /-- Whether two points are the same point. -/
 lgtm private def samePoint as"same-point"(p : struct Point)(q : struct Point) : bool := p == q
@@ -2205,6 +2209,41 @@ example (vp vq v : Value) (h : FuncDecl.Apply samePoint points [] [vp, vq] v) :
   h.hasType Globals.wellTyped_nil
     (by
       simp [samePoint, List.lookup]; decide)
+
+-- The same point written the other way round is the same point: the fields are matched by the names
+-- they were written under, so which order either value was built in decides nothing.  Compared
+-- positionally this pair had no comparison at all — two well-typed values with no value for the
+-- comparison, which `Value.beqFields?` matching by name is what fixed.
+example :
+    Eval points ∅
+      (Expression.equals (.structNew "Point" [("x", .intLit 1), ("y", .intLit 2)])
+        (.structNew "Point" [("y", .intLit 2), ("x", .intLit 1)]))
+      (.bool true) :=
+  .EEquals (v₁ := .struct "Point" [("x", .int 1), ("y", .int 2)])
+    (v₂ := .struct "Point" [("y", .int 2), ("x", .int 1)]) _ _
+    (.EStructNew _ _ rfl
+      (by
+        rintro p hp
+        simp at hp
+        rcases hp with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ <;> exact .EIntLit _))
+    (.EStructNew _ _ rfl
+      (by
+        rintro p hp
+        simp at hp
+        rcases hp with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ <;> exact .EIntLit _))
+    rfl
+
+-- What a `false` takes is a field holding a different value, not a field written somewhere else.
+-- Fields that disagree on *which* names there are get `false` as well, which is a pair typing rules
+-- out rather than one the comparison has nothing to say about.
+example :
+    Value.beq? (.struct "Point" [("x", .int 1), ("y", .int 2)])
+        (.struct "Point" [("y", .int 3), ("x", .int 1)]) = some false :=
+  rfl
+
+example :
+    Value.beq? (.struct "Point" [("x", .int 1)]) (.struct "Point" [("z", .int 1)]) = some false :=
+  rfl
 
 -- An update is what makes two points of one declaration differ, so this is the comparison deciding
 -- something about a value that was computed rather than passed in.
@@ -2687,9 +2726,9 @@ private def sameOpt : FuncDecl where
 #guard (sameOpt.check {} []).isOk
 
 -- And what a comparison coming out `true` *means* holds for options like any other comparable type:
--- it is the two values being equal, which is what `Value.beq?_eq_some_iff` is for.
-private theorem sameOpt.eq_of_true {a b : Value}
-    (h : FuncDecl.Apply sameOpt {} [] [a, b] (.bool true)) : a = b := by
+-- it is the two values being equivalent, which is what `Value.beq?_eq_some_iff` is for.
+private theorem sameOpt.equiv_of_true {a b : Value}
+    (h : FuncDecl.Apply sameOpt {} [] [a, b] (.bool true)) : Value.Equiv a b := by
   obtain ⟨-, -, hbody⟩ := h
   cases hbody with
   | EEquals _ _ h₁ h₂ hb =>
@@ -2702,7 +2741,7 @@ private theorem sameOpt.eq_of_true {a b : Value}
           List.lookup] at hla hlb
         subst hla
         subst hlb
-        exact Value.eq_of_beq? hb
+        exact Value.equiv_of_beq? hb
 
 -- An option of function type is the one option there is no comparing, so a comparison of two of
 -- them is stuck — and `Ty.comparable` is what keeps a well-typed program from reaching it.
@@ -2888,7 +2927,7 @@ example :
 /-- What a get means, for every map and key rather than for one: a lookup that produced a value
 produced one the map binds.
 
-This is the fact a proof about a hashmap carries on with, the way `Value.eq_of_beq?` is for a
+This is the fact a proof about a hashmap carries on with, the way `Value.equiv_of_beq?` is for a
 comparison.  Inverting the rule leaves `KeyValues.lookup?` saying so, and `KeyValues.mem_of_lookup?`
 is what turns that into membership. -/
 private theorem getOr.mem_of_eval {kvs : KeyValues} {k w : Value}

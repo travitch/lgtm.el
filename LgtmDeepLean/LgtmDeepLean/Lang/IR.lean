@@ -155,8 +155,9 @@ as it is the same for both. -/
 
 The two operands must be of the same type.
 
-Two structure values are equal if they are the same type and all of their fields are pointwise
-equal.
+Two structure values are equal if they are the same type and every field holds an equal value under
+the same name.  By name rather than by position, so it does not matter which order either value was
+built with: a `structNew` may write the declaration's fields in any order.
 
 Two inductive values are equal if they are the same type, they were constructed with the same
 constructor tags, and their values are pointwise equal.

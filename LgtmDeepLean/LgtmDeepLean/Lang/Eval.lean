@@ -79,7 +79,8 @@ the same.
 
 One rule rather than the two `ite` has, because what a proof is left with here is not a choice
 between branches but the two values and what `Value.beq?` said about them — which
-`Value.eq_of_beq?` and `Value.ne_of_beq?` turn into Lean's own equality. -/
+`Value.equiv_of_beq?` turns into `Value.Equiv`, Lean's own equality up to the order a struct carries
+its fields in, and `Value.ne_of_beq?` into Lean's own `≠`. -/
   |
   EEquals (l r : Expression) :
     Eval td env l v₁ →
