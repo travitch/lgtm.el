@@ -17,8 +17,10 @@ public import LgtmDeepLean.Lang.TypeCheck.Uniqueness
 public import LgtmDeepLean.Lang.Value
 
 public import LgtmDeepLean.Model.Basic
+public import LgtmDeepLean.Model.Basic.WellFormed
 public import LgtmDeepLean.Model.CommentManager.Operations
 public import LgtmDeepLean.Model.CommentThreads.Operations
+public import LgtmDeepLean.Model.CommentThreads.Properties
 public import LgtmDeepLean.Model.Files.Operations
 public import LgtmDeepLean.Model.Location.Operations
 public import LgtmDeepLean.Model.Location.Properties

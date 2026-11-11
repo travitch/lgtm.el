@@ -432,6 +432,127 @@ public theorem Eval.not_unreachable {td : TypeDecls} {env : Env} {t : Ty} {why :
   rintro h
   cases h
 
+/-! ## Inversion
+
+The rules read backwards: a value the whole form produced, taken apart into the values its
+subexpressions produced.  This is what a proof about a declaration works from — `Eval` is a
+relation, so a theorem about a call starts from the one premise that it has a value at all and
+unpicks it form by form — and these are the same inversion principles `Expression.infer_*_eq_some`
+are for the type checker, which is the other relation stated over an `Expression`.
+
+One per form, each with the premises of its rule as an existential over whatever that rule left
+implicit.  No form below needs a hypothesis to say which rule applied: the expression determines the
+rule, so a value for the form is a value from that rule and nothing else.  `optionMatch` is the one
+exception — it has two rules — and the version here is for the shape the model writes, an
+`unreachable` on the empty case, which `Eval.not_unreachable` rules out.
+
+`ArgsHaveType` premises are dropped: they are what makes a call with ill-typed arguments stuck, and
+nothing a proof of what a call *returned* has further use for.  A caller that wants them can still
+`cases` the evaluation itself. -/
+
+public theorem Eval.varRef_inv {td : TypeDecls} {env : Env} {x : String} {v : Value}
+    (h : Eval td env (.varRef x) v) : env.lookup x = some v := by
+  cases h with
+  | EVarRef _ hx => exact hx
+
+public theorem Eval.lam_inv {td : TypeDecls} {env : Env} {ps : List (String × Ty)}
+    {body : Expression} {v : Value} (h : Eval td env (.lam ps body) v) :
+    v = env.closure ps body := by
+  cases h with
+  | ELam _ _ => rfl
+
+public theorem Eval.let_inv {td : TypeDecls} {env : Env} {x : String} {e body : Expression}
+    {v : Value} (h : Eval td env (.let_ x e body) v) :
+    ∃ w, Eval td env e w ∧ Eval td ⟨(x, w) :: env.bindings, env.globals⟩ body v := by
+  cases h with
+  | ELet _ _ _ he hbody => exact ⟨_, he, hbody⟩
+
+public theorem Eval.structGet_inv {td : TypeDecls} {env : Env} {e : Expression} {f : FieldName}
+    {v : Value} (h : Eval td env (.structGet e f) v) :
+    ∃ name fvs, Eval td env e (.struct name fvs) ∧ fvs.lookup f = some v := by
+  cases h with
+  | EStructGet _ _ he hf => exact ⟨_, _, he, hf⟩
+
+public theorem Eval.tupleGet_inv {td : TypeDecls} {env : Env} {e : Expression} {i : Nat}
+    {v : Value} (h : Eval td env (.tupleGet e i) v) :
+    ∃ vs, Eval td env e (.tuple vs) ∧ vs[i]? = some v := by
+  cases h with
+  | ETupleGet _ _ he hi => exact ⟨_, he, hi⟩
+
+public theorem Eval.tupleNew_inv {td : TypeDecls} {env : Env} {es : List Expression} {v : Value}
+    (h : Eval td env (.tupleNew es) v) :
+    ∃ vs, v = .tuple vs ∧ es.length = vs.length ∧ ∀ p ∈ es.zip vs, Eval td env p.1 p.2 := by
+  cases h with
+  | ETupleNew _ hlen hev => exact ⟨_, rfl, hlen, hev⟩
+
+public theorem Eval.hashmapGet_inv {td : TypeDecls} {env : Env} {m k : Expression}
+    {o : Option Value} (h : Eval td env (.hashmapGet m k) (.option o)) :
+    ∃ kvs vk, Eval td env m (.hashmap kvs) ∧ Eval td env k vk ∧
+      KeyValues.lookup? kvs vk = some o := by
+  cases h with
+  | EHashmapGet _ _ hm hk hlookup => exact ⟨_, _, hm, hk, hlookup⟩
+
+public theorem Eval.hashmapToList_inv {td : TypeDecls} {env : Env} {m : Expression}
+    {vs : List Value} (h : Eval td env (.hashmapToList m) (.list vs)) :
+    ∃ kvs, Eval td env m (.hashmap kvs) ∧ vs = kvs.map fun p => .tuple [p.1, p.2] := by
+  cases h with
+  | EHashmapToList _ hm => exact ⟨_, hm, rfl⟩
+
+/-- A match on an option whose empty case is an `unreachable` took the other case: there is no rule
+for an `unreachable`, so a value for the match at all is a value for the scrutinee. -/
+public theorem Eval.optionMatch_unreachable_inv {td : TypeDecls} {env : Env} {scrut : Expression}
+    {t : Ty} {why x : String} {sbody : Expression} {v : Value}
+    (h : Eval td env (.optionMatch scrut (.unreachable t why) x sbody) v) :
+    ∃ w, Eval td env scrut (.option (some w)) ∧
+      Eval td ⟨(x, w) :: env.bindings, env.globals⟩ sbody v := by
+  cases h with
+  | EOptionMatchNone _ _ _ _ _ hnone => exact absurd hnone Eval.not_unreachable
+  | EOptionMatchSome _ _ _ _ hscrut hbody => exact ⟨_, hscrut, hbody⟩
+
+public theorem Eval.listMap_inv {td : TypeDecls} {env : Env} {e f : Expression} {v : Value}
+    (h : Eval td env (.listMap e f) v) :
+    ∃ vs vs' cb cg ps body, Eval td env e (.list vs) ∧ Eval td env f (.closure cb cg ps body) ∧
+      vs.length = vs'.length ∧
+      (∀ p ∈ vs.zip vs', Eval td (Env.extend ⟨cb, cg⟩ ps [p.1]) body p.2) ∧ v = .list vs' := by
+  cases h with
+  | EListMap _ _ he hf hlen _ hev => exact ⟨_, _, _, _, _, _, he, hf, hlen, hev, rfl⟩
+
+public theorem Eval.listFlatMap_inv {td : TypeDecls} {env : Env} {e f : Expression} {v : Value}
+    (h : Eval td env (.listFlatMap e f) v) :
+    ∃ vs vss cb cg ps body, Eval td env e (.list vs) ∧ Eval td env f (.closure cb cg ps body) ∧
+      vs.length = vss.length ∧
+      (∀ p ∈ vs.zip vss, Eval td (Env.extend ⟨cb, cg⟩ ps [p.1]) body (.list p.2)) ∧
+      v = .list vss.flatten := by
+  cases h with
+  | EListFlatMap _ _ he hf hlen _ hev => exact ⟨_, _, _, _, _, _, he, hf, hlen, hev, rfl⟩
+
+/-- The keys are what the sort's order is read off, so they are what this hands back beside the
+elements: the value is the elements paired with their keys and reordered, which is the rule's own
+`Value.sortByKey`.
+
+The comparability premise is dropped with the `ArgsHaveType` ones.  It is what makes a sort whose
+keys cannot all be compared stuck, and the order the value carries is `Value.sortByKey`'s whether or
+not a proof has it to hand. -/
+public theorem Eval.listSortOn_inv {td : TypeDecls} {env : Env} {e f : Expression} {v : Value}
+    (h : Eval td env (.listSortOn e f) v) :
+    ∃ vs ks cb cg ps body, Eval td env e (.list vs) ∧ Eval td env f (.closure cb cg ps body) ∧
+      vs.length = ks.length ∧
+      (∀ p ∈ vs.zip ks, Eval td (Env.extend ⟨cb, cg⟩ ps [p.1]) body p.2) ∧
+      v = .list ((Value.sortByKey (vs.zip ks)).map Prod.fst) := by
+  cases h with
+  | EListSortOn _ _ he hf hlen _ hev _ => exact ⟨_, _, _, _, _, _, he, hf, hlen, hev, rfl⟩
+
+/-- Sorting by a comparison rearranges and nothing else, which is all this says: the `cmp` the rule
+holds to the DSL function is existential here, so what is left is that the value is *some* stable
+sort of the elements — enough for every fact about which elements it holds, and for nothing about
+the order they are in.  A proof that needs the order has to `cases` the evaluation and work from the
+comparison's own answers. -/
+public theorem Eval.listSortBy_inv {td : TypeDecls} {env : Env} {e f : Expression} {v : Value}
+    (h : Eval td env (.listSortBy e f) v) :
+    ∃ vs cmp, Eval td env e (.list vs) ∧ v = .list (Value.sortWith cmp vs) := by
+  cases h with
+  | EListSortBy _ _ he _ _ _ => exact ⟨_, _, he, rfl⟩
+
 /-- Evaluating a well-typed expression produces a value of its inferred type.
 
 `Expression.unreachable` costs this nothing, for the reason it has no rule: the induction is over
@@ -719,6 +840,31 @@ public theorem FuncDecl.Apply.hasType {d : FuncDecl} {td : TypeDecls} {gs : Glob
   cases h with
   | EApply _ hargs hbody =>
     exact hbody.hasType (Env.hasType_callEnv hgs hargs) (by simpa [FuncDecl.callEnv] using hd)
+
+/-- A body calls another declaration by mentioning its name, and this is that step inverted: an
+`app` whose function is a `varRef` the local bindings do not shadow is a call to whatever the globals
+table declares under that name.
+
+The two hypotheses are what `Env.lookup` consults, in the order it consults them: `hb` says the name
+is not shadowed by a local binding — a parameter or a `let` of that name would be the value called
+instead — and `hd` says what the table has under it.  Neither is about this call, so both are
+discharged once per name by `simp` over the environment a body runs in.
+
+This is the one inversion principle that produces a `FuncDecl.Apply` rather than an `Eval`, which is
+what makes a proof about a declaration that calls others a proof built out of theorems about those
+others rather than one that unfolds them. -/
+public theorem FuncDecl.apply_of_eval_app {td : TypeDecls} {env : Env} {x : String} {d : FuncDecl}
+    {args : List Expression} {v : Value} (hd : env.globals.lookup x = some d)
+    (hb : env.bindings.lookup x = none) (h : Eval td env (.app (.varRef x) args) v) :
+    ∃ vs, args.length = vs.length ∧ (∀ p ∈ args.zip vs, Eval td env p.1 p.2) ∧
+      d.Apply td env.globals vs v := by
+  cases h with
+  | EApp f as hf hlen hargs hat hbody =>
+    have hx := Eval.varRef_inv hf
+    rw [Env.lookup_of_globals hb, hd, Option.map_some, Option.some.injEq] at hx
+    simp only [Globals.value, Globals.env, Env.closure, Value.closure.injEq] at hx
+    obtain ⟨rfl, rfl, rfl, rfl⟩ := hx
+    exact ⟨_, hlen, hargs, .EApply _ hat (by simpa [FuncDecl.callEnv, Globals.env] using hbody)⟩
 
 /-- Every declaration in a well-typed globals table is well typed, so a call to any of them returns
 a value of the type it declares. -/
