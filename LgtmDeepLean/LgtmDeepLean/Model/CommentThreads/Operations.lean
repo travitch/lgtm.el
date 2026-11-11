@@ -46,7 +46,12 @@ lgtm def CommentThreads.toThreadsOrdered (threads : struct CommentThreads) (mana
   flatMap CommentThreads.asAlist(threads, manager) (fun (locThreads : tuple(inductive ThreadLocation, list (struct CommentThread))) => locThreads.1)
 
 
+lgtm def CommentThreads.rootComments (threads : struct CommentThreads) (manager : struct CommentManager) : list (struct Comment) :=
+  map list CommentThreads.toThreadsOrdered(threads, manager) (fun (tree : struct CommentThread) => match CommentManager.get(manager, tree.value) with
+    | none => unreachable "Comments must be defined in the CommentManager" : struct Comment
+    | some(c) => c)
+
 def Model.CommentThreads.funcDecls : List FuncDecl :=
-  [CommentThreads.isEmpty, CommentThreads.commentCount, CommentThreads.asAlist.sortThreadLists, CommentThreads.asAlist, CommentThreads.toThreadsOrdered]
+  [CommentThreads.isEmpty, CommentThreads.commentCount, CommentThreads.asAlist.sortThreadLists, CommentThreads.asAlist, CommentThreads.toThreadsOrdered, CommentThreads.rootComments]
 
 end
