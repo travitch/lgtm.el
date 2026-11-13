@@ -722,8 +722,15 @@ syntax :max lgtmExpr:max noWs "." noWs num : lgtmExpr
 
 /-- One alternative of a `match`: the constructor's name, the names to bind the values it carries to,
 and the expression to evaluate when the value was built by it.  A constructor that carries nothing
-takes no parentheses. -/
-public syntax lgtmAlt := " | " ident ("(" ident,* ")")? " => " lgtmExpr
+takes no parentheses.
+
+`none` and `some` are read as keywords here rather than as identifiers, so that an editor colours
+them the way it colours the `none` and `some` expression forms — a token is what semantic
+highlighting is given, and an identifier the DSL binds no Lean variable for is given nothing.  The
+heads are tried in that order and an identifier last, so every other constructor still parses as
+one; `elabLgtmExpr` stands the identifier a keyword head names back in its place, so nothing after
+the parser tells the two apart. -/
+public syntax lgtmAlt := " | " (&"none" <|> &"some" <|> ident) ("(" ident,* ")")? " => " lgtmExpr
 
 /-- `match c with | Red => 0 | Rgb(r, g, b) => r` takes a value of an inductive type apart.
 
@@ -1089,8 +1096,15 @@ meta partial def elabLgtmExprCore (ctx : Context) (stx : TSyntax `lgtmExpr) :
   | `(lgtmExpr| none : $t) => return .optionNone (← elabLgtmTy t)
   | `(lgtmExpr| unreachable $why:str : $t) => return .unreachable (← elabLgtmTy t) why.getString
   | `(lgtmExpr| match $e with $alts:lgtmAlt*) => do
+      -- A `none` or `some` head is a keyword token where the others have an identifier.  Standing
+      -- the identifier it names in its place, at the token's position, is what lets the readings
+      -- below take every head the same way and keeps an error reported on the token itself.
+      let withIdentHead (alt : TSyntax `lgtmAlt) : TSyntax `lgtmAlt :=
+        let head := alt.raw[1]
+        if head.isIdent then alt
+        else ⟨alt.raw.setArg 1 (mkIdentFrom head[0] (.mkSimple head[0].getAtomVal))⟩
       let parsed ← alts.mapM fun alt =>
-        match alt with
+        match withIdentHead alt with
         | `(lgtmAlt| | $c:ident $[($xs:ident,*)]? => $b:lgtmExpr) =>
             return (c, (xs.map (·.getElems)).getD #[], b)
         | _ => throwErrorAt alt "not an alternative of a match"

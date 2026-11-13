@@ -1166,6 +1166,14 @@ example :
         [("Red", [], .intLit 0), ("Rgb", ["r", "g", "b"], .varRef "r")] :=
   rfl
 
+-- The heads `none` and `some` are keywords, but only exactly: a constructor whose name begins with
+-- one of them is the identifier it looks like, and the alternative an `indMatch`'s.
+example :
+    [lgtm| match c with | noneOfThese => 0 | someThing(y) => y] =
+      Expression.indMatch (.varRef "c")
+        [("noneOfThese", [], .intLit 0), ("someThing", ["y"], .varRef "y")] :=
+  rfl
+
 /-- One more than what `o` holds, and zero when it holds nothing: the two option forms and the match
 between them, which is what a declaration returning an `int` from an option looks like. -/
 lgtm def succOrZero as"succ-or-zero"(o : option int) : int :=
