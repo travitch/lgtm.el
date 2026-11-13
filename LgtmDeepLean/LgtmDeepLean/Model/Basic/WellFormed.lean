@@ -4,11 +4,15 @@ public import LgtmDeepLean.Model.Basic
 
 /-! # Well-formedness of the model's values
 
-What a `CommentManager` and a `CommentThreads` value have to satisfy beyond having the right shape.
-`Value.HasType` says a value is a struct of the right name with a value of the right type under each
-field; what it cannot say is which *key* a comment is bound to, or which node a comment ref resolves
-to — facts that relate two fields of one value to each other and that every declaration reading a
-comment out of a manager depends on.
+What a `CommentManager` and a `CommentThreads` value have to satisfy.  Each predicate's first clause
+is typing: `Value.HasType` says a value is a struct of the right name with a value of the right type
+under each field, and the clauses after it are what it cannot say — which *key* a comment is bound
+to, or which node a comment ref resolves to — facts that relate two fields of one value to each
+other and that every declaration reading a comment out of a manager depends on.
+
+Having typing as a clause is what makes the field types of the model's structs available to the
+theorems below rather than something they would each have to assume: a type table these predicates
+can be read against is one that declares those structs, which is `Model.Declares`.
 
 Extrinsic, in the style of `Value.HasType`: a predicate over the value rather than a field of it.  A
 `Value` is what `Eval` builds, and it carries no proofs, so an invariant about one is a hypothesis a
@@ -21,24 +25,17 @@ that the location roots are duplicate-free — belong here as the theorems that 
 
 @[expose] public section
 
-/-- The value `f` is bound to in a struct value, or `none` where `v` is not a struct that carries
-`f`.
+/-- The structure types a table has to declare for the predicates below to be read against it: the
+model's own declarations, under the model's own names.
 
-The value's own fields, as `Eval`'s `EStructGet` reads them: a field is found by name in what the
-value carries, and no declaration is consulted. -/
-def Value.field? : Value → FieldName → Option Value
-  | .struct _ fvs, f => fvs.lookup f
-  | _, _ => none
-
-/-- The value a hashmap-valued field of `v` binds `k` to, where it binds one.
-
-`KeyValues.lookup?`'s two options collapsed into one: a field that is not a hashmap, a key no answer
-could be given about, and a key the map does not bind are all `none` here, because nothing stated
-over this distinguishes them. -/
-def Value.lookupField? (v : Value) (f : FieldName) (k : Value) : Option Value :=
-  match v.field? f with
-  | some (.hashmap kvs) => (KeyValues.lookup? kvs k).join
-  | _ => none
+A hypothesis on the table rather than `modelProgram.typeDecls` spelled out, which this module cannot
+mention — the model is assembled from modules including this one.  It is also the weaker statement:
+a theorem here reads the field types of `Comment` and friends, and any table agreeing with the model
+at those names serves.  `Model.declares_modelProgram` is where the model's own table meets it. -/
+structure Model.Declares (td : TypeDecls) : Prop where
+  commentManager : td.ss.lookup "CommentManager" = some CommentManager
+  comment : td.ss.lookup "Comment" = some Comment
+  commentThreads : td.ss.lookup "CommentThreads" = some CommentThreads
 
 /-- The comment `manager` binds `ref` to: what a call to `CommentManager.get` answers with, read off
 the value. -/
@@ -72,26 +69,63 @@ is one `CommentManager.rootTimestamp?` has no answer about. -/
 def CommentManager.ContainsComments (manager : Value) (cs : List Value) : Prop :=
   ∀ c ∈ cs, ∃ ref, CommentManager.get? manager ref = some c
 
-/-- The invariants a `CommentManager` value carries that its type does not.
+/-- What a `CommentManager` value has to be: well typed, and well formed besides.
 
 A `structure ... : Prop` rather than a conjunction, so each clause keeps its name and a proof reads
 one off by projection. -/
-structure CommentManager.WellFormed (manager : Value) : Prop where
+structure CommentManager.WellFormed (td : TypeDecls) (manager : Value) : Prop where
+  /-- The value is a `CommentManager` under `td`.
+
+  A clause rather than a hypothesis beside this predicate because everything stated here is about a
+  comment read out of the manager, and typing is what says those comments are `Comment`s — see
+  `CommentManager.hasType_get?`, which is where the clause is spent. -/
+  hasType : manager.HasType td (.struct "CommentManager")
   /-- A comment is bound to its own ref, so a comment found in the manager says which key found it.
   This is what lets a thread node's `value` be turned back into the comment it names. -/
   refMatchesKey : ∀ ref c, CommentManager.get? manager ref = some c → c.field? "ref" = some ref
-  /-- Every comment records its timestamp as an `int`.
 
-  What `Value.HasType` would give of a well-typed manager — `createdTimestamp` is an `int` field of
-  `Comment` — stated here instead so that a theorem about the order comments come out in needs no
-  type table and no typing hypothesis. -/
-  timestampIsInt : ∀ ref c, CommentManager.get? manager ref = some c →
-    ∃ i : Int, c.field? "createdTimestamp" = some (.int i)
-
-/-- The invariant a `CommentThreads` value carries that its type does not: a node is bound to the
-ref of the comment it is the thread of. -/
-structure CommentThreads.WellFormed (threads : Value) : Prop where
+/-- What a `CommentThreads` value has to be: well typed, and a node bound to the ref of the comment
+it is the thread of. -/
+structure CommentThreads.WellFormed (td : TypeDecls) (threads : Value) : Prop where
+  /-- The value is a `CommentThreads` under `td`; `CommentThreads.hasType_node?` is what it buys. -/
+  hasType : threads.HasType td (.struct "CommentThreads")
   rootMatchesKey : ∀ ref node,
     CommentThreads.node? threads ref = some node → node.field? "value" = some ref
+
+/-! ## What typing gives about what is read out
+
+The invariants above say which key a value was found under; these say what the value found is.  Both
+are one application of `Value.hasType_lookupField` to the typing clause and the declaration the
+table holds the struct to: `comments` and `commentTreeNodes` are hashmap fields, so whatever a
+lookup in one of them answers with is of that map's value type, which is all the type of a value
+read out of a manager or a thread pool can be known to be. -/
+
+/-- A comment read out of a well-formed manager is a `Comment`. -/
+theorem CommentManager.hasType_get? {td : TypeDecls} {manager : Value} (hd : Model.Declares td)
+    (hwf : CommentManager.WellFormed td manager) {ref c : Value}
+    (h : CommentManager.get? manager ref = some c) : c.HasType td (.struct "Comment") :=
+  Value.hasType_lookupField hwf.hasType hd.commentManager rfl h
+
+/-- A thread node read out of a well-formed thread pool is a `CommentThread`. -/
+theorem CommentThreads.hasType_node? {td : TypeDecls} {threads : Value} (hd : Model.Declares td)
+    (hwf : CommentThreads.WellFormed td threads) {ref node : Value}
+    (h : CommentThreads.node? threads ref = some node) :
+    node.HasType td (.struct "CommentThread") :=
+  Value.hasType_lookupField hwf.hasType hd.commentThreads rfl h
+
+/-- Every comment in the manager records its timestamp as an `int`.
+
+Was a clause of `CommentManager.WellFormed`, so that a theorem about the order comments come out in
+needed no type table and no typing hypothesis; now that typing is a clause it is a consequence, and
+one a caller of `CommentThreads.asAlist` no longer has to be handed separately.  `createdTimestamp`
+is an `int` field of `Comment`, and `CommentManager.hasType_get?` says the comment is one. -/
+theorem CommentManager.timestampIsInt {td : TypeDecls} {manager : Value} (hd : Model.Declares td)
+    (hwf : CommentManager.WellFormed td manager) {ref c : Value}
+    (h : CommentManager.get? manager ref = some c) :
+    ∃ i : Int, c.field? "createdTimestamp" = some (.int i) := by
+  have hc := CommentManager.hasType_get? hd hwf h
+  obtain ⟨i, hi⟩ :=
+    Value.hasType_int_iff.mp (Value.hasType_fieldOf hc hd.comment "createdTimestamp")
+  exact ⟨i, hi ▸ Value.field?_fieldOf hc hd.comment "createdTimestamp"⟩
 
 end

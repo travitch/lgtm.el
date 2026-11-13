@@ -1356,6 +1356,153 @@ declaration, and through it the types the constructor's data is held to. -/
   · rintro ⟨d, ts, hd, hc, hlen, htys, rfl⟩
     exact .ind hd hc hlen htys
 
+/-! ### What a value of a base type is
+
+The inversions above are indexed on the value's constructor and answer what its type must be.  These
+three go the other way — the type is given and the value's shape is the unknown — which is the
+direction a reader of a well-typed value needs: a declaration says a field is an `int`, and what
+follows is that whatever is bound there is an `.int`.  Nothing is existential beyond the payload,
+since a base type is carried by exactly one constructor. -/
+
+/-- A value of type `.int` is an `.int`. -/
+@[simp] public theorem Value.hasType_int_iff {td : TypeDecls} {v : Value} :
+    Value.HasType td v .int ↔ ∃ i : Int, v = .int i := by
+  constructor
+  · intro h
+    cases h with
+    | int i => exact ⟨i, rfl⟩
+  · rintro ⟨i, rfl⟩
+    exact .int i
+
+/-- A value of type `.string` is a `.string`. -/
+@[simp] public theorem Value.hasType_string_iff {td : TypeDecls} {v : Value} :
+    Value.HasType td v .string ↔ ∃ s : String, v = .string s := by
+  constructor
+  · intro h
+    cases h with
+    | string s => exact ⟨s, rfl⟩
+  · rintro ⟨s, rfl⟩
+    exact .string s
+
+/-- A value of type `.bool` is a `.bool`. -/
+@[simp] public theorem Value.hasType_bool_iff {td : TypeDecls} {v : Value} :
+    Value.HasType td v .bool ↔ ∃ b : Bool, v = .bool b := by
+  constructor
+  · intro h
+    cases h with
+    | bool b => exact ⟨b, rfl⟩
+  · rintro ⟨b, rfl⟩
+    exact .bool b
+
+/-! ### Reading a struct value's fields
+
+What `Eval`'s `EStructGet` and `hashmapGet` read off a value, with the shapes neither of them can
+reach answered `none`, and what typing then gives about the result.  Both are language-level
+notions: the declaration appears in the lemmas, never in the definitions.  `Value.fieldOf` is where
+the two meet — the struct read given its declaration and its typing up front, and so total. -/
+
+/-- The value `f` is bound to in a struct value, or `none` where `v` is not a struct that carries
+`f`.
+
+The value's own fields, as `Eval`'s `EStructGet` reads them: a field is found by name in what the
+value carries, and no declaration is consulted. -/
+@[expose] public def Value.field? : Value → FieldName → Option Value
+  | .struct _ fvs, f => fvs.lookup f
+  | _, _ => none
+
+/-- The value a hashmap-valued field of `v` binds `k` to, where it binds one.
+
+`KeyValues.lookup?`'s two options collapsed into one: a field that is not a hashmap, a key no answer
+could be given about, and a key the map does not bind are all `none` here, because nothing stated
+over this distinguishes them. -/
+@[expose] public def Value.lookupField? (v : Value) (f : FieldName) (k : Value) : Option Value :=
+  match v.field? f with
+  | some (.hashmap kvs) => (KeyValues.lookup? kvs k).join
+  | _ => none
+
+/-- A declared field of a well-typed struct value is there, at the type declared for it.
+
+This is what makes typing worth having to a reader of a value: `Value.field?` is partial because a
+value carries whatever it was built with, and the two halves of `Value.HasType`'s struct case remove
+both ways it can fail — the domains agreeing says a declared field is bound at all, and the typing
+clause says what is bound there is of the declared type.  The declaration is a hypothesis rather
+than existential so that a caller who already has `td.ss.lookup name = some sd` to hand — which is
+how a field name is known to be declared in the first place — spends it here. -/
+public theorem Value.hasType_field {td : TypeDecls} {v : Value} {name : String} {sd : StructDecl}
+    {f : FieldName} {t : Ty} (hv : v.HasType td (.struct name))
+    (hsd : td.ss.lookup name = some sd) (hf : sd.fields.lookup f = some t) :
+    ∃ w, v.field? f = some w ∧ w.HasType td t := by
+  cases hv with
+  | @struct _ sd' fvs hsd' hdom htys =>
+      obtain rfl : sd' = sd := by grind
+      have hdomf : (fvs.lookup f).isSome := by rw [← hdom f, hf]; rfl
+      obtain ⟨w, hw⟩ := Option.isSome_iff_exists.mp hdomf
+      exact ⟨w, by simpa [Value.field?] using hw, htys f t w hf hw⟩
+
+/-- Every value a hashmap-valued field binds is of that map's value type.
+
+`Value.lookupField?` is three failures deep, and typing closes all three: the field is declared, so
+it is there; its declared type is a hashmap type, so what is there is a `.hashmap`; and a hashmap's
+values are homogeneous, so the binding the lookup found — whichever key it was found under — is at
+the value type.  The key's type never comes into it, which is why it is not mentioned in the
+conclusion. -/
+public theorem Value.hasType_lookupField {td : TypeDecls} {v : Value} {name : String}
+    {sd : StructDecl} {f : FieldName} {kt vt : Ty} {k w : Value}
+    (hv : v.HasType td (.struct name)) (hsd : td.ss.lookup name = some sd)
+    (hf : sd.fields.lookup f = some (.hashmap kt vt)) (h : v.lookupField? f k = some w) :
+    w.HasType td vt := by
+  obtain ⟨m, hm, hmty⟩ := Value.hasType_field hv hsd hf
+  rw [Value.lookupField?, hm] at h
+  cases hmty with
+  | @hashmap kvs _ _ hkeys hvals =>
+      have hj : KeyValues.lookup? kvs k = some (some w) := by
+        cases hl : KeyValues.lookup? kvs k with
+        | none => simp [hl] at h
+        | some o => cases o <;> simp_all
+      obtain ⟨k', hk'⟩ := KeyValues.mem_of_lookup? hj
+      exact hvals (k', w) hk'
+
+/-- The value `f` is bound to in a well-typed struct value, with no `Option` for the caller to case
+on.
+
+Total where `Value.field?` is partial, because `Value.hasType_field` says a declared field of a
+well-typed struct value is bound: this is that `isSome` spent on an `Option.get`.  The `:= by rfl` on
+`hf` is what makes the read checked — at a use site `sd` is a `StructDecl` constant, so the side
+condition really is `rfl`, a field name nothing declares is an elaboration error rather than a silent
+`none`, and the field's type `t` is read off the declaration rather than written out.
+
+A hashmap read stays `Option`-valued (`Value.lookupField?`): an unbound key is a legitimate `none`,
+and nothing here proves `Value.beq?` total even on `Ty.comparable` key types — `Progress.lean`
+enumerates `hashmapGetIncomparable` in `Stuck` rather than ruling it out. -/
+@[expose] public def Value.fieldOf {td : TypeDecls} {name : String} {sd : StructDecl} {t : Ty}
+    (v : Value) (hv : v.HasType td (.struct name)) (hsd : td.ss.lookup name = some sd)
+    (f : FieldName) (hf : sd.fields.lookup f = some t := by rfl) : Value :=
+  (v.field? f).get <| by
+    obtain ⟨w, hw, -⟩ := Value.hasType_field hv hsd hf
+    rw [hw]
+    rfl
+
+/-- `Value.fieldOf` answers what `Value.field?` answers, which is what makes the two forms
+interchangeable: every statement phrased over `field?` — `refMatchesKey`, `rootMatchesKey`,
+`CommentManager.rootTimestamp?` — reads as one about the total form by rewriting with this. -/
+public theorem Value.field?_fieldOf {td : TypeDecls} {v : Value} {name : String} {sd : StructDecl}
+    {t : Ty} (hv : v.HasType td (.struct name)) (hsd : td.ss.lookup name = some sd)
+    (f : FieldName) (hf : sd.fields.lookup f = some t := by rfl) :
+    v.field? f = some (v.fieldOf hv hsd f hf) :=
+  (Option.some_get _).symm
+
+/-- A field read at its declared type, which is what lets reads chain: this is the `hv` the next read
+takes, so `(c.fieldOf hc hd.comment "ref").fieldOf (hasType_fieldOf hc hd.comment "ref") hcr "id"`
+reads a field of a field with no intervening `obtain`.  `Value.hasType_field` over the total form. -/
+public theorem Value.hasType_fieldOf {td : TypeDecls} {v : Value} {name : String} {sd : StructDecl}
+    {t : Ty} (hv : v.HasType td (.struct name)) (hsd : td.ss.lookup name = some sd)
+    (f : FieldName) (hf : sd.fields.lookup f = some t := by rfl) :
+    (v.fieldOf hv hsd f hf).HasType td t := by
+  obtain ⟨w, hw, hty⟩ := Value.hasType_field hv hsd hf
+  obtain rfl : w = v.fieldOf hv hsd f hf :=
+    Option.some.inj (hw.symm.trans (Value.field?_fieldOf hv hsd f hf))
+  exact hty
+
 /-- The values a list of expressions evaluated to have the types inference gave those expressions,
 one for one and in order.
 

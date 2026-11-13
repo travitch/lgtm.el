@@ -26,7 +26,13 @@ per-module check cannot — two modules declaring one name, and a declaration wh
 not yet have everything it mentions.
 
 `run_meta` rather than `#guard`: `#guard` tests a `Bool` and so reports only that the program did
-not check, while the checker's message says which declaration and what about it. -/
+not check, while the checker's message says which declaration and what about it.
+
+This is the diagnostic, not the fact: a `run_meta` leaves no proof term behind, so nothing stated
+about the model can use it.  `modelProgram.check_eq_ok` in `LgtmDeepLean.Model.WellTyped` is the
+fact, and it is the same check run by the kernel rather than by `run_meta`.  Both are worth keeping,
+and the difference is only what a failure reads like: there, that the program does not check; here,
+which declaration and what about it. -/
 
 run_meta do
   match modelProgram.check with

@@ -26,3 +26,4 @@ public import LgtmDeepLean.Model.Location.Operations
 public import LgtmDeepLean.Model.Location.Properties
 public import LgtmDeepLean.Model.Program
 import LgtmDeepLean.Model.Tests
+public import LgtmDeepLean.Model.WellTyped

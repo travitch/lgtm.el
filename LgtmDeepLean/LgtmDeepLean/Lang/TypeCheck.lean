@@ -7,7 +7,7 @@ public import LgtmDeepLean.Lang.TypeCheck.TypeDecls
 public import LgtmDeepLean.Lang.TypeCheck.Uniqueness
 
 /-- Check `e` against the expected type `ty` under `ctx`, or describe why it does not check. -/
-public def Expression.check (td : TypeDecls) (ctx : Context) (e : Expression) (ty : Ty) :
+@[expose] public def Expression.check (td : TypeDecls) (ctx : Context) (e : Expression) (ty : Ty) :
     Except String Unit :=
   (e.inferE td ctx).expect ty "this expression"
 
@@ -43,7 +43,7 @@ variable a call. -/
 @[expose] public def FuncDecl.ty (d : FuncDecl) : Ty := .fn (d.parameters.map Prod.snd) d.resultType
 
 /-- The context `gs` supplies: every global's name at the type of the declaration stored for it. -/
-public def Globals.types : Globals → Context
+@[expose] public def Globals.types : Globals → Context
   | [] => []
   | (x, d) :: gs => (x, d.ty) :: Globals.types gs
 
@@ -63,7 +63,7 @@ name was inferred at back to the declaration that gave it. -/
       by_cases h : x == k <;> simp [Globals.types, List.lookup_cons, h, ih]
 
 /-- Type check a declaration. -/
-public def FuncDecl.check (d : FuncDecl) (td : TypeDecls) (gs : Globals) : Except String Unit :=
+@[expose] public def FuncDecl.check (d : FuncDecl) (td : TypeDecls) (gs : Globals) : Except String Unit :=
   (d.body.check td (d.parameters ++ Globals.types gs) d.resultType).mapError
     fun m => s!"in the body of '{d.name}': {m}"
 
@@ -72,8 +72,9 @@ public def FuncDecl.check (d : FuncDecl) (td : TypeDecls) (gs : Globals) : Excep
 public def FuncDecl.WellTyped (d : FuncDecl) (td : TypeDecls) (gs : Globals) : Prop :=
   d.check td gs = .ok ()
 
-/-- `FuncDecl.check`'s body is not visible outside this module, so this is how a proof elsewhere
-gets at what `WellTyped` says: inference on the body finds exactly the declared result type. -/
+/-- What `WellTyped` says, with the message dropped: inference on the body finds exactly the
+declared result type.  This is how a proof reads it where the declaration is not a literal; where it
+is, running `FuncDecl.check` decides it. -/
 @[simp, grind =] public theorem FuncDecl.wellTyped_iff_infer_eq_some {d : FuncDecl} {td : TypeDecls}
     {gs : Globals} :
     d.WellTyped td gs ↔ d.body.infer td (d.parameters ++ Globals.types gs) = some d.resultType := by
@@ -86,9 +87,8 @@ is a condition on syntax alone: no value occurs in it.  That is what keeps it pr
 value-level version would have to type each global's closure, which carries the globals table,
 which would need typing again, and no inductive relation survives that regress.
 
-Exposed, unlike the rest of this module's definitions: it is a specification rather than an
-algorithm, there is nothing in it for an inversion principle to recover, and every consumer needs to
-instantiate it at a name. -/
+Exposed because it is a specification rather than an algorithm: there is nothing in it for an
+inversion principle to recover, and every consumer needs to instantiate it at a name. -/
 @[expose] public def Globals.WellTyped (td : TypeDecls) (gs : Globals) : Prop :=
   ∀ x d, gs.lookup x = some d → d.WellTyped td gs
 
@@ -114,7 +114,7 @@ not check.
 
 The list to walk is the unnamed parameter.  A list of all of the globals (`gs`) is also
 passed in so that globals can refer to each other during checking. -/
-private def Globals.checkEach (td : TypeDecls) (gs : Globals) : Globals → Except String Unit
+@[expose] public def Globals.checkEach (td : TypeDecls) (gs : Globals) : Globals → Except String Unit
   | [] => .ok ()
   | (_, d) :: ds => do
     d.check td gs
@@ -132,7 +132,7 @@ private theorem Globals.checkEach_eq_ok {td : TypeDecls} {gs ds : Globals} :
 /-- Run the checker over a whole table, stopping at the first entry that does not check.  Decides
 `Globals.WellTyped` — `Except.isOk` of this is what a `#guard` over a table asks — even where the
 kernel cannot reduce `Expression.infer`. -/
-public def Globals.check (td : TypeDecls) (gs : Globals) : Except String Unit :=
+@[expose] public def Globals.check (td : TypeDecls) (gs : Globals) : Except String Unit :=
   Globals.checkEach td gs gs
 
 /-- `Globals.check` is what it says it is.  It is the stronger of the two: it checks every entry,
@@ -150,19 +150,19 @@ which those lookups resolve every declaration are in `LgtmDeepLean.Lang.TypeChec
 /-- The first name a list repeats.
 
 This is used to construct error messages. -/
-private def List.firstRepeat : List String → Option String
+public def List.firstRepeat : List String → Option String
   | [] => none
   | n :: ns => if ns.contains n then some n else List.firstRepeat ns
 
 /-- Which structure declaration declares a field name twice, and which name that is. -/
-private def Program.fieldNamesProblem (p : Program) : String :=
+public def Program.fieldNamesProblem (p : Program) : String :=
   match p.structDecls.findSome? fun sd =>
       (List.firstRepeat (sd.fields.map Prod.fst)).map fun f => (sd.name, f) with
   | some (name, f) => s!"struct '{name}' declares the field '{f}' twice"
   | none => "a struct declares a field twice"
 
 /-- Which inductive declaration declares a constructor name twice, and which name that is. -/
-private def Program.ctorNamesProblem (p : Program) : String :=
+public def Program.ctorNamesProblem (p : Program) : String :=
   match p.inductiveDecls.findSome? fun d =>
       (List.firstRepeat (d.constructors.map Prod.fst)).map fun c => (d.name, c) with
   | some (name, c) => s!"inductive '{name}' declares the constructor '{c}' twice"
@@ -178,7 +178,7 @@ which is why they are checked once over the declarations instead of anywhere in 
 
 The conditions across declarations are not part of this; see
 `LgtmDeepLean.Lang.TypeCheck.Uniqueness`. -/
-public def Program.check (p : Program) : Except String Unit :=
+@[expose] public def Program.check (p : Program) : Except String Unit :=
   if p.FieldNamesUnique then
     if p.CtorNamesUnique then Globals.check p.typeDecls p.globals
     else .error p.ctorNamesProblem
@@ -199,7 +199,8 @@ public theorem Program.wellTyped_of_check {p : Program} (h : p.check = .ok ()) :
   · simp at h
 
 /-- The other half of what `Program.check` decided: no structure declaration repeats a field name.
-`Program.check`'s body is not visible outside this module, so this is how a proof gets at it. -/
+A condition on the declarations rather than on any expression, which is why it is read off the
+check's result here instead of appearing in `Program.WellTyped`. -/
 public theorem Program.fieldNamesUnique_of_check {p : Program} (h : p.check = .ok ()) :
     p.FieldNamesUnique := by
   simp only [Program.check] at h

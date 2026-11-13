@@ -87,7 +87,7 @@ lgtm private def revCons as"rev-cons"(x : int)(xs : list int) : list int := reve
 /-- A list of `int`s is homogeneous at `.list .int`, whatever its length. -/
 private theorem hasType_intList {is : List Int} :
     Value.HasType td (.list (is.map .int)) (.list .int) :=
-  .list (by simpa using fun i (_ : i ∈ is) => Value.HasType.int i)
+  .list (by simp)
 
 -- `EListReverse` runs on the list `ECons` has just built, so the element pushed on the front comes
 -- back last.

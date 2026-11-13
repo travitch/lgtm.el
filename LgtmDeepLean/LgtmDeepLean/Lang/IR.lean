@@ -52,7 +52,7 @@ public structure InductiveDecl where
   deriving Repr
 
 mutual
-public def Ty.beq : Ty → Ty → Bool
+@[expose] public def Ty.beq : Ty → Ty → Bool
   | .bool, .bool => true
   | .int, .int => true
   | .string, .string => true
@@ -64,7 +64,7 @@ public def Ty.beq : Ty → Ty → Bool
   | .struct a, .struct b => a == b
   | .ind a, .ind b => a == b
   | _, _ => false
-public def Ty.beqList : List Ty → List Ty → Bool
+@[expose] public def Ty.beqList : List Ty → List Ty → Bool
   | [], [] => true
   | a :: as, b :: bs => Ty.beq a b && Ty.beqList as bs
   | _, _ => false

@@ -40,7 +40,7 @@ theorem listIsSortedPredicate_iff_pairwise (l : List Int) :
 /-- The `Int` a key carries, and a junk answer where it carries none.
 
 Total, because `List.map_mergeSort` needs a function; what the keys really are is `int`s, which is
-what `CommentManager.WellFormed.timestampIsInt` supplies, so the junk answer is never reached. -/
+what `CommentManager.timestampIsInt` supplies, so the junk answer is never reached. -/
 private def keyInt (p : Value × Value) : Int :=
   match p.2 with
   | .int i => i
@@ -239,8 +239,9 @@ what gets from that ref back to the comment the key was read off. -/
 
 theorem CommentThreads.asAlist.sortThreadLists.isSortedByTimestamp {td : TypeDecls} {gs : Globals}
     {threads manager loc : Value} {roots : List Value} {result : Value}
-    (hThreadsWF : CommentThreads.WellFormed threads)
-    (hManagerWF : CommentManager.WellFormed manager)
+    (hDeclares : Model.Declares td)
+    (hThreadsWF : CommentThreads.WellFormed td threads)
+    (hManagerWF : CommentManager.WellFormed td manager)
     (hroots : CommentManager.ContainsComments manager roots)
     (h : CommentThreads.asAlist.sortThreadLists.Apply td gs
       [threads, manager, .tuple [loc, .list roots]] result) :
@@ -273,7 +274,7 @@ theorem CommentThreads.asAlist.sortThreadLists.isSortedByTimestamp {td : TypeDec
   have hkeyInt : ∀ p ∈ roots.zip ks, ∃ i : Int, p.2 = .int i := by
     intro p hp
     obtain ⟨ref, href⟩ := hroots p.1 (List.of_mem_zip hp).1
-    obtain ⟨i, hi⟩ := hManagerWF.timestampIsInt ref p.1 href
+    obtain ⟨i, hi⟩ := CommentManager.timestampIsInt hDeclares hManagerWF href
     exact ⟨i, by simpa using (hkeyField p hp).symm.trans hi⟩
   -- Each sorted comment was replaced by the node its ref resolves to.
   obtain ⟨sr, ts, _cb, _cg, _ps, _mapBody, hsr, hfn, hmlen, hmev, rfl⟩ := Eval.listMap_inv hmap
@@ -328,7 +329,7 @@ theorem CommentThreads.asAlist.sortThreadLists.isSortedByTimestamp {td : TypeDec
     obtain rfl : ref' = ref := by
       simpa [href] using (hManagerWF.refMatchesKey ref' c href').symm
     exact href'
-  obtain ⟨i', hi'⟩ := hManagerWF.timestampIsInt ref c hget
+  obtain ⟨i', hi'⟩ := CommentManager.timestampIsInt hDeclares hManagerWF hget
   obtain rfl : key = .int i' := by simpa using (hkeyField (c, key) hmem).symm.trans hi'
   simp [CommentManager.rootTimestamp?, hThreadsWF.rootMatchesKey ref thread hnoderef, hget, hi',
     keyInt]
@@ -340,8 +341,9 @@ theorem CommentThreads.asAlist.threadLocationsSortedByTimestamp {td : TypeDecls}
     (hSortThreadLists : gs.lookup "CommentThreads.asAlist.sortThreadLists" =
       some CommentThreads.asAlist.sortThreadLists)
     (hGet : gs.lookup "CommentManager.get" = some CommentManager.get)
-    (hThreadsWF : CommentThreads.WellFormed threads)
-    (hManagerWF : CommentManager.WellFormed manager)
+    (hDeclares : Model.Declares td)
+    (hThreadsWF : CommentThreads.WellFormed td threads)
+    (hManagerWF : CommentManager.WellFormed td manager)
     (h : CommentThreads.asAlist.Apply td gs [threads, manager] (.list groups)) :
     ∀ group ∈ groups, ∃ loc ts stamps, group = .tuple [loc, .list ts] ∧
       ts.length = stamps.length ∧
@@ -351,7 +353,8 @@ theorem CommentThreads.asAlist.threadLocationsSortedByTimestamp {td : TypeDecls}
   obtain ⟨loc, roots, hroots, happly⟩ :=
     CommentThreads.asAlist.sortThreadLists_apply_of_mem hSortThreadLists hGet h group hgroup
   obtain ⟨ts, stamps, hgeq, hlen, hstamps, hsorted⟩ :=
-    CommentThreads.asAlist.sortThreadLists.isSortedByTimestamp hThreadsWF hManagerWF hroots happly
+    CommentThreads.asAlist.sortThreadLists.isSortedByTimestamp hDeclares hThreadsWF hManagerWF
+      hroots happly
   exact ⟨loc, ts, stamps, hgeq, hlen, hstamps, hsorted⟩
 
 /-! ## The whole list
@@ -368,8 +371,9 @@ theorem CommentThreads.toThreadsOrdered.groupsAreSorted {td : TypeDecls} {gs : G
     (hSortThreadLists : gs.lookup "CommentThreads.asAlist.sortThreadLists" =
       some CommentThreads.asAlist.sortThreadLists)
     (hGet : gs.lookup "CommentManager.get" = some CommentManager.get)
-    (hThreadsWF : CommentThreads.WellFormed threads)
-    (hManagerWF : CommentManager.WellFormed manager)
+    (hDeclares : Model.Declares td)
+    (hThreadsWF : CommentThreads.WellFormed td threads)
+    (hManagerWF : CommentManager.WellFormed td manager)
     (h : CommentThreads.toThreadsOrdered.Apply td gs [threads, manager] (.list ordered)) :
     ∃ groups, CommentThreads.asAlist.Apply td gs [threads, manager] (.list groups) ∧
       ∀ group ∈ groups, ∃ loc ts stamps, group = .tuple [loc, .list ts] ∧
@@ -400,8 +404,8 @@ theorem CommentThreads.toThreadsOrdered.groupsAreSorted {td : TypeDecls} {gs : G
   simp only [FuncDecl.callEnv, Globals.env, Env.globals_extend] at happly
   refine ⟨groups, happly, fun group hgroup => ?_⟩
   obtain ⟨loc, ts, stamps, rfl, hlen, hstamps, hsorted⟩ :=
-    CommentThreads.asAlist.threadLocationsSortedByTimestamp hSortThreadLists hGet hThreadsWF
-      hManagerWF happly group hgroup
+    CommentThreads.asAlist.threadLocationsSortedByTimestamp hSortThreadLists hGet hDeclares
+      hThreadsWF hManagerWF happly group hgroup
   -- And the group's own threads are one of the lists being run together.
   obtain ⟨l, hpair⟩ := exists_mem_zip_of_mem_left hflen hgroup
   obtain ⟨tvs, hscrut, hidx⟩ := Eval.tupleGet_inv (hfev _ hpair)
@@ -420,8 +424,9 @@ a fact about the model rather than about any table that happens to declare the r
 is what says those hypotheses are not vacuous. -/
 
 theorem CommentThreads.toThreadsOrdered.groupsAreSorted_modelProgram {threads manager : Value}
-    {ordered : List Value} (hThreadsWF : CommentThreads.WellFormed threads)
-    (hManagerWF : CommentManager.WellFormed manager)
+    {ordered : List Value}
+    (hThreadsWF : CommentThreads.WellFormed modelProgram.typeDecls threads)
+    (hManagerWF : CommentManager.WellFormed modelProgram.typeDecls manager)
     (h : modelProgram.Apply "CommentThreads.toThreadsOrdered" [threads, manager] (.list ordered)) :
     ∃ groups,
       CommentThreads.asAlist.Apply modelProgram.typeDecls modelProgram.globals [threads, manager]
@@ -434,6 +439,7 @@ theorem CommentThreads.toThreadsOrdered.groupsAreSorted_modelProgram {threads ma
   obtain rfl : CommentThreads.toThreadsOrdered = d := by
     simpa using (show modelProgram.lookup "CommentThreads.toThreadsOrdered" =
       some CommentThreads.toThreadsOrdered from rfl).symm.trans hd
-  exact CommentThreads.toThreadsOrdered.groupsAreSorted rfl rfl rfl hThreadsWF hManagerWF happly
+  exact CommentThreads.toThreadsOrdered.groupsAreSorted rfl rfl rfl Model.declares_modelProgram
+    hThreadsWF hManagerWF happly
 
 end

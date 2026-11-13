@@ -9,8 +9,15 @@ public import LgtmDeepLean.Lang.TypeCheck.TypeDecls
 `Expression.inferE` and the three walks it is mutual with, one per kind of list an expression holds,
 each answering with the type it inferred or with a description of why there is none.
 `Expression.infer` is that answer with the description dropped, and it is what the rest of the
-development is stated over, with an inversion principle apiece: `inferE`'s body is not visible
-outside this module, so those lemmas are the whole of what a proof elsewhere can use.
+development is stated over, with an inversion principle apiece: those lemmas are what a proof about
+the type of an expression that is *not* a literal — a variable, or one checked under a context that
+is — has to go through, since there is nothing in such a goal to evaluate.
+
+The walks are exposed, so a goal in which both the expression and the context are literals is
+instead decided by running them: that is what `modelProgram.check_eq_ok` does, and it is why nothing
+in `LgtmDeepLean.Model.WellTyped` names a declaration.  Exposure is for the kernel, not an
+invitation to unfold these in a proof — a `simp` reaching into `inferE` produces the whole walk
+where an inversion lemma produces the one premise the form imposes.
 
 What an expression is inferred under is here too — `Context`, the types of the variables in scope —
 along with the two conditions inference states over lists rather than over any one subexpression:
@@ -44,7 +51,7 @@ public theorem Context.lookup_append {ctx₁ ctx₂ : Context} {x : String} :
 
 This is used to validate that all of the branches of an `indMatch` have the same type.  If the list
 is empty, also return `none`. -/
-public def Ty.common : List Ty → Option Ty
+@[expose] public def Ty.common : List Ty → Option Ty
   | [] => none
   | t :: ts => if ts.all (· == t) then some t else none
 
@@ -254,21 +261,21 @@ nothing says no more than `none`, and this is where the reason is supplied.
 
 The message is a function because this is on the path a well-typed program takes: a name that
 resolves builds no string. -/
-public def Except.ofOption {α : Type} (o : Option α) (err : Unit → String) : Except String α :=
+@[expose] public def Except.ofOption {α : Type} (o : Option α) (err : Unit → String) : Except String α :=
   match o with
   | some a => .ok a
   | none => .error (err ())
 
 /-- An inferred type required to be `t` exactly.  `what` names the position it was inferred for, as
 in `the left operand of `+``. -/
-public def Except.expect (r : Except String Ty) (t : Ty) (what : String) : Except String Unit :=
+@[expose] public def Except.expect (r : Except String Ty) (t : Ty) (what : String) : Except String Unit :=
   match r with
   | .error m => .error m
   | .ok t' => if t' == t then .ok () else .error s!"{what} has type {t'} where {t} was expected"
 
 /-- The first position at which two lists of types differ, with the type each gives there: what a
 message about an argument list names once the list is known to be the right length. -/
-private def Ty.firstMismatch : Nat → List Ty → List Ty → Option (Nat × Ty × Ty)
+@[expose] public def Ty.firstMismatch : Nat → List Ty → List Ty → Option (Nat × Ty × Ty)
   | _, [], _ => none
   | _, _, [] => none
   | i, t :: ts, t' :: ts' => if t' == t then Ty.firstMismatch (i + 1) ts ts' else some (i, t, t')
@@ -291,7 +298,7 @@ private theorem Ty.firstMismatch_eq_none {ts ts' : List Ty} (h : ts'.length = ts
 How many there are first and then the first position where they disagree, because `Ty.fn` records
 every parameter at once: a call passing too few arguments is ill typed rather than partially
 applied, and that is a different thing to say than that an argument is of the wrong type. -/
-public def Except.expectAll (r : Except String (List Ty)) (ts : List Ty) (what : String) :
+@[expose] public def Except.expectAll (r : Except String (List Ty)) (ts : List Ty) (what : String) :
     Except String Unit :=
   match r with
   | .error m => .error m
@@ -369,7 +376,7 @@ carried a message, and these only say which entry of which list it was.  That is
 total — there is always something to say, even where nothing in particular can be pointed at. -/
 
 /-- The first field given that the declaration does not have, or does not have at the type given. -/
-private def Expression.fieldProblem (name : String) (fs fts : List (FieldName × Ty)) : String :=
+public def Expression.fieldProblem (name : String) (fs fts : List (FieldName × Ty)) : String :=
   match fts.find? fun p => fs.lookup p.1 != some p.2 with
   | some (f, t) =>
     match fs.lookup f with
@@ -379,7 +386,7 @@ private def Expression.fieldProblem (name : String) (fs fts : List (FieldName ×
 
 /-- Why the fields given are not the declaration's: one of them is wrong, or one is missing, or one
 is given twice — the three things `Expression.fieldsComplete` turns down. -/
-private def Expression.fieldsProblem (name : String) (fs fts : List (FieldName × Ty)) : String :=
+public def Expression.fieldsProblem (name : String) (fs fts : List (FieldName × Ty)) : String :=
   if fts.any fun p => fs.lookup p.1 != some p.2 then Expression.fieldProblem name fs fts
   else
     match fs.find? fun p => !(fts.map Prod.fst).contains p.1 with
@@ -388,7 +395,7 @@ private def Expression.fieldsProblem (name : String) (fs fts : List (FieldName �
 
 /-- Why a match's alternatives are not one apiece for the constructors: one is for a constructor the
 declaration does not have, or one of the declaration's has none, or one is covered twice. -/
-private def Expression.altsProblem (name : String) (cs : List (CtorName × List Ty))
+public def Expression.altsProblem (name : String) (cs : List (CtorName × List Ty))
     (alts : List (CtorName × List String × Expression)) : String :=
   match alts.find? fun a => !(cs.map Prod.fst).contains a.1 with
   | some a => s!"'{a.1}' is not a constructor of inductive '{name}'"
@@ -399,14 +406,14 @@ private def Expression.altsProblem (name : String) (cs : List (CtorName × List 
 
 /-- Why the types of a match's alternatives have no type in common: they disagree, or there are no
 alternatives at all. -/
-private def Expression.commonProblem (rs : List Ty) : String :=
+public def Expression.commonProblem (rs : List Ty) : String :=
   match rs with
   | [] => "this match has no alternatives, so there is no type for it to have"
   | _ => s!"the alternatives of this match have types {Ty.renderGroup rs}, which differ"
 
 /-- Why a type cannot be a hashmap's keys: a map is read by comparing the key given against the keys
 it carries, so a key type no comparison reaches the bottom of is one no lookup could answer. -/
-private def Ty.keyProblem (kt : Ty) : String :=
+public def Ty.keyProblem (kt : Ty) : String :=
   s!"{kt} cannot be a hashmap's key type, since values of it cannot be compared"
 
 mutual
@@ -414,7 +421,7 @@ mutual
 
 Every rule either reports its own condition or passes along what a subexpression reported, so what
 comes out of a nest of forms names the innermost expression that nothing could be done with. -/
-public def Expression.inferE (td : TypeDecls) (ctx : Context) : Expression → Except String Ty
+@[expose] public def Expression.inferE (td : TypeDecls) (ctx : Context) : Expression → Except String Ty
   | .lam ps body => do
     let r ← body.inferE td (ps ++ ctx)
     .ok (.fn (ps.map Prod.snd) r)
@@ -674,7 +681,7 @@ public def Expression.inferE (td : TypeDecls) (ctx : Context) : Expression → E
     | .error m => .error m
   | .unreachable t _ => .ok t
 /-- Infer the types of `es`, in order, or describe why one of them has none. -/
-public def Expression.inferListE (td : TypeDecls) (ctx : Context) :
+@[expose] public def Expression.inferListE (td : TypeDecls) (ctx : Context) :
     List Expression → Except String (List Ty)
   | [] => .ok []
   | e :: es => do
@@ -687,7 +694,7 @@ of them has none.
 The result is an association list of the fields given, in the order given, which is what lets
 `structNew` compare it against a declaration's field list in one step.  `structUpdate`, which names
 only some of the fields, reads it with `lookup` instead. -/
-public def Expression.inferFieldsE (td : TypeDecls) (ctx : Context) :
+@[expose] public def Expression.inferFieldsE (td : TypeDecls) (ctx : Context) :
     List (FieldName × Expression) → Except String (List (FieldName × Ty))
   | [] => .ok []
   | (f, e) :: fes => do
@@ -697,7 +704,7 @@ public def Expression.inferFieldsE (td : TypeDecls) (ctx : Context) :
 /-- Infer the type of each alternative's expression, in the order the alternatives were written, or
 describe why one of them is for a constructor `cs` does not declare, binds the wrong number of
 names, or has an expression with no type. -/
-public def Expression.inferAltsE (td : TypeDecls) (ctx : Context) (cs : List (CtorName × List Ty)) :
+@[expose] public def Expression.inferAltsE (td : TypeDecls) (ctx : Context) (cs : List (CtorName × List Ty)) :
     List (CtorName × List String × Expression) → Except String (List Ty)
   | [] => .ok []
   | (c, xs, body) :: alts => do
@@ -728,7 +735,7 @@ program.
 `Expression.check` — in `LgtmDeepLean.Lang.TypeCheck` — is where the message is picked back up. -/
 
 /-- Infer the type of `e` under `ctx`, or `none` if `e` is ill typed. -/
-public def Expression.infer (td : TypeDecls) (ctx : Context) (e : Expression) : Option Ty :=
+@[expose] public def Expression.infer (td : TypeDecls) (ctx : Context) (e : Expression) : Option Ty :=
   (e.inferE td ctx).toOption
 
 /-- Infer the types of `es`, in order, or `none` if any one of them is ill typed. -/
@@ -756,9 +763,10 @@ public theorem Expression.inferE_eq_ok_iff {td : TypeDecls} {ctx : Context} {e :
 
 /-! Inversion principles for `infer`, one per syntactic form.
 
-`infer`'s body is not visible outside this module, so a proof elsewhere cannot unfold it and has
-to go through these instead.  They are `simp` lemmas, so a hypothesis `e.infer td ctx = some t`
-decomposes into premises about `e`'s subterms automatically. -/
+What a proof elsewhere reads `e.infer td ctx = some t` with, rather than unfolding the walk: each
+says what one form imposes and nothing about how the walk reaches it.  They are `simp` lemmas, so
+such a hypothesis decomposes into premises about `e`'s subterms automatically — which is what an
+unfolding would not do, and is why these remain the way in even though `infer` is exposed. -/
 
 @[simp, grind =]
 public theorem Expression.infer_varRef {td : TypeDecls} {ctx : Context} {x : String} :
