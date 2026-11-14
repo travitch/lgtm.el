@@ -229,6 +229,17 @@ This is a special form (instead of `indMatch`) because options get compiled away
   /-- The empty list annotated with its element type -/
   | lnil : Ty → Expression
   | lcons : Expression → Expression → Expression
+  /-- Case analysis of list values.
+
+  The arguments are:
+
+  1. The expression to analyze
+  2. The value to return when the list is nil
+  3. The name to bind for the head of the list in the non-empty case
+  4. The name to bind for the tail of the list in the non-empty case
+  5. The expression to evaluate with those two names bound, for the non-empty list case
+  -/
+  | listMatch : Expression → Expression → String → String → Expression → Expression
   /-- Map a function over lists.
 
 For a list `l` of type `list a`, and a function `f` of type `(a) -> b`, `map l f` produces a `list b`.

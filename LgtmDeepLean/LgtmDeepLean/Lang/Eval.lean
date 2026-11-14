@@ -217,6 +217,28 @@ The name is bound in front of the environment, so it shadows what was there, the
   |
   ECons (e₁ : Expression) (e₂ : Expression) :
     Eval td env e₁ v → Eval td env e₂ (.list vs) → Eval td env (.lcons e₁ e₂) (.list (v :: vs))
+  /-- A match on an empty list evaluates its first case, and one on a list with a head evaluates its
+second with the head and the tail bound to the names that case gives them.
+
+The two rules `EOptionMatchNone` and `EOptionMatchSome` are, read over a list, and two rather than one
+for the same reason: only one of the cases is ever evaluated, so the one that did not run is not
+mentioned at all.  What the non-empty case adds is the *second* name — a list's tail is a list, where
+an option holds a value and nothing else — and that tail is a `.list` put back together out of what
+was left, which is the one thing either rule builds rather than takes apart.
+
+The names are bound in front of the environment, the head in front of the tail, so each shadows what
+was there the way a `let`'s does and a case binding one name twice reads it as the head.  A scrutinee
+that evaluates to something that is not a list is the only thing that can go wrong here, and that is
+what typing rules out. -/
+  |
+  EListMatchNil (scrut nbody : Expression) (hd tl : String) (cbody : Expression) :
+    Eval td env scrut (.list []) →
+      Eval td env nbody v → Eval td env (.listMatch scrut nbody hd tl cbody) v
+  |
+  EListMatchCons (scrut nbody : Expression) (hd tl : String) (cbody : Expression) :
+    Eval td env scrut (.list (w :: ws)) →
+      Eval td ⟨(hd, w) :: (tl, .list ws) :: env.bindings, env.globals⟩ cbody v →
+      Eval td env (.listMatch scrut nbody hd tl cbody) v
   /-- Map `f` over `e` (of type List α).
 
 The length equality clause is a guarantee that the result list is always
@@ -778,6 +800,23 @@ public theorem Eval.hasType {td : TypeDecls} {env : Env} {ctx : Context} {e : Ex
     obtain ⟨t'', hw, heq⟩ := Value.hasType_option_some_iff.mp (ihscrut henv hsc)
     obtain rfl : t'' = t' := by simpa using heq.symm
     exact ihsbody (Env.hasType_cons hw henv) (by simpa using hsb)
+  | EListMatchNil scrut nbody hd tl cbody _ _ _
+    ihnbody =>
+    obtain ⟨-, -, hnb, -⟩ := Expression.infer_listMatch_eq_some.mp ht
+    exact ihnbody henv hnb
+  | EListMatchCons scrut nbody hd tl cbody _ _ ihscrut
+    ihcbody =>
+    obtain ⟨t', hsc, -, hcb⟩ := Expression.infer_listMatch_eq_some.mp ht
+    -- The two names this case binds stand at the element type the scrutinee's list type gives and at
+    -- that list type itself, and the value it took apart is a list of elements of the first: the head
+    -- is one of them and the tail is the rest, which is a list of them again.
+    cases ihscrut henv hsc with
+    | list hall =>
+      exact
+        ihcbody
+          (Env.hasType_cons (hall _ (List.mem_cons_self ..))
+            (Env.hasType_cons (.list fun u hu => hall u (List.mem_cons_of_mem _ hu)) henv))
+          (by simpa using hcb)
   | @EListMap _ _ _ _ _ _ vs' e f _ _ hlen hat _ _ ihf
     ihev =>
     obtain ⟨t', r, -, hf, rfl⟩ := Expression.infer_listMap_eq_some.mp ht

@@ -355,6 +355,120 @@ example :
       Expression.lcons (.stringLit "!") (.lcons (.varRef "s") (.lnil .string)) :=
   rfl
 
+-- A `match` on a list is the two cases it has, which is a `listMatch` rather than an `indMatch`: the
+-- empty case computes with nothing and the other binds the head and the tail the list was built
+-- from.  The alternatives are written with the tokens a list is written with, which is what tells
+-- this reading of a `match` from the other two.
+example :
+    [lgtm| match xs with | [] => 0 | hd :: tl => hd] =
+      Expression.listMatch (.varRef "xs") (.intLit 0) "hd" "tl" (.varRef "hd") :=
+  rfl
+
+example :
+    [lgtm| match xs with | [] => 0 | hd :: tl => length tl] =
+      Expression.listMatch (.varRef "xs") (.intLit 0) "hd" "tl" (.listLength (.varRef "tl")) :=
+  rfl
+
+example :
+    [lgtm| match f(1) with | [] => "" | s :: rest => s] =
+      Expression.listMatch (.app (.varRef "f") [.intLit 1]) (.stringLit "") "s" "rest"
+        (.varRef "s") :=
+  rfl
+
+example :
+    [lgtm| match x :: xs with | [] => 0 | hd :: tl => hd] =
+      Expression.listMatch (.lcons (.varRef "x") (.varRef "xs")) (.intLit 0) "hd" "tl"
+        (.varRef "hd") :=
+  rfl
+
+-- An alternative's expression extends as far right as it can here too, so a match nested in one
+-- needs no parentheses and one used as an operand does.
+example :
+    [lgtm| match xs with | [] => 0 | hd :: tl => match tl with | [] => 1 | a :: b => a] =
+      Expression.listMatch (.varRef "xs") (.intLit 0) "hd" "tl"
+        (.listMatch (.varRef "tl") (.intLit 1) "a" "b" (.varRef "a")) :=
+  rfl
+
+example :
+    [lgtm| (match xs with | [] => 0 | hd :: tl => hd) + 1] =
+      Expression.plus (.listMatch (.varRef "xs") (.intLit 0) "hd" "tl" (.varRef "hd"))
+        (.intLit 1) :=
+  rfl
+
+-- A match on what a list form produced is a match like any other, since those produce lists.
+example :
+    [lgtm| match reverse xs with | [] => 0 | hd :: tl => hd] =
+      Expression.listMatch (.listReverse (.varRef "xs")) (.intLit 0) "hd" "tl" (.varRef "hd") :=
+  rfl
+
+-- The alternatives of the other two readings are unchanged: neither mentions `[]` or `::`, so a
+-- `match` on an inductive type or on an option parses as it did.
+example :
+    [lgtm| match c with | Red => 0 | Rgb(r, g, b) => r] =
+      Expression.indMatch (.varRef "c")
+        [("Red", [], .intLit 0), ("Rgb", ["r", "g", "b"], .varRef "r")] :=
+  rfl
+
+example :
+    [lgtm| match o with | none => 0 | some(x) => x] =
+      Expression.optionMatch (.varRef "o") (.intLit 0) "x" (.varRef "x") :=
+  rfl
+
+/-- The head of `xs`, and `d` when it has none: the two cases a list has and the match between them,
+which is what a declaration reading one element off a list looks like. -/
+lgtm def headOr as"head-or"(xs : list int)(d : int) : int :=
+  match xs with | [] => d | hd :: tl => hd
+
+-- A list needs no declaration to be well formed, so this checks against no `TypeDecls` at all.
+#guard (headOr.check {} []).isOk
+
+-- The two cases have to share a type, and the names bound stand at the element type and at the
+-- list's own — so `hd` is an `int` and `tl` a `list int` because the parameter is a `list int`.
+#guard
+  !(({ headOr with body := [lgtm| match xs with | [] => d | hd :: tl => "a"] } : FuncDecl).check {}
+        []).isOk
+
+#guard
+  !(({ headOr with body := [lgtm| match xs with | [] => d | hd :: tl => tl] } : FuncDecl).check {}
+        []).isOk
+
+#guard
+  (({ headOr with
+            body := [lgtm| match xs with | [] => xs | hd :: tl => tl]
+            resultType := [lgtm_ty| list int] } :
+          FuncDecl).check
+      {} []).isOk
+
+-- And the scrutinee has to be a list: an option is not one, however much the match looks like it
+-- could take one apart.
+#guard
+  !(({ headOr with parameters := [("xs", [lgtm_ty| option int]), ("d", .int)] } : FuncDecl).check {}
+        []).isOk
+
+-- Both alternatives are required and in the order `listMatch` holds them, since there is nothing
+-- else a `match` written with these alternatives could have meant.
+/-- error: a match on a list takes `[]` first and `::` second -/
+#guard_msgs (error) in
+#check [lgtm| match xs with | hd :: tl => hd | [] => 0]
+
+/-- error: a match on a list has two alternatives: `| [] => ... | hd :: tl => ...` -/
+#guard_msgs (error) in
+#check [lgtm| match xs with | [] => 0]
+
+/-- error: a match on a list has two alternatives: `| [] => ... | hd :: tl => ...` -/
+#guard_msgs (error) in
+#check [lgtm| match xs with | hd :: tl => hd]
+
+/-- error: a match on a list has two alternatives: `| [] => ... | hd :: tl => ...` -/
+#guard_msgs (error) in
+#check [lgtm| match xs with | [] => 0 | [] => 1]
+
+-- The names are in scope in the case that binds them and nowhere else, the way `some(x)`'s is.
+/-- error: no variable named 'hd' is in scope -/
+#guard_msgs (error) in
+lgtm def headOfEmpty as"head-of-empty"(xs : list int) : int :=
+  match xs with | [] => hd | hd :: tl => hd
+
 -- `reverse` is a form of its own, not a call, so it takes its operand without parentheses.
 example : [lgtm| reverse xs] = Expression.listReverse (.varRef "xs") :=
   rfl

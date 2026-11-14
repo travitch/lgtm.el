@@ -269,6 +269,24 @@ head: a list's element type is whatever the head turned out to be. -/
   | lconsHead : Stuck td env e₁ → Stuck td env (.lcons e₁ e₂)
   | lconsTail : Stuck td env e₂ → Stuck td env (.lcons e₁ e₂)
   | lconsTailNotList : Eval td env e₂ v → ¬v.IsList → Stuck td env (.lcons e₁ e₂)
+  /-- A match on a list is stuck in its scrutinee, on a scrutinee that is not a list, or in the case
+the scrutinee chose.  A match on an option's four rules with `Value.IsList` in place of
+`Value.IsOption`: a list has two cases and the form carries both, so there is no rule for a case that
+is missing, and the empty list is a value like any other rather than a failure.  What the non-empty
+case adds is the second name in the environment its body is stuck under. -/
+  | listMatchScrut : Stuck td env scrut → Stuck td env (.listMatch scrut nbody hd tl cbody)
+  |
+  listMatchNotList :
+    Eval td env scrut v → ¬v.IsList → Stuck td env (.listMatch scrut nbody hd tl cbody)
+  |
+  listMatchNil :
+    Eval td env scrut (.list []) →
+      Stuck td env nbody → Stuck td env (.listMatch scrut nbody hd tl cbody)
+  |
+  listMatchCons :
+    Eval td env scrut (.list (w :: ws)) →
+      Stuck td ⟨(hd, w) :: (tl, .list ws) :: env.bindings, env.globals⟩ cbody →
+      Stuck td env (.listMatch scrut nbody hd tl cbody)
   /-- A mapping is stuck in either operand, on an operand of the wrong shape, or in one of the calls
 it makes: an element that does not fit the closure's parameter — a function of the wrong arity among
 them — or a call whose body is stuck.

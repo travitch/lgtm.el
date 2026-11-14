@@ -553,6 +553,14 @@ comes out of a nest of forms names the innermost expression that nothing could b
     let t ← hd.inferE td ctx
     (tl.inferE td ctx).expect (.list t) "the tail of a `::`"
     .ok (.list t)
+  | .listMatch scrut nbody hd tl cbody =>
+    match scrut.inferE td ctx with
+    | .ok (.list t) => do
+      let r ← nbody.inferE td ctx
+      (cbody.inferE td ((hd, t) :: (tl, .list t) :: ctx)).expect r "the `::` case of a list match"
+      .ok r
+    | .ok t => .error s!"a list match needs a list, but its scrutinee has type {t}"
+    | .error m => .error m
   | .listMap l f =>
     match l.inferE td ctx with
     | .ok (.list t) =>
@@ -878,6 +886,26 @@ public theorem Expression.infer_lcons_eq_some {td : TypeDecls} {ctx : Context} {
       ∃ t', hd.infer td ctx = some t' ∧ tl.infer td ctx = some (.list t') ∧ t = .list t' := by
   simp [Expression.infer, Expression.inferE]
   grind
+
+/-- A `listMatch` is typeable when its scrutinee is a list and its two cases have one type — and then
+that is its type.
+
+`optionMatch`'s rule read over a list: the cases are the two a list has, so there is nothing to be
+exhaustive about and no list of inferred types to find a common one among.  What the non-empty case
+adds is the *two* names it binds — the head at the element type and the tail at the scrutinee's own
+list type, which is the whole of what distinguishes this from an option match.  Both are in scope in
+that case alone, the head in front of the tail, so a form binding one name twice reads it as the
+head. -/
+@[simp, grind =]
+public theorem Expression.infer_listMatch_eq_some {td : TypeDecls} {ctx : Context}
+    {scrut nbody cbody : Expression} {hd tl : String} {t : Ty} :
+    (Expression.listMatch scrut nbody hd tl cbody).infer td ctx = some t ↔
+      ∃ t',
+        scrut.infer td ctx = some (.list t') ∧
+          nbody.infer td ctx = some t ∧
+            cbody.infer td ((hd, t') :: (tl, .list t') :: ctx) = some t := by
+  simp only [Expression.infer, Expression.inferE, Except.toOption_eq_some_iff]
+  split <;> simp_all
 
 /-- A `listLength` is typeable when its operand is a list, and then it is an `int`.
 

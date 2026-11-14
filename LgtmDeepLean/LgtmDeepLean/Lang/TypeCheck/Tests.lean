@@ -149,6 +149,115 @@ private def ctx : Context :=
 
 #guard (Expression.lcons (.lnil .int) (.lnil .int)).infer types ctx == none
 
+-- A match on a list gives the type its two cases agree on, with the names of the second bound to the
+-- element type and to the list's own type.
+#guard
+  (Expression.listMatch (.varRef "xs") (.intLit 0) "h" "t" (.varRef "h")).infer types ctx ==
+    some .int
+
+#guard
+  (Expression.listMatch (.varRef "xs") (.intLit 0) "h" "t" (.listLength (.varRef "t"))).infer types
+      ctx ==
+    some .int
+
+#guard
+  (Expression.listMatch (.varRef "xs") (.varRef "xs") "h" "t" (.varRef "t")).infer types ctx ==
+    some (.list .int)
+
+#guard
+  (Expression.listMatch (.varRef "xs") (.boolLit false) "h" "t"
+          (.equals (.varRef "h") (.intLit 0))).infer
+      types ctx ==
+    some .bool
+
+#guard
+  (Expression.listMatch (.lnil (.struct "Point")) (.intLit 0) "h" "t"
+          (.structGet (.varRef "h") "x")).infer
+      types ctx ==
+    some .int
+
+-- The tail is a list of what the head is, so the two names are not interchangeable: using either at
+-- the other's type is ill typed.
+#guard
+  (Expression.listMatch (.varRef "xs") (.intLit 0) "h" "t" (.varRef "t")).infer types ctx == none
+
+#guard
+  (Expression.listMatch (.varRef "xs") (.varRef "xs") "h" "t" (.varRef "h")).infer types ctx == none
+
+#guard
+  (Expression.listMatch (.varRef "xs") (.intLit 0) "h" "t"
+          (.plus (.varRef "h") (.stringLit "a"))).infer
+      types ctx ==
+    none
+
+-- Both names are in scope in the second case alone, the way an option match's one name is.
+#guard
+  (Expression.listMatch (.varRef "xs") (.varRef "h") "h" "t" (.varRef "h")).infer types ctx == none
+
+#guard
+  (Expression.listMatch (.varRef "xs") (.varRef "t") "h" "t" (.varRef "h")).infer types ctx == none
+
+-- They shadow an enclosing binding of the same name, the way a `let`'s does: `hd` is a `Holder` in
+-- `ctx` and an `int` inside the case that binds it.
+#guard
+  (Expression.listMatch (.varRef "xs") (.intLit 0) "hd" "tl"
+          (.plus (.varRef "hd") (.intLit 1))).infer
+      types ctx ==
+    some .int
+
+#guard
+  (Expression.listMatch (.varRef "xs") (.varRef "hd") "hd" "tl" (.varRef "hd")).infer types ctx ==
+    none
+
+-- The head is bound in front of the tail, so a case binding one name twice reads it as the head.
+#guard
+  (Expression.listMatch (.varRef "xs") (.intLit 0) "x" "x" (.varRef "x")).infer types ctx ==
+    some .int
+
+-- The two cases have to agree, as a conditional's branches do.
+#guard
+  (Expression.listMatch (.varRef "xs") (.intLit 0) "h" "t" (.stringLit "a")).infer types ctx == none
+
+#guard
+  (Expression.listMatch (.varRef "xs") (.stringLit "a") "h" "t" (.varRef "h")).infer types ctx ==
+    none
+
+-- And the scrutinee has to be a list: an option, a hashmap and an `int` are each ill typed here.
+#guard (Expression.listMatch (.varRef "o") (.intLit 0) "h" "t" (.varRef "h")).infer types ctx == none
+
+#guard (Expression.listMatch (.varRef "m") (.intLit 0) "h" "t" (.intLit 1)).infer types ctx == none
+
+#guard (Expression.listMatch (.varRef "n") (.intLit 0) "h" "t" (.intLit 1)).infer types ctx == none
+
+-- An ill-typed part makes the whole match ill typed, wherever it is.
+#guard
+  (Expression.listMatch (.varRef "nope") (.intLit 0) "h" "t" (.varRef "h")).infer types ctx == none
+
+#guard
+  (Expression.listMatch (.varRef "xs") (.varRef "nope") "h" "t" (.varRef "h")).infer types ctx ==
+    none
+
+#guard
+  (Expression.listMatch (.varRef "xs") (.intLit 0) "h" "t" (.varRef "nope")).infer types ctx == none
+
+-- A match is an expression like any other, so one nests into another and into every form that reads
+-- what it produces.
+#guard
+  (Expression.listMatch (.varRef "xs") (.intLit 0) "h" "t"
+          (.listMatch (.varRef "t") (.varRef "h") "h2" "t2" (.varRef "h2"))).infer
+      types ctx ==
+    some .int
+
+#guard
+  (Expression.plus (.listMatch (.varRef "xs") (.intLit 0) "h" "t" (.varRef "h")) (.intLit 1)).infer
+      types ctx ==
+    some .int
+
+#guard
+  (Expression.listMatch (.listReverse (.varRef "xs")) (.intLit 0) "h" "t" (.varRef "h")).infer types
+      ctx ==
+    some .int
+
 -- Reversing a list keeps its type, whatever the element type is.
 #guard (Expression.listReverse (.varRef "xs")).infer types ctx == some (.list .int)
 

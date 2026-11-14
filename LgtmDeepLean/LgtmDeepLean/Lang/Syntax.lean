@@ -796,6 +796,39 @@ or `some` is one this syntax cannot match on; `~(Expression.indMatch ...)` is th
 one. -/
 syntax :10 "match " lgtmExpr " with" lgtmAlt* : lgtmExpr
 
+/-! A match on a list is a `listMatch`, which is a form of its own the way `optionMatch` is, and its
+alternatives are written with the tokens a *list* is written with rather than with constructor names:
+`[]` for the empty list and `hd :: tl` for one with a head.  Neither is a name, so they are a
+category of their own rather than `lgtmAlt`s — an alternative there is a constructor's name and the
+names it binds — and that is also what keeps the two readings of a `match` apart with nothing to
+decide.  Where `optionMatchAlts` chooses between an option and a declared inductive type, a parse of
+these alternatives is a match on a list already; the cost `optionMatch` pays, of an inductive type
+that declares a constructor called `none`, is one this form does not pay at all. -/
+declare_syntax_cat lgtmListAlt
+
+/-- The empty-list alternative of a match on a list: `| [] => e`.  It binds no names, since an empty
+list holds nothing — the way `none`'s alternative binds none. -/
+syntax " | " "[" "]" " => " lgtmExpr : lgtmListAlt
+
+/-- The non-empty alternative of a match on a list: `| hd :: tl => e`, with the head and the tail of
+the list bound to those two names in `e`.
+
+Two names rather than the one `some(x)` binds, which is the whole of what makes this more than a
+match on an option: a list's tail is a list, so the names stand at the element type and at the
+scrutinee's own list type.  They are IR names like every other binder here, so `tl` refers to the
+tail and never to a Lean variable of that name. -/
+syntax " | " ident " :: " ident " => " lgtmExpr : lgtmListAlt
+
+/-- `match xs with | [] => 0 | hd :: tl => hd` takes a list apart.
+
+Both alternatives are required and in that order, as a match on an option's are and for the same
+reason: the form holds the two cases a list has rather than a list of alternatives to check against a
+declaration, so there is nothing for a third alternative or a missing one to mean.
+
+An alternative's expression extends as far right as it can, exactly as an `indMatch`'s does, so a
+`match` nested inside one needs parentheses — the same way a `let` does. -/
+syntax :10 "match " lgtmExpr " with" lgtmListAlt+ : lgtmExpr
+
 /-- `if b then { 1 } else { 2 }` chooses between its two branches.
 
 The branches are braced, so the form ends where the last `}` does and needs no parentheses to be an
@@ -893,6 +926,28 @@ meta def optionMatchAlts
     throwErrorAt sc
         "`some` holds one value, so its alternative binds one name: `| some(x) => ...`"
   return some (nbody, x, sbody)
+
+/-- The alternatives of a match on a list read as the two cases it has: the body of its `[]` case,
+the names its `::` case binds, and the body under them.
+
+There is no reading to fall back on and so no `Option` here, unlike `optionMatchAlts`: alternatives
+written with `[]` and `::` are a match on a list and nothing else, so what is left is the shape —
+both cases, in that order — and anything else is an error.  Reported at the first alternative, which
+is where the shape of the whole is decided.
+
+Only the shape is decided here.  The four pieces come back as syntax for `elabLgtmExpr` to read,
+which is what keeps the recursion in one place. -/
+meta def listMatchAlts (ref : Syntax) (alts : Array (TSyntax `lgtmListAlt)) :
+    LgtmElabM (TSyntax `lgtmExpr × Ident × Ident × TSyntax `lgtmExpr) := do
+  let shape := "a match on a list has two alternatives: `| [] => ... | hd :: tl => ...`"
+  let at? := (alts[0]?.map TSyntax.raw).getD ref
+  let #[nilAlt, consAlt] := alts | throwErrorAt at? shape
+  match nilAlt, consAlt with
+  | `(lgtmListAlt| | [] => $nbody), `(lgtmListAlt| | $hd:ident :: $tl:ident => $cbody) =>
+      return (nbody, hd, tl, cbody)
+  | `(lgtmListAlt| | $_:ident :: $_:ident => $_), `(lgtmListAlt| | [] => $_) =>
+      throwErrorAt at? "a match on a list takes `[]` first and `::` second"
+  | _, _ => throwErrorAt at? shape
 
 /-! ## Resolving names
 
@@ -1147,6 +1202,22 @@ meta partial def elabLgtmExprCore (ctx : Context) (stx : TSyntax `lgtmExpr) :
   | `(lgtmExpr| some($e)) => return .optionSome (← elabLgtmExpr ctx e)
   | `(lgtmExpr| none : $t) => return .optionNone (← elabLgtmTy t)
   | `(lgtmExpr| unreachable $why:str : $t) => return .unreachable (← elabLgtmTy t) why.getString
+  | `(lgtmExpr| match $e with $alts:lgtmListAlt*) => do
+      let scrut ← elabLgtmExpr ctx e
+      let scrutTy ← inferredTy ctx scrut
+      let (nbody, hd, tl, cbody) ← listMatchAlts stx alts
+      -- `hd :: tl` binds at what the scrutinee's list holds and at that list type itself, which is
+      -- how `Expression.inferE` reads the two.  A scrutinee with no type leaves both unknown rather
+      -- than the tail at a list of nothing: a binder at `unknownTy` is one nothing is shown for.
+      let (hdTy, tlTy) := match scrutTy with
+        | .list t => (t, Ty.list t)
+        | _ => (unknownTy, unknownTy)
+      addBinderTyInfo hd hdTy
+      addBinderTyInfo tl tlTy
+      let hdName := hd.getId.toString
+      let tlName := tl.getId.toString
+      return .listMatch scrut (← elabLgtmExpr ctx nbody) hdName tlName
+        (← elabLgtmExpr ((hdName, hdTy) :: (tlName, tlTy) :: ctx) cbody)
   | `(lgtmExpr| match $e with $alts:lgtmAlt*) => do
       -- A `none` or `some` head is a keyword token where the others have an identifier.  Standing
       -- the identifier it names in its place, at the token's position, is what lets the readings
