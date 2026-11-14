@@ -24,6 +24,10 @@ Five entry points:
 * `lgtm forward def` is a command that declares a signature and nothing else, for two declarations
   that call each other.
 
+`[lgtm_body| ...]` is one more and is not for writing by hand: `lgtm def` generates it as the value
+of the Lean declaration it makes, because the body has to be read under the declaration's own
+context rather than as a fragment.  See "What the commands do besides declare".
+
 What a DSL term elaborates to is an ordinary constructor application and costs nothing at run time,
 the way it did when all of this was a macro.  What is no longer the same is when it is checked.
 
@@ -403,7 +407,7 @@ is the minimum plus one.
 A list literal carries its element type, because `lnil` does: `[1, 2 : int]` is
 `.lcons (.intLit 1) (.lcons (.intLit 2) (.lnil .int))`, and the empty list is `[: int]`.
 
-The seven list operations are `reverse xs`, `length xs`, `map list xs f`, `flatMap xs f`,
+The seven prefix list operations are `reverse xs`, `length xs`, `map list xs f`, `flatMap xs f`,
 `findIndex xs f`, `sortOn xs f` and
 `sortBy xs f`, all prefix
 keywords binding as tightly as application.  They differ in what comes back out: a reversal and the
@@ -416,12 +420,18 @@ ordered rather than what they become: a key apiece under `sortOn`, and the compa
 `sortBy`.  `map` is written with a tag because it is also a
 hashmap's operation — see the note on the two forms below.
 
+The eighth is `xs[i]`, an index, which is not a prefix keyword but the brackets a hashmap lookup is
+written in: it hands back an `option` of the element type, `none` where the list has no element at
+that position, and which of the two readings the brackets have is decided by the type inferred for
+what is indexed.
+
 The two option values are written `some(1)` and `none : int`, and a `match` whose alternatives are
 named `none` and `some` takes one apart.  The empty one carries a type for the reason an empty list
 literal does — it holds nothing to read one off — while `some` needs none, since what it holds says
 it.
 
-The five hashmap forms are `hashmap(string, int)`, `m[k]`, `{ m with [k] = v }`, `map hashmap m f`,
+The five hashmap forms are `hashmap(string, int)`, `m[k]` — the brackets again, read as a lookup for
+everything that is not a list — `{ m with [k] = v }`, `map hashmap m f`,
 and `toList m`.  The third is the shape a struct update is written in, and the brackets are what tell
 the two apart: a key is an expression where a field is a name.  The last two are written like
 `reverse`, as prefix keywords, because they are the same kind of thing: a map to read and a value of
@@ -569,22 +579,36 @@ which.
 is the escape hatch, the same one `true`, `none` and `new` leave. -/
 syntax :max &"hashmap" "(" lgtmTy ", " lgtmTy ")" : lgtmExpr
 
-/-- `m[k]` is what `k` is bound to in `m`.
+/-- `m[k]` is what `k` is bound to in `m`, and `xs[i]` the element of `xs` at the position `i`.
 
-An `option` of the map's value type, so a key the map does not bind is an ordinary value rather than
-an error, and `match m[k] with | none => ... | some(x) => ...` is how both cases are read.
+One form over two readings — `hashmapGet` and `listIndex` — told apart by the type inferred for what
+is indexed: a `list` is an index and anything else a lookup.  Both produce an `option`, of the map's
+value type and of the list's element type respectively, so neither a key the map does not bind nor a
+position the list has no element at is an error, and
+`match m[k] with | none => ... | some(x) => ...` is how both cases of either are read.
+
+Where the operand has no type there is nothing to decide by, and the reading is the lookup: that is
+what leaves every `m[k]` written before an index existed denoting what it did, and nothing is
+reported for it here, since an operand with no type is itself the innermost expression that does not
+check and is already reported as such.  What it costs is that an index can only be written where the
+operand's type is readable — inside a declaration that is everywhere, while a bare `[lgtm| ...]`
+fragment has no context at all, so only an operand carrying its own type is one, and `[lgtm| xs[0]]`
+for a free `xs` is a lookup.  See the note below on why this form is deduced where `map`'s tag is
+written.
 
 Written with no space before the `[`, which is what tells it from a list literal: `m [1 : int]` is
 two expressions and no parse, while `m[1]` is a lookup.  It binds as tightly as a field read and
-nests the same way — `p.m[k]`, `f(1)[k]`, `m[k1][k2]` — since what a lookup produces is an operand
-like any other. -/
+nests the same way — `p.m[k]`, `f(1)[k]`, `m[k1][k2]` — since what either reading produces is an
+operand like any other.  Chaining is where the two part company: `m[k1][k2]` is two lookups, where
+`xs[i][j]` over a `list list int` is not two indexes — the first hands back an `option`, which is no
+list, so the second bracket reads as a lookup and does not check. -/
 syntax :max lgtmExpr:max noWs "[" lgtmExpr "]" : lgtmExpr
 
 /-! `map` is one keyword over two forms — a list's mapping and a hashmap's — so it is written with a
 tag saying which: `map list xs f` and `map hashmap m f`.
 
 The tag is written rather than deduced, and stays written now that the elaborator has types to hand.
-The `Expression` a term denotes must not depend on what was inferred about it: a type is available
+What an `Expression` a term denotes depends on is a thing to be sparing with: a type is available
 here only where everything the operand is built from was itself resolved — not through a splice, not
 under a `let` whose bound expression is ill typed (see `unknownTy`) — so a `map` that chose its
 constructor by inference would be a different expression depending on whether the term around it had
@@ -593,7 +617,16 @@ arity of the function, one parameter against two, but that is readable only wher
 written out as a `fun` and says nothing about `map xs f` for a named `f`.
 
 It is written once per `map` rather than being a form of its own because the two mappings are the
-same operation over the two things the IR has to map over. -/
+same operation over the two things the IR has to map over.
+
+The bracket form above is the one place the trade came out the other way, for two reasons.  A tag
+there would have nowhere to go: brackets are the notation a lookup and an index are *both* already
+written in — it is what every language writing either writes it as — so tagging them means inventing
+a word neither form wants, where `map`'s tag costs the one word already following the keyword.  And
+what deducing costs is paid where nothing is checked: a declaration resolves its operands, so the
+reading inside one is the reading the types give, and it is only a bare fragment that can read a term
+the declaration around it would have read the other way — and a fragment is not type checked at all,
+so the two never disagree anywhere a mistake would have been reported. -/
 
 /-- `map list xs f` is `xs` with `f` applied to each of its elements: a list of the same length,
 each element replaced by what `f` returned for it.
@@ -1063,7 +1096,7 @@ meta partial def elabLgtmExpr (ctx : Context) (stx : TSyntax `lgtmExpr) :
   return e
 
 /-- The type `stx`'s expression has, or `unknownTy` when it has none.  Used where a binder's type is
-read off what it is bound to. -/
+read off what it is bound to, and by the brackets of `m[k]` to tell an index from a lookup. -/
 meta partial def inferredTy (ctx : Context) (e : Expression) : LgtmElabM Ty := do
   match e.inferE (← read).allTypeDecls ctx with
   | .ok t => return t
@@ -1176,7 +1209,15 @@ meta partial def elabLgtmExprCore (ctx : Context) (stx : TSyntax `lgtmExpr) :
       checkCtorArity c ty.getString c.getString as.length
       return .indNew ty.getString c.getString as
   | `(lgtmExpr| hashmap($k, $v)) => return .hashmapEmpty (← elabLgtmTy k) (← elabLgtmTy v)
-  | `(lgtmExpr| $m[$k]) => return .hashmapGet (← elabLgtmExpr ctx m) (← elabLgtmExpr ctx k)
+  | `(lgtmExpr| $m[$k]) => do
+      -- One form over two readings, told apart by the type inferred for what is indexed: a list is
+      -- an index and anything else a lookup.  An operand with no type is a lookup too, which is
+      -- what leaves every `m[k]` written before an index existed reading as it did.
+      let m ← elabLgtmExpr ctx m
+      let k ← elabLgtmExpr ctx k
+      match ← inferredTy ctx m with
+      | .list _ => return .listIndex m k
+      | _ => return .hashmapGet m k
   | `(lgtmExpr| map list $l $f) => return .listMap (← elabLgtmExpr ctx l) (← elabLgtmExpr ctx f)
   | `(lgtmExpr| flatMap $l $f) =>
       return .listFlatMap (← elabLgtmExpr ctx l) (← elabLgtmExpr ctx f)
@@ -1337,6 +1378,13 @@ Three things happen after the Lean declaration is made:
 3. nothing, when the term contains a splice: a value with a splice marker in it is not the
    expression the writer wrote, so there is nothing to check it against.
 
+The value the Lean declaration takes and the declaration this check is run on come out of one pass
+over the body: `elabFuncDecl`, which the command runs for itself and which the `[lgtm_body| ...]`
+term it generates for the value runs again with nothing reported.  They have to be one pass now that
+a form reads by type — the brackets of `m[k]` are read by the very context the body is checked in, so
+a value elaborated as a fragment would hold a lookup where the checked declaration had an index, and
+the constant would be something nothing had reported on.
+
 Step 2 is skipped after step 1 has reported a name nothing declares, because the type checker would
 then report the same mistake a second time and less precisely — it reaches the name through the
 expression around it, where the name itself is where the mistake is.
@@ -1385,6 +1433,55 @@ meta def declDocString (irName : String) (xs : Array Ident) (ts : Array (TSyntax
   let sig := s!"lgtm def {irName}{String.join ps} : {src rt}"
   s!"```lgtm\n{sig}\n```" ++ if docText.isEmpty then "" else s!"\n***\n{docText}"
 
+/-- The `FuncDecl` a `lgtm def` denotes, together with the `TypeDecls` it was read against.
+
+The body is elaborated under the context the declaration gives it — the parameters, every global's
+type, and a provisional entry for the declaration itself, so that it may call itself — which is
+exactly what `FuncDecl.check` puts in front of it.
+
+One pass with two callers: the command, which reports and checks, and the `[lgtm_body| ...]` term it
+generates as the value of the Lean declaration.  They have to be the same pass, and the brackets of
+`m[k]` are why.  That is the one form whose `Expression` depends on a type (see the note on `map`'s
+tag), and the type it depends on is the one this context gives: a body elaborated as a fragment for
+the value would read `xs[i]` over a `list int` parameter as the lookup a fragment has no choice but
+to read it as, and the Lean declaration would then hold something other than what the command
+checked and reported on. -/
+meta def elabFuncDecl (docstring : String) (irName : String) (leanName : Name) (xs : Array Ident)
+    (ts : Array (TSyntax `lgtmTy)) (rt : TSyntax `lgtmTy) (body : TSyntax `lgtmExpr) :
+    LgtmElabM (FuncDecl × TypeDecls) := do
+  let parameters ← (xs.zip ts).toList.mapM fun (x, t) => do
+    return (x.getId.toString, ← elabLgtmTy t)
+  let resultType ← elabLgtmTy rt
+  let self : FuncDecl :=
+    { docstring, name := irName, parameters, resultType,
+      body := .unreachable resultType "the declaration being elaborated" }
+  let entry : LgtmEntry := { irName, leanName, decl := .fn self }
+  withReader (fun ctx => { ctx with extra := ctx.extra.addEntry entry }) do
+    -- The context the body is checked in, which is the one it is read in: the parameters and every
+    -- global's type, exactly what `FuncDecl.check` puts in front of it.
+    let ctx := parameters ++ Globals.types (← read).allGlobals
+    let bodyExpr ← elabLgtmExpr ctx body
+    return ({ self with body := bodyExpr }, (← read).allTypeDecls)
+
+/-- `[lgtm_body| f "ir-name" (x : int) : int := e]` is the `Expression` that the body of that
+`lgtm def` denotes.
+
+What it adds over `[lgtm| e]` is the context: a fragment has none, where this has the one the
+declaration gives its body.  Generated by the command below as the value of the Lean declaration it
+makes, and not meant to be written by hand — the Lean name and the IR name are both passed because
+the body may mention the declaration itself.
+
+Silent: it reports nothing and records nothing, since the command's own pass over the same body is
+what does both. -/
+syntax :max "[lgtm_body| " ident str ("(" ident " : " lgtmTy ")")* " : " lgtmTy " := "
+  lgtmExpr "]" : term
+
+elab_rules : term
+  | `([lgtm_body| $n:ident $ir:str $[($xs:ident : $ts:lgtmTy)]* : $rt:lgtmTy := $b:lgtmExpr]) => do
+      let ((d, _), st) : (FuncDecl × TypeDecls) × LgtmElabState ←
+        LgtmElabM.run' (report := false) (elabFuncDecl "" ir.getString n.getId xs ts rt b)
+      return lgtmTerm d.body st
+
 elab_rules : command
   | `($[$doc:docComment]? lgtm $[$vis:lgtmVis]? def $n:ident $[as $ir:str]?
         $[($xs:ident : $ts:lgtmTy)]* : $rt:lgtmTy := $body:lgtmExpr) => do
@@ -1392,14 +1489,16 @@ elab_rules : command
       let docText := match doc with
         | some d => d.getDocString.trimAscii.toString
         | none => ""
-      -- The Lean declaration, built the way it always was: the value is what the quotations
-      -- elaborate to, which is the same pass the check below runs, so the two cannot disagree.
+      -- The Lean declaration: the value is what the quotations elaborate to, and the body's
+      -- quotation is `[lgtm_body| ...]` rather than `[lgtm| ...]` so that it is the pass the check
+      -- below runs — a fragment has no context, and one form is read by it.
       let ps ← (xs.zip ts).mapM fun (x, t) =>
         `(($(Lean.quote x.getId.toString), [lgtm_ty| $t]))
       let val ← `({ docstring := $(Lean.quote docText)
                     name := $(Lean.quote irName)
                     parameters := [$ps,*]
-                    body := [lgtm| $body]
+                    body :=
+                      [lgtm_body| $n $(Lean.quote irName) $[($xs : $ts)]* : $rt := $body]
                     resultType := [lgtm_ty| $rt] : FuncDecl })
       -- The Lean declaration is documented with the DSL signature as well as with the doc comment,
       -- since a mention of the IR name hovers to this constant.
@@ -1413,21 +1512,7 @@ elab_rules : command
       -- its body so that it may call itself.
       Elab.Command.liftTermElabM do
         let ((d, td), st) : (FuncDecl × TypeDecls) × LgtmElabState ←
-          LgtmElabM.run' (report := true) do
-          let parameters ← (xs.zip ts).toList.mapM fun (x, t) => do
-            return (x.getId.toString, ← elabLgtmTy t)
-          let resultType ← elabLgtmTy rt
-          let self : FuncDecl :=
-            { docstring := docText, name := irName, parameters, resultType,
-              body := .unreachable resultType "the declaration being elaborated" }
-          let entry : LgtmEntry := { irName, leanName, decl := .fn self }
-          withReader (fun ctx => { ctx with extra := ctx.extra.addEntry entry }) do
-            -- The context the body is checked in, which is the one it is read in: the parameters
-            -- and every global's type, exactly what `FuncDecl.check` puts in front of it.
-            let globals := (← read).allGlobals
-            let ctx := parameters ++ Globals.types globals
-            let bodyExpr ← elabLgtmExpr ctx body
-            return ({ self with body := bodyExpr }, (← read).allTypeDecls)
+          LgtmElabM.run' (report := true) (elabFuncDecl docText irName leanName xs ts rt body)
         addLgtmEntry { irName, leanName, decl := .fn d }
         addNodeTyInfo td st.nodes
         unless st.reported || !st.splices.isEmpty do

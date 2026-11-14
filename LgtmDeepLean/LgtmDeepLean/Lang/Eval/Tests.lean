@@ -989,6 +989,144 @@ private theorem indexOfZero.lt_length {vs : List Value} {i : Int}
     omega
   · simp at heq
 
+/-! An index evaluates the list and the position and hands back the option of what the list holds
+there.  One rule, the way a get on a hashmap has one: `Value.index?` is a function of the two, so a
+proof is left with the list, the position and what that said about them rather than with a case to
+choose.  An index the list has no element at is not among the things that can go wrong — it is the
+empty option, which is a value like any other.
+
+So the examples come in one kind, and what separates them is what `Value.index?` answered.  Both
+operands are always evaluated, as a comparison's two are, and there is no premise beyond them since
+nothing is compared: a first operand that is not a list and a position that is not an `int` are the
+only things that can go wrong, which is exactly what typing rules out. -/
+
+-- A position the list has an element at is that element, in an option.
+example : Eval {} ∅ [lgtm| [1, 2 : int][0]] (.option (some (.int 1))) :=
+  .EListIndex _ _ (.ECons _ _ (.EIntLit 1) (.ECons _ _ (.EIntLit 2) (.ENil _))) (.EIntLit 0)
+
+example : Eval {} ∅ [lgtm| [1, 2 : int][1]] (.option (some (.int 2))) :=
+  .EListIndex _ _ (.ECons _ _ (.EIntLit 1) (.ECons _ _ (.EIntLit 2) (.ENil _))) (.EIntLit 1)
+
+-- The position is an expression like any other and is evaluated whatever it took to arrive at it,
+-- the way a comparison's operands are: neither operand is in a position to make the other
+-- unnecessary.
+example : Eval {} ∅ [lgtm| [1, 2 : int][0 + 1]] (.option (some (.int 2))) :=
+  .EListIndex _ _ (.ECons _ _ (.EIntLit 1) (.ECons _ _ (.EIntLit 2) (.ENil _)))
+    (.EPlus (n₁ := 0) (n₂ := 1) _ _ (.EIntLit 0) (.EIntLit 1))
+
+-- A position past the end is the empty option rather than anything going wrong, which is the whole
+-- of why the form has an option type — exactly as a key the map does not bind is for a get.
+example : Eval {} ∅ [lgtm| [1, 2 : int][2]] (.option none) :=
+  .EListIndex _ _ (.ECons _ _ (.EIntLit 1) (.ECons _ _ (.EIntLit 2) (.ENil _))) (.EIntLit 2)
+
+-- An empty list holds nothing anywhere, so every position reads as empty out of one.
+example : Eval {} ∅ [lgtm| [ : int][0]] (.option none) :=
+  .EListIndex _ _ (.ENil _) (.EIntLit 0)
+
+-- And a negative position is empty too.  `i.toNat` would read it as `0`, which is the one position
+-- almost every list does have, so `Value.index?` turns it down before the lookup rather than after.
+example : Eval {} ∅ [lgtm| [1, 2 : int][0 - 1]] (.option none) :=
+  .EListIndex _ _ (.ECons _ _ (.EIntLit 1) (.ECons _ _ (.EIntLit 2) (.ENil _)))
+    (.EMinus _ _ (.EIntLit 0) (.EIntLit 1))
+
+-- A first operand that is not a list leaves this stuck, as a non-map leaves a get stuck.  It takes
+-- the `Expression` to write rather than the surface syntax: brackets are read as an index only where
+-- what they index is a list, and as a lookup everywhere else.
+example (v : Value) : ¬Eval {} ∅ (Expression.listIndex (.intLit 1) (.intLit 0)) v := by
+  intro h
+  cases h with
+  | EListIndex _ _ hl _ => cases hl
+
+-- And a position that is not an `int` leaves it stuck, which is the other of the two: the lookup
+-- reads a position, so a string in its place has no lookup at all.
+example (v : Value) : ¬Eval {} ∅ [lgtm| [1 : int]["a"]] v := by
+  intro h
+  cases h with
+  | EListIndex _ _ _ hi => cases hi
+
+/-- The element of `xs` at `i`, and zero where there is none: the two halves of an index, which is
+what an option result is for.  `getOr` over a hashmap further down is the same declaration written
+in the same brackets, and the type of what is indexed is the whole of what tells them apart. -/
+lgtm private def elemOr as "elem-or" (xs : list int) (i : int) : int :=
+  match xs[i] with | none => 0 | some(x) => x
+
+#guard (elemOr.check {} []).isOk
+
+-- The brackets over a `list int` parameter elaborated to an index rather than a lookup, which is
+-- what makes the declaration check at all.
+example : elemOr.body =
+    Expression.optionMatch (.listIndex (.varRef "xs") (.varRef "i")) (.intLit 0) "x"
+      (.varRef "x") :=
+  rfl
+
+-- Which case of the match runs is decided by what the index produced, so a position the list has
+-- and one it does not are the two option rules, exactly as for any other option.
+example : FuncDecl.Apply elemOr {} [] [.list [.int 1, .int 2], .int 1] (.int 2) :=
+  .EApply _ (.cons "xs" (hasType_intList (is := [1, 2])) (.cons "i" (.int 1) .nil))
+    (.EOptionMatchSome _ _ _ _
+      (.EListIndex (vs := [.int 1, .int 2]) (n := 1) _ _ (.EVarRef "xs" rfl) (.EVarRef "i" rfl))
+      (.EVarRef "x" rfl))
+
+example : FuncDecl.Apply elemOr {} [] [.list [.int 1, .int 2], .int 5] (.int 0) :=
+  .EApply _ (.cons "xs" (hasType_intList (is := [1, 2])) (.cons "i" (.int 5) .nil))
+    (.EOptionMatchNone _ _ _ _
+      (.EListIndex (vs := [.int 1, .int 2]) (n := 5) _ _ (.EVarRef "xs" rfl) (.EVarRef "i" rfl))
+      (.EIntLit 0))
+
+example : FuncDecl.Apply elemOr {} [] [.list [.int 1, .int 2], .int (-1)] (.int 0) :=
+  .EApply _ (.cons "xs" (hasType_intList (is := [1, 2])) (.cons "i" (.int (-1)) .nil))
+    (.EOptionMatchNone _ _ _ _
+      (.EListIndex (vs := [.int 1, .int 2]) (n := -1) _ _ (.EVarRef "xs" rfl) (.EVarRef "i" rfl))
+      (.EIntLit 0))
+
+-- Soundness covers the form: the declared result type comes back whatever the list held and
+-- whichever case the index fell in, which is what holding both cases of the match to one type was
+-- for.
+example (vs : List Value) (i : Int) (v : Value)
+    (h : FuncDecl.Apply elemOr {} [] [.list vs, .int i] v) : v.HasType {} .int :=
+  h.hasType Globals.wellTyped_nil (by simp [elemOr, List.lookup])
+
+-- Only a list can be indexed, and only by an `int`: a body indexing the position by the list, or
+-- the list by itself, is turned down.
+example :
+    ¬({ elemOr with body := Expression.listIndex (.varRef "i") (.varRef "xs") } :
+        FuncDecl).WellTyped {} [] := by
+  simp [elemOr, List.lookup]
+
+-- And what an index produces is an option of the element type, not the element type: declaring the
+-- result as the option is the one thing this body does not check at.
+#guard
+  !(({ elemOr with body := Expression.listIndex (.varRef "xs") (.varRef "i") } :
+          FuncDecl).check
+      {} []).isOk
+
+#guard
+  (({ elemOr with
+            body := Expression.listIndex (.varRef "xs") (.varRef "i")
+            resultType := [lgtm_ty| option int] } :
+          FuncDecl).check
+      {} []).isOk
+
+/-- What an index means, for every list and position rather than for one: a lookup that produced a
+value produced one the list holds.
+
+This is the fact a proof about an indexed list carries on with, the way `getOr.mem_of_eval` is for a
+get.  Inverting the rule leaves `Value.index?` saying so, and `Value.mem_of_index?` is what turns
+that into membership — with no position in the statement, since a list is homogeneous and which
+position it was found at says nothing more. -/
+private theorem elemOr.mem_of_eval {vs : List Value} {i : Int} {w : Value}
+    (h : Eval {} ⟨[("xs", .list vs), ("i", .int i)], []⟩
+      (Expression.listIndex (.varRef "xs") (.varRef "i")) (.option (some w))) :
+    w ∈ vs := by
+  obtain ⟨vs', n, hl, hi, heq⟩ := h.listIndex_inv
+  cases hl with
+  | EVarRef _ hlx =>
+    cases hi with
+    | EVarRef _ hli =>
+      simp only [Env.lookup, List.lookup] at hlx hli
+      simp_all
+      exact Value.mem_of_index? heq.symm
+
 /-- The body of the inner lambda of `adderExpr`, `x + n`, which needs an `n` from outside itself. -/
 private def adderInner : Expression :=
   [lgtm| x + n]

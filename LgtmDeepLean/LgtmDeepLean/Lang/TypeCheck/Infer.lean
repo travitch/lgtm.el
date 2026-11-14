@@ -561,6 +561,13 @@ comes out of a nest of forms names the innermost expression that nothing could b
       .ok r
     | .ok t => .error s!"a list match needs a list, but its scrutinee has type {t}"
     | .error m => .error m
+  | .listIndex l i =>
+    match l.inferE td ctx with
+    | .ok (.list t) => do
+      (i.inferE td ctx).expect .int "the index given to a list index"
+      .ok (.option t)
+    | .ok t => .error s!"a list index needs a list, but what is indexed here has type {t}"
+    | .error m => .error m
   | .listMap l f =>
     match l.inferE td ctx with
     | .ok (.list t) =>
@@ -906,6 +913,25 @@ public theorem Expression.infer_listMatch_eq_some {td : TypeDecls} {ctx : Contex
             cbody.infer td ((hd, t') :: (tl, .list t') :: ctx) = some t := by
   simp only [Expression.infer, Expression.inferE, Except.toOption_eq_some_iff]
   split <;> simp_all
+
+/-- A `listIndex` is typeable when its first operand is a list and its second is an `int`, and then
+it is an option of that list's element type.
+
+`hashmapGet`'s rule with a position in place of a key: an option because an index the list has no
+element at is not an error, so `optionMatch` is what reads the two cases.  What it asks of the index
+is a type rather than a type's comparability — a position is an `int` whatever the list holds — which
+is why this is the one indexing form imposing no condition on a type.
+
+The element type is read off the list and carried through to the result, the way `listMatch` gives it
+to the name its non-empty case binds: an index hands back something the list held, where
+`listFindIndex` hands back a position in it. -/
+@[simp, grind =]
+public theorem Expression.infer_listIndex_eq_some {td : TypeDecls} {ctx : Context}
+    {l i : Expression} {t : Ty} :
+    (Expression.listIndex l i).infer td ctx = some t ↔
+      ∃ t', l.infer td ctx = some (.list t') ∧ i.infer td ctx = some .int ∧ t = .option t' := by
+  simp only [Expression.infer, Expression.inferE, Except.toOption_eq_some_iff]
+  split <;> simp_all <;> grind
 
 /-- A `listLength` is typeable when its operand is a list, and then it is an `int`.
 

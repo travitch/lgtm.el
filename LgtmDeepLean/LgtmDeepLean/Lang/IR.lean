@@ -240,6 +240,12 @@ This is a special form (instead of `indMatch`) because options get compiled away
   5. The expression to evaluate with those two names bound, for the non-empty list case
   -/
   | listMatch : Expression → Expression → String → String → Expression → Expression
+  /-- Index into the given list with an integer index.
+
+  > lst[idx]
+
+  Returns none if the index is out of range and returns some(elt) otherwise. -/
+  | listIndex : Expression → Expression → Expression
   /-- Map a function over lists.
 
 For a list `l` of type `list a`, and a function `f` of type `(a) -> b`, `map l f` produces a `list b`.

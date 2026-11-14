@@ -1535,6 +1535,186 @@ example :
         (.stringLit "a") :=
   rfl
 
+-- The brackets are one form over two readings, and the type inferred for what is indexed is what
+-- says which: a list gives a `listIndex` and everything else a `hashmapGet`.  A list literal
+-- carries its own element type, so it is a list even in a fragment, where nothing else is.
+example :
+    [lgtm| [1, 2 : int][0]] =
+      Expression.listIndex (.lcons (.intLit 1) (.lcons (.intLit 2) (.lnil .int))) (.intLit 0) :=
+  rfl
+
+example : [lgtm| [ : int][0]] = Expression.listIndex (.lnil .int) (.intLit 0) :=
+  rfl
+
+example :
+    [lgtm| [new Point{x = 1, y = 2} : struct Point][0]] =
+      Expression.listIndex
+        (.lcons (.structNew "Point" [("x", .intLit 1), ("y", .intLit 2)]) (.lnil (.struct "Point")))
+        (.intLit 0) :=
+  rfl
+
+-- What was consulted is the operand's type rather than how it was arrived at, so anything else a
+-- type is readable off reads the same way.
+example :
+    [lgtm| (reverse [1, 2 : int])[0]] =
+      Expression.listIndex (.listReverse (.lcons (.intLit 1) (.lcons (.intLit 2) (.lnil .int))))
+        (.intLit 0) :=
+  rfl
+
+example :
+    [lgtm| (toList hashmap(string, int))[0]] =
+      Expression.listIndex (.hashmapToList (.hashmapEmpty .string .int)) (.intLit 0) :=
+  rfl
+
+-- The index is itself a postfix form at `max`, which is where `reverse`'s operand is read, so an
+-- unparenthesized `reverse` reads the brackets first and takes the index as its operand.
+example :
+    [lgtm| reverse [1, 2 : int][0]] =
+      Expression.listReverse
+        (.listIndex (.lcons (.intLit 1) (.lcons (.intLit 2) (.lnil .int))) (.intLit 0)) :=
+  rfl
+
+-- An operand whose type is a hashmap is the lookup it has always been.
+example :
+    [lgtm| hashmap(string, int)["a"]] =
+      Expression.hashmapGet (.hashmapEmpty .string .int) (.stringLit "a") :=
+  rfl
+
+-- And so is one with no type at all, which is the documented fallback: a fragment has no context,
+-- so a free name has nothing to be read by and the brackets stay the lookup every `m[k]` written
+-- before an index existed was.  An index over a free name is written inside a declaration instead.
+example : [lgtm| xs[0]] = Expression.hashmapGet (.varRef "xs") (.intLit 0) :=
+  rfl
+
+example : [lgtm| xs[i]] = Expression.hashmapGet (.varRef "xs") (.varRef "i") :=
+  rfl
+
+-- What an index produces is an ordinary operand, an option, so the forms that read one read it with
+-- no parentheses — the same nesting a lookup has, over a literal here because a fragment is where
+-- the ill-typed ones can be written at all.
+example :
+    [lgtm| [1 : int][0] + 1] =
+      Expression.plus (.listIndex (.lcons (.intLit 1) (.lnil .int)) (.intLit 0)) (.intLit 1) :=
+  rfl
+
+example :
+    [lgtm| [1 : int][0] == none : int] =
+      Expression.equals (.listIndex (.lcons (.intLit 1) (.lnil .int)) (.intLit 0))
+        (.optionNone .int) :=
+  rfl
+
+example :
+    [lgtm| match [1 : int][0] with | none => 0 | some(x) => x] =
+      Expression.optionMatch (.listIndex (.lcons (.intLit 1) (.lnil .int)) (.intLit 0)) (.intLit 0)
+        "x" (.varRef "x") :=
+  rfl
+
+-- And the index itself is an expression like any other.
+example :
+    [lgtm| [1, 2 : int][i + 1]] =
+      Expression.listIndex (.lcons (.intLit 1) (.lcons (.intLit 2) (.lnil .int)))
+        (.plus (.varRef "i") (.intLit 1)) :=
+  rfl
+
+example :
+    [lgtm| [1, 2 : int][length [1, 2 : int] - 1]] =
+      Expression.listIndex (.lcons (.intLit 1) (.lcons (.intLit 2) (.lnil .int)))
+        (.minus (.listLength (.lcons (.intLit 1) (.lcons (.intLit 2) (.lnil .int)))) (.intLit 1)) :=
+  rfl
+
+-- Chaining is where the two readings part company.  The first bracket of a `list list int` is an
+-- index and hands back an `option list int`, and an option is no list, so the second is a lookup —
+-- where `m[k1][k2]` is two lookups because neither needs the first to have produced a map.  See
+-- `chkChainedIndex` below for what that costs inside a declaration.
+example :
+    [lgtm| [[1 : int] : list int][0][0]] =
+      Expression.hashmapGet
+        (.listIndex (.lcons (.lcons (.intLit 1) (.lnil .int)) (.lnil (.list .int))) (.intLit 0))
+        (.intLit 0) :=
+  rfl
+
+/-- A struct with a list in it, to index a field read. -/
+lgtm struct Bag{items : list int}
+
+/-- The element of `xs` at `i`, and zero where there is none.  A parameter is where a declaration's
+operands come from, and the type declared for it is what the brackets are read by — so this is the
+shape real code writes an index in, where a fragment needs an operand carrying its own type. -/
+lgtm def elemOr as"elem-or"(xs : list int)(i : int) : int :=
+  match xs[i] with | none => 0 | some(x) => x
+
+#guard (elemOr.check {} []).isOk
+
+example :
+    elemOr.body =
+      Expression.optionMatch (.listIndex (.varRef "xs") (.varRef "i")) (.intLit 0) "x"
+        (.varRef "x") :=
+  rfl
+
+-- And what the brackets were read as is settled once, where the body was elaborated: changing the
+-- parameter's type afterwards leaves the index where it is, now over a hashmap, which does not
+-- check.
+#guard
+  !(({ elemOr with parameters := [("xs", [lgtm_ty| hashmap int int]), ("i", .int)] } :
+            FuncDecl).check
+        {} []).isOk
+
+/-- The same declaration over a hashmap, which is the dispatch read the other way: the brackets are
+the ones above, and the type of what is indexed is the whole of what tells the two apart. -/
+lgtm def valueOr as"value-or"(m : hashmap int int)(k : int) : int :=
+  match m[k] with | none => 0 | some(x) => x
+
+#guard (valueOr.check {} []).isOk
+
+example :
+    valueOr.body =
+      Expression.optionMatch (.hashmapGet (.varRef "m") (.varRef "k")) (.intLit 0) "x"
+        (.varRef "x") :=
+  rfl
+
+/-- The same read over a `let`, which is the other place a declaration's operands come from: the
+type the name is bound at is what the brackets are read by, exactly as a parameter's is. -/
+lgtm def firstOrZero as"first-or-zero"(p : struct Point) : int :=
+  let ys = [p.x, p.y : int] in
+  match ys[0] with | none => 0 | some(x) => x
+
+#guard (firstOrZero.check { ss := Structs.ofDecls [Point] } []).isOk
+
+example :
+    firstOrZero.body =
+      Expression.let_ "ys"
+        (.lcons (.structGet (.varRef "p") "x") (.lcons (.structGet (.varRef "p") "y") (.lnil .int)))
+        (.optionMatch (.listIndex (.varRef "ys") (.intLit 0)) (.intLit 0) "x" (.varRef "x")) :=
+  rfl
+
+/-- A field's list and a call's list are both indexed with no parentheses, the way a lookup reads
+`p.m[k]` and `f(1)[k]`: the brackets bind as tightly as the field read and the call do. -/
+lgtm def bagAt as"bag-at"(b : struct Bag)(i : int) : option int :=
+  b.items[i]
+
+example : bagAt.body = Expression.listIndex (.structGet (.varRef "b") "items") (.varRef "i") :=
+  rfl
+
+lgtm def bangAt as"bang-at"(s : string) : option string :=
+  bang(s)[0]
+
+example :
+    bangAt.body = Expression.listIndex (.app (.varRef "bang") [.varRef "s"]) (.intLit 0) :=
+  rfl
+
+-- An index of a `list list int` does not chain: the first bracket hands back an `option list int`,
+-- which is no list, so the second reads as a lookup and the declaration does not check.  That is
+-- the whole of what the fallback costs inside a declaration, and it is reported on the chain rather
+-- than anywhere else.
+/-- error: `m[k]` needs a hashmap, but what is looked up in here has type option list int -/
+#guard_msgs (error) in
+lgtm def chkChainedIndex(xss : list list int) : option int :=
+  xss[0][0]
+
+example :
+    chkChainedIndex.body =
+      Expression.hashmapGet (.listIndex (.varRef "xss") (.intLit 0)) (.intLit 0) :=
+  rfl
+
 -- A tuple type lists its types in one group in parentheses, the way a function type's parameters
 -- are listed and unlike `hashmap`'s two: the group is what says how many there are, so a function
 -- type among them needs no parentheses of its own and there is an empty one to write.

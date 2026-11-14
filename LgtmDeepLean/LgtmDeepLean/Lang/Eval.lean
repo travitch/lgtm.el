@@ -239,6 +239,23 @@ what typing rules out. -/
     Eval td env scrut (.list (w :: ws)) →
       Eval td ⟨(hd, w) :: (tl, .list ws) :: env.bindings, env.globals⟩ cbody v →
       Eval td env (.listMatch scrut nbody hd tl cbody) v
+  /-- An index evaluates the list and the index and hands back the option of what the list holds at
+that position.
+
+One rule rather than the two a match on a list has, and for the reason `EHashmapGet` is one:
+`Value.index?` is a function on a list and a position that answers for both cases, so a proof is left
+with the list, the index, and what that said about the two rather than with a case to choose.  An
+index the list has no element at is not among the things that can go wrong — it is the empty option,
+which is a value like any other, exactly as a key the map does not bind is.
+
+Both operands are always evaluated, the way a comparison's two are: neither is in a position to make
+the other unnecessary.  Unlike a get there is no premise beyond them, since nothing is compared — the
+lookup is total, so a non-list first operand and a non-`int` second are the only things that can go
+wrong here, and that is what typing rules out. -/
+  |
+  EListIndex (l i : Expression) :
+    Eval td env l (.list vs) →
+      Eval td env i (.int n) → Eval td env (.listIndex l i) (.option (Value.index? vs n))
   /-- Map `f` over `e` (of type List α).
 
 The length equality clause is a guarantee that the result list is always
@@ -582,6 +599,19 @@ public theorem Eval.optionMatch_unreachable_inv {td : TypeDecls} {env : Env} {sc
   | EOptionMatchNone _ _ _ _ _ hnone => exact absurd hnone Eval.not_unreachable
   | EOptionMatchSome _ _ _ _ hscrut hbody => exact ⟨_, hscrut, hbody⟩
 
+/-- An index inverted is its one rule read backwards: the list, the position, and the option
+`Value.index?` made of the two.
+
+No disjunction, unlike `Eval.listFindIndex_inv`: one rule answers for an index the list has an
+element at and for one it does not, so what the value is is settled by the function rather than by a
+case a proof has to make. -/
+public theorem Eval.listIndex_inv {td : TypeDecls} {env : Env} {l i : Expression} {v : Value}
+    (h : Eval td env (.listIndex l i) v) :
+    ∃ vs n, Eval td env l (.list vs) ∧ Eval td env i (.int n) ∧
+      v = .option (Value.index? vs n) := by
+  cases h with
+  | EListIndex _ _ hl hi => exact ⟨_, _, hl, hi, rfl⟩
+
 public theorem Eval.listMap_inv {td : TypeDecls} {env : Env} {e f : Expression} {v : Value}
     (h : Eval td env (.listMap e f) v) :
     ∃ vs vs' cb cg ps body, Eval td env e (.list vs) ∧ Eval td env f (.closure cb cg ps body) ∧
@@ -817,6 +847,16 @@ public theorem Eval.hasType {td : TypeDecls} {env : Env} {ctx : Context} {e : Ex
           (Env.hasType_cons (hall _ (List.mem_cons_self ..))
             (Env.hasType_cons (.list fun u hu => hall u (List.mem_cons_of_mem _ hu)) henv))
           (by simpa using hcb)
+  | EListIndex l i _ _ ihl
+    _ =>
+    obtain ⟨t', hl, -, rfl⟩ := Expression.infer_listIndex_eq_some.mp ht
+    -- Which position produced the element does not matter: a list is homogeneous, so having found
+    -- one at all is what types the result, exactly as having found a binding types a get.
+    cases ihl henv hl with
+    | list hall =>
+      cases hidx : Value.index? _ _ with
+      | none => exact .optionNone
+      | some w => exact .optionSome (hall w (Value.mem_of_index? hidx))
   | @EListMap _ _ _ _ _ _ vs' e f _ _ hlen hat _ _ ihf
     ihev =>
     obtain ⟨t', r, -, hf, rfl⟩ := Expression.infer_listMap_eq_some.mp ht

@@ -828,6 +828,36 @@ public theorem Value.sortWith_perm {cmp : Value → Value → Bool} {vs : List V
     (Value.sortWith cmp vs).length = vs.length :=
   Value.sortWith_perm.length_eq
 
+/-! ## Reading an element of a list
+
+What `Expression.listIndex` hands back: the element at a position, or nothing where the list has no
+element there.
+
+A function rather than a premise for the reason `KeyValues.lookup?` is one — there is nothing about
+evaluation in it — and total where that is partial: a list either has an element at a position or it
+does not, and no value is compared to say which.  So the form has no rule of `Stuck` for a lookup
+with no answer, where a get on a hashmap has one. -/
+
+/-- The element of `vs` at `i`, or `none` where `i` is not a position `vs` has.
+
+The index is an `Int` because the IR has no natural number type, so a negative one is a position no
+list has rather than something ruled out before the lookup: `i.toNat` reads a negative index as `0`,
+which is the one position almost every list does have. -/
+@[expose] public def Value.index? (vs : List Value) (i : Int) : Option Value :=
+  if i < 0 then none else vs[i.toNat]?
+
+/-- A lookup that found an element found one the list holds.
+
+This is the whole of what typing an index needs about it: a list is homogeneous, so which position
+produced the element does not matter — having found one at all is what gives it the element type.
+The counterpart of `KeyValues.mem_of_lookup?`, whose key is existential for the same reason. -/
+public theorem Value.mem_of_index? {vs : List Value} {i : Int} {v : Value}
+    (h : Value.index? vs i = some v) : v ∈ vs := by
+  simp only [Value.index?] at h
+  split at h
+  · simp at h
+  · exact List.mem_of_getElem? h
+
 /-! ## Reading and rebinding a hashmap
 
 The two walks along a hashmap's bindings, and what each of them finds.  Both are `Value.beq?` run

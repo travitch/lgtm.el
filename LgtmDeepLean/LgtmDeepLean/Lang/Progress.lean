@@ -70,7 +70,8 @@ operands, `listSortBy` of what its comparison answered, and `listFindIndex` of w
 answered. -/
 @[expose] public def Value.IsBool (v : Value) : Prop := ∃ b, v = .bool b
 
-/-- `v` is an `int`: what `plus`, `minus`, `min` and `max` ask of their operands. -/
+/-- `v` is an `int`: what `plus`, `minus`, `min` and `max` ask of their operands, and `listIndex` of
+its index. -/
 @[expose] public def Value.IsInt (v : Value) : Prop := ∃ i, v = .int i
 
 /-- `v` is an option: what `optionMatch` asks of its scrutinee. -/
@@ -287,6 +288,17 @@ case adds is the second name in the environment its body is stuck under. -/
     Eval td env scrut (.list (w :: ws)) →
       Stuck td ⟨(hd, w) :: (tl, .list ws) :: env.bindings, env.globals⟩ cbody →
       Stuck td env (.listMatch scrut nbody hd tl cbody)
+  /-- An index is stuck in either operand, on a first operand that is not a list, or on a second that
+is not an `int`.  Both are always evaluated, so each of the four rules mentions one operand only.
+
+An index the list has no element at is not among the failures: that is the empty option, which is a
+value like any other — the same thing a key the map does not bind is to `hashmapGet`.  And where a get
+has a fifth rule for a lookup with no answer, this has none: `Value.index?` compares nothing, so there
+is no `Ty.comparable` for its typing rule to impose and nothing for it to give up on. -/
+  | listIndexOperand : Stuck td env l → Stuck td env (.listIndex l i)
+  | listIndexNotList : Eval td env l v → ¬v.IsList → Stuck td env (.listIndex l i)
+  | listIndexIndex : Stuck td env i → Stuck td env (.listIndex l i)
+  | listIndexIndexNotInt : Eval td env i v → ¬v.IsInt → Stuck td env (.listIndex l i)
   /-- A mapping is stuck in either operand, on an operand of the wrong shape, or in one of the calls
 it makes: an element that does not fit the closure's parameter — a function of the wrong arity among
 them — or a call whose body is stuck.

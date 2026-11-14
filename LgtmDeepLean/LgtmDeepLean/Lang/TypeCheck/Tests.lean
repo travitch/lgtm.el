@@ -258,6 +258,99 @@ private def ctx : Context :=
       ctx ==
     some .int
 
+-- An index is an option of the list's element type: the element type is carried through, and the
+-- option is there because a position the list has no element at is a value rather than an error.
+#guard (Expression.listIndex (.varRef "xs") (.intLit 0)).infer types ctx == some (.option .int)
+
+#guard (Expression.listIndex (.lnil .string) (.intLit 0)).infer types ctx == some (.option .string)
+
+#guard
+  (Expression.listIndex (.lnil (.list .int)) (.intLit 0)).infer types ctx ==
+    some (.option (.list .int))
+
+#guard
+  (Expression.listIndex (.lnil (.struct "Point")) (.intLit 0)).infer types ctx ==
+    some (.option (.struct "Point"))
+
+-- The index is any `int`, and nothing about it is checked against the list: a position past the end
+-- is what the option answers for, so there is nothing here for a type to rule out.
+#guard (Expression.listIndex (.varRef "xs") (.varRef "n")).infer types ctx == some (.option .int)
+
+#guard
+  (Expression.listIndex (.varRef "xs") (.plus (.varRef "n") (.intLit 1))).infer types ctx ==
+    some (.option .int)
+
+#guard
+  (Expression.listIndex (.varRef "xs") (.listLength (.varRef "xs"))).infer types ctx ==
+    some (.option .int)
+
+#guard
+  (Expression.listIndex (.varRef "xs") (.minus (.intLit 0) (.intLit 1))).infer types ctx ==
+    some (.option .int)
+
+-- Only a list can be indexed this way, so a hashmap, an option and an `int` are each ill typed here
+-- — a hashmap is read by `hashmapGet` instead, which asks a key of its second operand where this
+-- asks an `int`.
+#guard (Expression.listIndex (.varRef "m") (.intLit 0)).infer types ctx == none
+
+#guard (Expression.listIndex (.varRef "o") (.intLit 0)).infer types ctx == none
+
+#guard (Expression.listIndex (.varRef "n") (.intLit 0)).infer types ctx == none
+
+#guard (Expression.listIndex (.varRef "f") (.intLit 0)).infer types ctx == none
+
+#guard (Expression.listIndex (.varRef "tu") (.intLit 0)).infer types ctx == none
+
+-- And only an `int` can be the position: unlike a hashmap's key, which takes the type the map
+-- declares, this is one type whatever the list holds.
+#guard (Expression.listIndex (.varRef "xs") (.stringLit "a")).infer types ctx == none
+
+#guard (Expression.listIndex (.varRef "xs") (.varRef "s")).infer types ctx == none
+
+#guard (Expression.listIndex (.varRef "xs") (.boolLit true)).infer types ctx == none
+
+#guard (Expression.listIndex (.varRef "xs") (.varRef "xs")).infer types ctx == none
+
+#guard (Expression.listIndex (.lnil .string) (.stringLit "a")).infer types ctx == none
+
+-- An ill-typed part makes the whole index ill typed, in either position.
+#guard (Expression.listIndex (.varRef "nope") (.intLit 0)).infer types ctx == none
+
+#guard (Expression.listIndex (.varRef "xs") (.varRef "nope")).infer types ctx == none
+
+#guard (Expression.listIndex (.lcons (.intLit 1) (.lnil .string)) (.intLit 0)).infer types ctx == none
+
+-- What comes out is an option, so a match reads both cases and an index does not nest directly: an
+-- `option int` is not a list, which is where this parts company with `reverse`.
+#guard
+  (Expression.optionMatch (.listIndex (.varRef "xs") (.intLit 0)) (.intLit 0) "x"
+          (.varRef "x")).infer
+      types ctx ==
+    some .int
+
+#guard
+  (Expression.listIndex (.listIndex (.varRef "xs") (.intLit 0)) (.intLit 0)).infer types ctx == none
+
+#guard
+  (Expression.equals (.listIndex (.varRef "xs") (.intLit 0)) (.optionNone .int)).infer types ctx ==
+    some .bool
+
+-- A list the operand builds is indexed the same way one a name holds is, and the list forms compose
+-- on the way in.
+#guard
+  (Expression.listIndex (.lcons (.intLit 1) (.lnil .int)) (.intLit 0)).infer types ctx ==
+    some (.option .int)
+
+#guard
+  (Expression.listIndex (.listReverse (.varRef "xs")) (.intLit 0)).infer types ctx ==
+    some (.option .int)
+
+#guard
+  (Expression.listIndex (.listMap (.varRef "xs") (.lam [("x", .int)] (.stringLit "a")))
+          (.intLit 0)).infer
+      types ctx ==
+    some (.option .string)
+
 -- Reversing a list keeps its type, whatever the element type is.
 #guard (Expression.listReverse (.varRef "xs")).infer types ctx == some (.list .int)
 
@@ -3360,6 +3453,16 @@ private def message (r : Except String Unit) : String :=
         (.option .int)) ==
     "a predicate must answer whether an element matches, but this one returns int \
       rather than a bool"
+
+-- An index names the two things it asks for separately, since neither is read off the other: the
+-- list it reads, and the position, which is an `int` whatever that list holds.
+#guard
+  message ((Expression.listIndex (.varRef "n") (.intLit 0)).check types ctx (.option .int)) ==
+    "a list index needs a list, but what is indexed here has type int"
+
+#guard
+  message ((Expression.listIndex (.varRef "xs") (.varRef "s")).check types ctx (.option .int)) ==
+    "the index given to a list index has type string where int was expected"
 
 #guard
   message ((Expression.hashmapGet (.varRef "n") (.stringLit "k")).check types ctx (.option .int)) ==
