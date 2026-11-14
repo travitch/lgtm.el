@@ -133,10 +133,12 @@ theorem CommentThreads.asAlist.sortThreadLists_apply_of_mem {td : TypeDecls} {gs
       CommentThreads.asAlist.sortThreadLists.Apply td gs
         [threads, manager, .tuple [loc, .list roots]] group := by
   obtain ⟨-, -, hbody⟩ := h
+  obtain ⟨refToComment, hrefLam, hbody⟩ := Eval.let_inv hbody
   obtain ⟨lookupCommentForRef, hlookupLam, hbody⟩ := Eval.let_inv hbody
   obtain ⟨locatedRootComments, hlrc, hbody⟩ := Eval.let_inv hbody
   obtain ⟨sortAtLocation, hsortLam, hbody⟩ := Eval.let_inv hbody
   obtain ⟨threadsSorted, htsl, hbody⟩ := Eval.let_inv hbody
+  obtain rfl := Eval.lam_inv hrefLam
   obtain rfl := Eval.lam_inv hlookupLam
   obtain rfl := Eval.lam_inv hsortLam
   -- The sort by location rearranges and nothing else, so a group is one of the calls' answers.
@@ -168,10 +170,11 @@ theorem CommentThreads.asAlist.sortThreadLists_apply_of_mem {td : TypeDecls} {gs
     obtain ⟨atLoc, hatLoc, hentry⟩ := Eval.let_inv hentry
     obtain ⟨comments, hmapComments, hentry⟩ := Eval.let_inv hentry
     -- the comments at this location, one per ref, each read out of the manager
-    obtain ⟨refs, cs, _cb, _cg, _ps, _body, hrefs, hcLam, hclen, hcev, rfl⟩ :=
+    obtain ⟨refs, cs, _cb, _cg, _ps, _body, hrefs, hcFn, hclen, hcev, rfl⟩ :=
       Eval.listMap_inv hmapComments
-    obtain ⟨rfl, rfl, rfl, rfl⟩ : _ ∧ _ ∧ _ ∧ _ := by
-      simpa [Env.closure, Value.closure.injEq] using Eval.lam_inv hcLam
+    have hcFnv := Eval.varRef_inv hcFn
+    simp [Env.extend, Env.lookup, List.lookup] at hcFnv
+    obtain ⟨rfl, rfl, rfl, rfl⟩ := hcFnv
     have hmanagerComments : CommentManager.ContainsComments manager cs := by
       intro c hc
       obtain ⟨ref, hpair⟩ := exists_mem_zip_of_mem_right hclen hc
