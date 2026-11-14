@@ -24,9 +24,6 @@ lgtm def CommentThreads.asAlist.sortThreadLists (threads : struct CommentThreads
   let sortedThreads = map list sortedRoots lookupThreadForComment in
   tuple(commentThreadRoots.0, sortedThreads)
 
--- Probably need to map the thread roots into a list of comments first to keep things simpler in the lower levels
---
--- That will require a map over to `option comment` values with an unreachable case if it fails (which we'll prove away)
 lgtm def CommentThreads.asAlist (threads : struct CommentThreads) (manager : struct CommentManager) : list (tuple(inductive ThreadLocation, list (struct CommentThread))) :=
   let refToComment = fun (commentRef : struct CommentRef) =>
       match CommentManager.get(manager, commentRef) with
@@ -52,7 +49,67 @@ lgtm def CommentThreads.rootComments (threads : struct CommentThreads) (manager 
     | none => unreachable "Comments must be defined in the CommentManager" : struct Comment
     | some(c) => c)
 
+/-- Given a current SELECTION, select the next available thread (if any).
+
+The VERSION is included because the user can switch files; as there is
+only one global selection, if the user selects the next comment in a
+different file, the whole selection resets.
+
+The linear order is as established in the ordering defined by THREADS.
+The MANAGER is required to get information about comments. -/
+lgtm def CommentThreads.nextThread (threads : struct CommentThreads) (manager : struct CommentManager) (version : inductive FileVersion) (selection : struct SelectedComment) : option (struct SelectedComment) :=
+  let orderedThreads = CommentThreads.toThreadsOrdered(threads, manager) in
+  if version == selection.version then {
+    match findIndex orderedThreads (fun (thread : struct CommentThread) => thread.value == selection.thread.value) with
+      | none => none : struct SelectedComment
+      | some(currentIndex) =>
+        let nextIndex = min (currentIndex + 1) (length orderedThreads - 1) in
+        let nextThread = match orderedThreads[nextIndex] with
+            | none => unreachable "Thread indexing is required to be total" : struct CommentThread
+            | some(thread) => thread in
+        some (new SelectedComment { version = version, thread = nextThread, comment = nextThread.value })
+  } else {
+    match orderedThreads with
+      | [] => none : struct SelectedComment
+      | firstThread :: _rest => some (new SelectedComment { version = version, thread = firstThread, comment = firstThread.value })
+  }
+
+/-- Given a current SELECTION, select the previous available thread (if any).
+
+The VERSION is included because the user can switch files; as there is
+only one global selection, if the user selects the next comment in a
+different file, the whole selection resets.
+
+The linear order is as established in the ordering defined by THREADS.
+The MANAGER is required to get information about comments. -/
+lgtm def CommentThreads.previousThread (threads : struct CommentThreads) (manager : struct CommentManager) (version : inductive FileVersion) (selection : struct SelectedComment) : option (struct SelectedComment) :=
+  let orderedThreads = CommentThreads.toThreadsOrdered(threads, manager) in
+  if version == selection.version then {
+    match findIndex orderedThreads (fun (thread : struct CommentThread) => thread.value == selection.thread.value) with
+      | none => none : struct SelectedComment
+      | some(currentIndex) =>
+        let previousIndex = if currentIndex == 0 then { 0 } else { currentIndex - 1 } in
+        let previousThread = match orderedThreads[previousIndex] with
+            | none => unreachable "Thread indexing was proved to be total" : struct CommentThread
+            | some(pt) => pt in
+        some (new SelectedComment { version = version, thread = previousThread, comment = previousThread.value })
+  } else {
+    match orderedThreads with
+      | [] => none : struct SelectedComment
+      | firstThread :: rest => match reverse (firstThread :: rest) with
+        | [] => unreachable "Already proved that the list is non-empty" : option (struct SelectedComment)
+        | last :: _rest => some(new SelectedComment { version = version, thread = last, comment = last.value })
+  }
+
 def Model.CommentThreads.funcDecls : List FuncDecl :=
-  [CommentThreads.isEmpty, CommentThreads.commentCount, CommentThreads.asAlist.sortThreadLists, CommentThreads.asAlist, CommentThreads.toThreadsOrdered, CommentThreads.rootComments]
+  [ CommentThreads.isEmpty
+  , CommentThreads.commentCount
+  , CommentThreads.asAlist.sortThreadLists
+  , CommentThreads.asAlist
+  , CommentThreads.toThreadsOrdered
+  , CommentThreads.rootComments
+  , CommentThreads.nextThread
+  , CommentThreads.previousThread
+  ]
 
 end
