@@ -69,7 +69,7 @@ negates one of these: `¬v.IsBool` is what leaves a conditional stuck on a condi
 operands, and `listSortBy` of what its comparison answered. -/
 @[expose] public def Value.IsBool (v : Value) : Prop := ∃ b, v = .bool b
 
-/-- `v` is an `int`: what `plus` and `minus` ask of their operands. -/
+/-- `v` is an `int`: what `plus`, `minus`, `min` and `max` ask of their operands. -/
 @[expose] public def Value.IsInt (v : Value) : Prop := ∃ i, v = .int i
 
 /-- `v` is an option: what `optionMatch` asks of its scrutinee. -/
@@ -234,6 +234,16 @@ always evaluated, so all four rules mention one operand only. -/
   | minusLeftNotInt : Eval td env e₁ v → ¬v.IsInt → Stuck td env (.minus e₁ e₂)
   | minusRight : Stuck td env e₂ → Stuck td env (.minus e₁ e₂)
   | minusRightNotInt : Eval td env e₂ v → ¬v.IsInt → Stuck td env (.minus e₁ e₂)
+  /-- A minimum and a maximum are stuck exactly where arithmetic is, and for the same reason: both
+operands are evaluated and an `int` is asked of each. -/
+  | minLeft : Stuck td env e₁ → Stuck td env (.min e₁ e₂)
+  | minLeftNotInt : Eval td env e₁ v → ¬v.IsInt → Stuck td env (.min e₁ e₂)
+  | minRight : Stuck td env e₂ → Stuck td env (.min e₁ e₂)
+  | minRightNotInt : Eval td env e₂ v → ¬v.IsInt → Stuck td env (.min e₁ e₂)
+  | maxLeft : Stuck td env e₁ → Stuck td env (.max e₁ e₂)
+  | maxLeftNotInt : Eval td env e₁ v → ¬v.IsInt → Stuck td env (.max e₁ e₂)
+  | maxRight : Stuck td env e₂ → Stuck td env (.max e₁ e₂)
+  | maxRightNotInt : Eval td env e₂ v → ¬v.IsInt → Stuck td env (.max e₁ e₂)
   /-- An option holding a value is stuck exactly where that value is.  An empty one is never
 stuck. -/
   | optionSomeInner : Stuck td env e → Stuck td env (.optionSome e)

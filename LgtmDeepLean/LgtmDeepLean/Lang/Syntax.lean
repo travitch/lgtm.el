@@ -51,7 +51,8 @@ the IR name `Foo.bar` when an `lgtm` command has declared that IR name, and othe
 so a module calling another's declarations no longer needs to import it twice.
 
 The keywords inside a DSL term — `bool`, `int`, `string`, `list`, `option`, `hashmap`, `tuple`,
-`true`, `false`, `some`, `none`, `reverse`, `length`, `map`, `sortOn`, `sortBy`, `toList`,
+`true`, `false`, `some`, `none`, `min`, `max`, `reverse`, `length`, `map`, `sortOn`, `sortBy`,
+`toList`,
 `unreachable`, `var`,
 `struct`, `new`, and
 `as` — are declared
@@ -394,6 +395,10 @@ conjunction of a comparison rather than a comparison against a conjunction.
 The three comparisons share one level and none of them associates, so `a == b == c` and `a < b <= c`
 are parse errors rather than one of the two readings each could have had.
 
+`min x y` and `max x y` are the other two `int` operations, prefix keywords rather than operators
+because neither has a symbol to be written with.  They bind as tightly as `reverse`, so `min x y + 1`
+is the minimum plus one.
+
 A list literal carries its element type, because `lnil` does: `[1, 2 : int]` is
 `.lcons (.intLit 1) (.lcons (.intLit 2) (.lnil .int))`, and the empty list is `[: int]`.
 
@@ -469,6 +474,23 @@ is not a list, which is what makes `length xs == 0` a comparison of two `int`s.
 `length` is a keyword, so it is not available as a variable name inside a DSL term; `var "length"`
 is the escape hatch, the same one `reverse` and `toList` leave. -/
 syntax :max &"length" lgtmExpr:max : lgtmExpr
+
+/-- `min a b` is the smaller of two `int`s and `max a b` the larger.
+
+Prefix keywords taking two operands, the way `sortOn` does, rather than operators like `+` and `-`:
+there is no symbol either is written with, and a keyword is what every other binary form the IR has
+is written as.  Both operands bind as tightly as `reverse`'s one, so `min x y + 1` is the minimum
+plus one and `min (x + 1) y` takes parentheses to reach past the first operand.
+
+Both operands must be `int`s and what comes out is an `int`, which is the type checker's business
+rather than the parser's.  Unlike `<` and `<=` neither is polymorphic: a comparison produces a
+`bool` whatever it compared, where these hand back one of their operands.
+
+`min` and `max` are keywords, so neither is available as a variable name inside a DSL term;
+`var "min"` is the escape hatch, the same one `reverse` and `length` leave. -/
+syntax :max &"min" lgtmExpr:max lgtmExpr:max : lgtmExpr
+
+syntax :max &"max" lgtmExpr:max lgtmExpr:max : lgtmExpr
 
 syntax :max lgtmExpr:max noWs "(" lgtmExpr,* ")" : lgtmExpr
 
@@ -1015,6 +1037,8 @@ meta partial def elabLgtmExprCore (ctx : Context) (stx : TSyntax `lgtmExpr) :
   | `(lgtmExpr| $a <= $b) => return .le (← elabLgtmExpr ctx a) (← elabLgtmExpr ctx b)
   | `(lgtmExpr| $a && $b) => return .boolAnd (← elabLgtmExpr ctx a) (← elabLgtmExpr ctx b)
   | `(lgtmExpr| $a || $b) => return .boolOr (← elabLgtmExpr ctx a) (← elabLgtmExpr ctx b)
+  | `(lgtmExpr| min $a $b) => return .min (← elabLgtmExpr ctx a) (← elabLgtmExpr ctx b)
+  | `(lgtmExpr| max $a $b) => return .max (← elabLgtmExpr ctx a) (← elabLgtmExpr ctx b)
   | `(lgtmExpr| reverse $e) => return .listReverse (← elabLgtmExpr ctx e)
   | `(lgtmExpr| length $e) => return .listLength (← elabLgtmExpr ctx e)
   | `(lgtmExpr| [$es,* : $t]) => do

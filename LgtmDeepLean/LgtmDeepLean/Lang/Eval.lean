@@ -175,6 +175,17 @@ is why the *type* of each has to come from the declaration when `Eval.hasType` t
   EMinus (e₁ : Expression) (e₂ : Expression) :
     Eval td env e₁ (.int n₁) →
       Eval td env e₂ (.int n₂) → Eval td env (.minus e₁ e₂) (.int (n₁ - n₂))
+  /-- The smaller and the larger of two `int`s, which is `Int`'s own `min` and `max`: both operands
+are evaluated, the way `EPlus`'s are, so neither form short-circuits on an operand that already
+settles the answer. -/
+  |
+  EMin (e₁ : Expression) (e₂ : Expression) :
+    Eval td env e₁ (.int n₁) →
+      Eval td env e₂ (.int n₂) → Eval td env (.min e₁ e₂) (.int (min n₁ n₂))
+  |
+  EMax (e₁ : Expression) (e₂ : Expression) :
+    Eval td env e₁ (.int n₁) →
+      Eval td env e₂ (.int n₂) → Eval td env (.max e₁ e₂) (.int (max n₁ n₂))
   | EStringLit (s : String) : Eval td env (.stringLit s) (.string s)
   /-- An empty option evaluates to the empty value, and its annotation goes nowhere: a value carries no
 type, so what the annotation is for is `Expression.infer` alone — exactly as `ENil` drops `lnil`'s. -/

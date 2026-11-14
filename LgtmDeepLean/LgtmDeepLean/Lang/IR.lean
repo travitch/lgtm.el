@@ -211,6 +211,10 @@ Example: match c with | Red => 0 | Rgb(r, g, b) => r -/
   | intLit : Int → Expression
   | plus : Expression → Expression → Expression
   | minus : Expression → Expression → Expression
+  /-- Return the minimum of two integer inputs -/
+  | min : Expression → Expression → Expression
+  /-- Return the maximum of two integer inputs -/
+  | max : Expression → Expression → Expression
   | stringLit : String → Expression
   /-- The empty option value with its type to aid type checking. -/
   | optionNone : Ty → Expression

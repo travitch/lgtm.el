@@ -527,6 +527,14 @@ comes out of a nest of forms names the innermost expression that nothing could b
     (l.inferE td ctx).expect .int "the left operand of `-`"
     (r.inferE td ctx).expect .int "the right operand of `-`"
     .ok .int
+  | .min l r => do
+    (l.inferE td ctx).expect .int "the first operand of `min`"
+    (r.inferE td ctx).expect .int "the second operand of `min`"
+    .ok .int
+  | .max l r => do
+    (l.inferE td ctx).expect .int "the first operand of `max`"
+    (r.inferE td ctx).expect .int "the second operand of `max`"
+    .ok .int
   | .stringLit _ => .ok .string
   | .optionNone t => .ok (.option t)
   | .optionSome e => do
@@ -813,6 +821,29 @@ public theorem Expression.infer_plus_eq_some {td : TypeDecls} {ctx : Context} {l
 public theorem Expression.infer_minus_eq_some {td : TypeDecls} {ctx : Context} {l r : Expression}
     {t : Ty} :
     (Expression.minus l r).infer td ctx = some t ↔
+      l.infer td ctx = some .int ∧ r.infer td ctx = some .int ∧ t = .int := by
+  simp [Expression.infer, Expression.inferE]
+  grind
+
+/-- A `min` is typeable exactly when both operands are `int`s, and then it is an `int`.
+
+The shape `plus` and `minus` have, and for the same reason: an ordering is what a minimum is read
+off, and `int` is the one orderable type the form is given — unlike `lt` and `le`, which are
+polymorphic over `Ty.orderable` because what they produce is a `bool` whatever they compared, where
+this hands back one of its operands. -/
+@[simp, grind =]
+public theorem Expression.infer_min_eq_some {td : TypeDecls} {ctx : Context} {l r : Expression}
+    {t : Ty} :
+    (Expression.min l r).infer td ctx = some t ↔
+      l.infer td ctx = some .int ∧ r.infer td ctx = some .int ∧ t = .int := by
+  simp [Expression.infer, Expression.inferE]
+  grind
+
+/-- A `max` is typeable exactly when both operands are `int`s, and then it is an `int`. -/
+@[simp, grind =]
+public theorem Expression.infer_max_eq_some {td : TypeDecls} {ctx : Context} {l r : Expression}
+    {t : Ty} :
+    (Expression.max l r).infer td ctx = some t ↔
       l.infer td ctx = some .int ∧ r.infer td ctx = some .int ∧ t = .int := by
   simp [Expression.infer, Expression.inferE]
   grind

@@ -89,6 +89,31 @@ private def ctx : Context :=
 
 #guard (Expression.minus (.stringLit "a") (.varRef "n")).infer types ctx == none
 
+-- A minimum and a maximum ask what arithmetic asks and answer the same: two `int`s in, an `int`
+-- out, and nothing else accepted on either side.
+#guard (Expression.min (.varRef "n") (.intLit 1)).infer types ctx == some .int
+
+#guard (Expression.max (.varRef "n") (.intLit 1)).infer types ctx == some .int
+
+#guard
+  (Expression.min (.max (.intLit 1) (.intLit 2)) (.plus (.varRef "n") (.intLit 3))).infer types
+      ctx ==
+    some .int
+
+#guard (Expression.min (.varRef "s") (.intLit 1)).infer types ctx == none
+
+#guard (Expression.max (.intLit 1) (.varRef "xs")).infer types ctx == none
+
+#guard (Expression.min (.varRef "nope") (.intLit 1)).infer types ctx == none
+
+-- Unlike `lt` and `le`, neither is polymorphic: an ordering a comparison reaches is still not one
+-- either of these is given, because what comes back is an operand rather than a `bool`.
+#guard (Expression.lt (.varRef "s") (.varRef "s")).infer types ctx == some .bool
+
+#guard (Expression.min (.varRef "s") (.varRef "s")).infer types ctx == none
+
+#guard (Expression.max (.varRef "xs") (.varRef "xs")).infer types ctx == none
+
 -- An empty list takes its type from its annotation, not from its context.
 #guard (Expression.lnil .int).infer types ctx == some (.list .int)
 

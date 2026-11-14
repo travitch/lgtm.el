@@ -96,6 +96,43 @@ example : [lgtm| x + y - 1] = Expression.minus (.plus (.varRef "x") (.varRef "y"
 example : [lgtm| x + (y - 1)] = Expression.plus (.varRef "x") (.minus (.varRef "y") (.intLit 1)) :=
   rfl
 
+-- `min` and `max` are prefix keywords taking two operands, each as tight as `reverse`'s one, so
+-- neither reads past an operand of its own and both nest without parentheses.
+example : [lgtm| min x y] = Expression.min (.varRef "x") (.varRef "y") :=
+  rfl
+
+example : [lgtm| max x y] = Expression.max (.varRef "x") (.varRef "y") :=
+  rfl
+
+example : [lgtm| min 1 f(2)] = Expression.min (.intLit 1) (.app (.varRef "f") [.intLit 2]) :=
+  rfl
+
+example : [lgtm| max length xs 0] = Expression.max (.listLength (.varRef "xs")) (.intLit 0) :=
+  rfl
+
+example : [lgtm| min x max y z] = Expression.min (.varRef "x") (.max (.varRef "y") (.varRef "z")) :=
+  rfl
+
+-- Binding tighter than `+` is what puts the arithmetic outside rather than in an operand, and
+-- parentheses are what reach back in.
+example : [lgtm| min x y + 1] = Expression.plus (.min (.varRef "x") (.varRef "y")) (.intLit 1) :=
+  rfl
+
+example : [lgtm| max (x + 1) y] = Expression.max (.plus (.varRef "x") (.intLit 1)) (.varRef "y") :=
+  rfl
+
+example :
+    [lgtm| min x y <= max x y] =
+      Expression.le (.min (.varRef "x") (.varRef "y")) (.max (.varRef "x") (.varRef "y")) :=
+  rfl
+
+-- A variable of either name takes the escape hatch, the way `reverse` and `length` do.
+example : [lgtm| var"min"] = Expression.varRef "min" :=
+  rfl
+
+example : [lgtm| var"max"] = Expression.varRef "max" :=
+  rfl
+
 -- `::` binds looser than `+`, so the arithmetic happens to the element rather than the list.
 example : [lgtm| x :: xs] = Expression.lcons (.varRef "x") (.varRef "xs") :=
   rfl

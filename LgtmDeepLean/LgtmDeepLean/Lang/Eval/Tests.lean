@@ -2513,6 +2513,105 @@ private def belowPoints : FuncDecl :=
 
 #guard !(belowPoints.check points []).isOk
 
+/-! ### The ordering read as a value
+
+`min` and `max` are the other two things to do with an ordering: a comparison answers `bool` for
+whatever it compared, where these hand back one of the operands and so are given the one type they
+can be — `int`, and `Int`'s own `min` and `max` are what they come out as. -/
+
+-- Both operands are evaluated and the smaller or the larger of the two is the value, whichever side
+-- it was written on.
+example : Eval {} ∅ [lgtm| min 1 2] (.int 1) :=
+  .EMin _ _ (.EIntLit 1) (.EIntLit 2)
+
+example : Eval {} ∅ [lgtm| min 2 1] (.int 1) :=
+  .EMin _ _ (.EIntLit 2) (.EIntLit 1)
+
+example : Eval {} ∅ [lgtm| max 1 2] (.int 2) :=
+  .EMax _ _ (.EIntLit 1) (.EIntLit 2)
+
+example : Eval {} ∅ [lgtm| max 2 1] (.int 2) :=
+  .EMax _ _ (.EIntLit 2) (.EIntLit 1)
+
+-- Two equal operands are the one pair the two forms agree on, which is the opposite of how `<` and
+-- `<=` differ there.
+example : Eval {} ∅ [lgtm| min 1 1] (.int 1) :=
+  .EMin _ _ (.EIntLit 1) (.EIntLit 1)
+
+example : Eval {} ∅ [lgtm| max 1 1] (.int 1) :=
+  .EMax _ _ (.EIntLit 1) (.EIntLit 1)
+
+-- The operands are expressions like any others, so what is compared is what they evaluated to.
+example : Eval {} ∅ [lgtm| min (1 + 1) (5 - 2)] (.int 2) :=
+  .EMin _ _ (.EPlus (n₁ := 1) (n₂ := 1) _ _ (.EIntLit 1) (.EIntLit 1))
+    (.EMinus (n₁ := 5) (n₂ := 2) _ _ (.EIntLit 5) (.EIntLit 2))
+
+example : Eval {} ∅ [lgtm| max (min 1 2) 3] (.int 3) :=
+  .EMax _ _ (.EMin _ _ (.EIntLit 1) (.EIntLit 2)) (.EIntLit 3)
+
+-- Nothing but an `int` is accepted on either side, so a `string` operand is stuck where a `<` of
+-- two `string`s is not.
+example : Eval {} ∅ [lgtm| "a" < "b"] (.bool true) :=
+  .ELt _ _ (.EStringLit "a") (.EStringLit "b") rfl
+
+example (v : Value) : ¬Eval {} ∅ [lgtm| min "a" "b"] v := by
+  intro h
+  cases h with
+  | EMin _ _ h₁ _ => cases h₁
+
+example (v : Value) : ¬Eval {} ∅ [lgtm| max 1 "b"] v := by
+  intro h
+  cases h with
+  | EMax _ _ _ h₂ => cases h₂
+
+/-- Clamp `x` up to `lo` and down to `hi`. -/
+lgtm private def clamp(x : int)(lo : int)(hi : int) : int := min (max x lo) hi
+
+#guard (clamp.check {} []).isOk
+
+example : FuncDecl.Apply clamp {} [] [.int 7, .int 0, .int 5] (.int 5) :=
+  .EApply _ (.cons "x" (.int 7) (.cons "lo" (.int 0) (.cons "hi" (.int 5) .nil)))
+    (.EMin (n₁ := max 7 0) (n₂ := 5) _ _
+      (.EMax (n₁ := 7) (n₂ := 0) _ _ (.EVarRef "x" rfl) (.EVarRef "lo" rfl)) (.EVarRef "hi" rfl))
+
+example : FuncDecl.Apply clamp {} [] [.int (-3), .int 0, .int 5] (.int 0) :=
+  .EApply _ (.cons "x" (.int (-3)) (.cons "lo" (.int 0) (.cons "hi" (.int 5) .nil)))
+    (.EMin (n₁ := max (-3) 0) (n₂ := 5) _ _
+      (.EMax (n₁ := -3) (n₂ := 0) _ _ (.EVarRef "x" rfl) (.EVarRef "lo" rfl)) (.EVarRef "hi" rfl))
+
+-- Soundness covers the new forms: an `int` comes back because the body is a minimum, which is all
+-- its type says.
+example (v : Value) (x lo hi : Int) (h : FuncDecl.Apply clamp {} [] [.int x, .int lo, .int hi] v) :
+    v.HasType {} .int :=
+  h.hasType Globals.wellTyped_nil (by simp [clamp, List.lookup])
+
+/-- What `clamp` computes, for every triple of `int`s rather than for one: inverting the two rules
+down to the `EVarRef`s leaves `Int`'s own `min` and `max` on the values the parameters were bound
+to, which is what the rest of a proof carries on with. -/
+private theorem clamp.eq_min_max {x lo hi : Int} {res : Value}
+    (h : FuncDecl.Apply clamp {} [] [.int x, .int lo, .int hi] res) :
+    res = .int (min (max x lo) hi) := by
+  obtain ⟨-, -, hbody⟩ := h
+  cases hbody with
+  | EMin _ _ h₁ h₂ =>
+    cases h₂ with
+    | EVarRef _ hlhi =>
+      cases h₁ with
+      | EMax _ _ h₃ h₄ =>
+        cases h₃ with
+        | EVarRef _ hlx =>
+          cases h₄ with
+          | EVarRef _
+            hllo =>
+            simp [clamp, FuncDecl.callEnv, Env.extend, Globals.env, Env.lookup,
+              List.lookup] at hlx hllo hlhi
+            grind
+
+-- Which is enough to reason about a call without mentioning the relation again.
+example {x lo hi : Int} {res : Value} (hx : lo ≤ x) (hxhi : x ≤ hi)
+    (h : FuncDecl.Apply clamp {} [] [.int x, .int lo, .int hi] res) : res = .int x := by
+  simp [clamp.eq_min_max h, Int.max_eq_left hx, Int.min_eq_left hxhi]
+
 /-! ## Options
 
 The option forms are the two values and the match between them.  There is no table here, the way
