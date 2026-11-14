@@ -633,6 +633,109 @@ private def ctx : Context :=
           (.lam [("a", .int), ("b", .int)] (.le (.varRef "a") (.varRef "b")))).check types ctx
         (.list .bool)).isOk
 
+-- A search holds its predicate to one parameter at the element type and a `bool` back, and what
+-- comes out mentions neither: an `option int` whatever the list held, which is the one list type
+-- that is neither a list nor an `int`.
+#guard
+  (Expression.listFindIndex (.varRef "xs")
+          (.lam [("x", .int)] (.equals (.varRef "x") (.intLit 0)))).infer
+      types ctx ==
+    some (.option .int)
+
+#guard
+  (Expression.listFindIndex (.lnil (.struct "Point"))
+          (.lam [("p", .struct "Point")] (.lt (.structGet (.varRef "p") "x") (.intLit 0)))).infer
+      types ctx ==
+    some (.option .int)
+
+-- One parameter, where a comparison takes two: the arity is what tells a predicate from a
+-- comparison, both of them answering with a `bool`.
+#guard
+  (Expression.listFindIndex (.varRef "xs")
+          (.lam [("a", .int), ("b", .int)] (.boolLit true))).infer
+      types ctx ==
+    none
+
+#guard (Expression.listFindIndex (.varRef "xs") (.lam [] (.boolLit true))).infer types ctx == none
+
+#guard
+  (Expression.listFindIndex (.varRef "xs") (.lam [("x", .string)] (.boolLit true))).infer types
+      ctx ==
+    none
+
+#guard (Expression.listFindIndex (.varRef "xs") (.varRef "n")).infer types ctx == none
+
+#guard
+  (Expression.listFindIndex (.varRef "m") (.lam [("x", .int)] (.boolLit true))).infer types ctx ==
+    none
+
+#guard
+  (Expression.listFindIndex (.varRef "n") (.lam [("x", .int)] (.boolLit true))).infer types ctx ==
+    none
+
+#guard
+  (Expression.listFindIndex (.varRef "nope") (.lam [("x", .int)] (.boolLit true))).infer types
+      ctx ==
+    none
+
+-- The result has to be a `bool`, as a comparison's does: a predicate answering with the element it
+-- was handed is turned down where `sortOn` would take it as a key.
+#guard
+  (Expression.listFindIndex (.varRef "xs") (.lam [("x", .int)] (.varRef "x"))).infer types ctx ==
+    none
+
+#guard
+  (Expression.listFindIndex (.varRef "xs")
+          (.lam [("x", .int)] (.optionSome (.boolLit true)))).infer
+      types ctx ==
+    none
+
+-- And nothing is asked of the element type, for the reason `sortBy` asks nothing of it: the
+-- elements go into the predicate and nowhere else, so a list of the types no ordering reaches can
+-- be searched.
+#guard
+  (Expression.listFindIndex (.lnil (.fn [.int] .int))
+          (.lam [("g", .fn [.int] .int)] (.boolLit true))).infer
+      types ctx ==
+    some (.option .int)
+
+#guard
+  (Expression.listFindIndex (.lnil (.hashmap .string .int))
+          (.lam [("m'", .hashmap .string .int)] (.boolLit true))).infer
+      types ctx ==
+    some (.option .int)
+
+-- It reads a list like any other and what it produces is an option like any other, so a match takes
+-- it apart where every other list form hands the next one a list.
+#guard
+  (Expression.listFindIndex (.listSortOn (.varRef "xs") (.lam [("x", .int)] (.varRef "x")))
+          (.lam [("x", .int)] (.equals (.varRef "x") (.intLit 0)))).infer
+      types ctx ==
+    some (.option .int)
+
+#guard
+  (Expression.listFindIndex (.hashmapToList (.varRef "m"))
+          (.lam [("p", .tuple [.string, .int])]
+            (.equals (.tupleGet (.varRef "p") 1) (.intLit 0)))).infer
+      types ctx ==
+    some (.option .int)
+
+#guard
+  (Expression.optionMatch
+          (.listFindIndex (.varRef "xs") (.lam [("x", .int)] (.equals (.varRef "x") (.intLit 0))))
+          (.intLit 0) "i" (.varRef "i")).infer
+      types ctx ==
+    some .int
+
+#guard
+  ((Expression.listFindIndex (.varRef "xs")
+        (.lam [("x", .int)] (.equals (.varRef "x") (.intLit 0)))).check types ctx
+      (.option .int)).isOk
+
+#guard
+  !((Expression.listFindIndex (.varRef "xs")
+          (.lam [("x", .int)] (.equals (.varRef "x") (.intLit 0)))).check types ctx .int).isOk
+
 -- A `lam` takes its parameter types from its annotation and its result type from its body.
 #guard (Expression.lam [("x", .int)] (.varRef "x")).infer types ctx == some (.fn [.int] .int)
 
@@ -3129,6 +3232,24 @@ private def message (r : Except String Unit) : String :=
             (.lam [("a", .int), ("b", .int)] (.plus (.varRef "a") (.varRef "b")))).check types ctx
         (.list .int)) ==
     "a comparison must answer whether one element comes first, but this one returns int \
+      rather than a bool"
+
+-- A predicate's arity is reported with the element type named once, where a comparison's names it
+-- twice: one parameter per element it is asked about, and a search asks about one.
+#guard
+  message
+      ((Expression.listFindIndex (.varRef "xs") (.lam [("x", .string)] (.boolLit true))).check
+        types ctx (.option .int)) ==
+    "`findIndex` over a list of int needs a predicate taking one int parameter, \
+      but this one takes (string)"
+
+-- And its result is held to a `bool` the way a comparison's is, with what it answered named: there
+-- is nothing about the shape of the expression that shows it.
+#guard
+  message
+      ((Expression.listFindIndex (.varRef "xs") (.lam [("x", .int)] (.varRef "x"))).check types ctx
+        (.option .int)) ==
+    "a predicate must answer whether an element matches, but this one returns int \
       rather than a bool"
 
 #guard

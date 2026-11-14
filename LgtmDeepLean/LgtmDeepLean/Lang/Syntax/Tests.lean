@@ -1687,6 +1687,67 @@ example :
 example : [lgtm| var"flatMap"] = Expression.varRef "flatMap" :=
   rfl
 
+-- `findIndex` reads its two operands the way `flatMap` reads its two, and takes no tag either: a
+-- list is the one thing there is to search.
+example : [lgtm| findIndex xs f] = Expression.listFindIndex (.varRef "xs") (.varRef "f") :=
+  rfl
+
+example :
+    [lgtm| findIndex p.items f] =
+      Expression.listFindIndex (.structGet (.varRef "p") "items") (.varRef "f") :=
+  rfl
+
+example :
+    [lgtm| findIndex g(1)f] =
+      Expression.listFindIndex (.app (.varRef "g") [.intLit 1]) (.varRef "f") :=
+  rfl
+
+example :
+    [lgtm| findIndex[1, 2 : int]f] =
+      Expression.listFindIndex (.lcons (.intLit 1) (.lcons (.intLit 2) (.lnil .int)))
+        (.varRef "f") :=
+  rfl
+
+example : [lgtm| findIndex[ : int]f] = Expression.listFindIndex (.lnil .int) (.varRef "f") :=
+  rfl
+
+-- Its predicate takes one parameter at the element type and answers with a `bool`, which is a
+-- comparison's answer at a projection's arity — and the keyword is the whole of what says so, since
+-- a named `f` shows neither.
+example :
+    [lgtm| findIndex xs (fun (x : int) => x == 0)] =
+      Expression.listFindIndex (.varRef "xs")
+        (.lam [("x", .int)] (.equals (.varRef "x") (.intLit 0))) :=
+  rfl
+
+-- It reads whatever produces a list, as the other list forms do, and what it produces is an option
+-- rather than a list — so a `match` takes it apart where the others hand the next form a list.
+example :
+    [lgtm| findIndex(reverse xs)f] =
+      Expression.listFindIndex (.listReverse (.varRef "xs")) (.varRef "f") :=
+  rfl
+
+example :
+    [lgtm| findIndex(flatMap xs g)f] =
+      Expression.listFindIndex (.listFlatMap (.varRef "xs") (.varRef "g")) (.varRef "f") :=
+  rfl
+
+example :
+    [lgtm| findIndex(toList m)f] =
+      Expression.listFindIndex (.hashmapToList (.varRef "m")) (.varRef "f") :=
+  rfl
+
+example :
+    [lgtm| match findIndex xs f with | none => 0 | some(i) => i] =
+      Expression.optionMatch (.listFindIndex (.varRef "xs") (.varRef "f")) (.intLit 0) "i"
+        (.varRef "i") :=
+  rfl
+
+-- `findIndex` is a keyword, so it is no variable name inside a DSL term, and `var` is the escape
+-- hatch.
+example : [lgtm| var"findIndex"] = Expression.varRef "findIndex" :=
+  rfl
+
 -- `sortOn` reads its two operands the way `map list` reads its two, and takes no tag: there is one
 -- thing to sort, where there are two to map over.
 example : [lgtm| sortOn xs f] = Expression.listSortOn (.varRef "xs") (.varRef "f") :=

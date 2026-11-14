@@ -791,6 +791,204 @@ private theorem sortDescBy.length_of_eval {vs vs' : List Value}
           subst hlx
           simp
 
+/-! A search is a call per element as a mapping is, and the same call: the element is the one
+argument, `ArgsHaveType` holds it to the closure's parameter, and the body runs in the environment
+the closure captured.  What the calls produce is a `bool`, as a comparison's do, and what comes back
+out is neither a list nor an element but a position — `some(i)` for the first element the predicate
+accepted, and the empty option where it accepted none.
+
+Two rules, so the examples come in two kinds.  `pre ++ w :: post` is what the first one reads the
+index off: the elements before the match are the ones the predicate turned down, and `post` is the
+part no premise speaks of — the elements after the match are never handed to the predicate, which is
+the short circuit and the one thing no other rule here has.
+
+What can go wrong is what a mapping's two operands can, plus the one thing `sortBy` has: a predicate
+that answers with something other than a `bool`. -/
+
+-- An empty list finds nothing: there is no element for the predicate to be applied to, so both
+-- premises over the elements are vacuous and the function is never entered.  It is the second rule
+-- that fires — there is no element for the first to match.
+example : Eval {} ∅ [lgtm| findIndex [ : int] (fun (x : int) => true)] (.option none) :=
+  .EListFindIndexNone (vs := []) _ _ (.ENil _) (.ELam _ _) (by simp) (by simp)
+
+-- A predicate the first element satisfies gives index 0, and the elements after it are never
+-- reached: `post` is the rest of the list and nothing is said about it.
+example :
+    Eval {} ∅ [lgtm| findIndex [1, 2 : int] (fun (x : int) => x == 1)]
+      (.option (some (.int 0))) :=
+  .EListFindIndexSome (pre := []) (w := .int 1) (post := [.int 2]) _ _
+    (.ECons _ _ (.EIntLit 1) (.ECons _ _ (.EIntLit 2) (.ENil _))) (.ELam _ _) (by simp) (by simp)
+    (.cons "x" (.int 1) .nil)
+    (.EEquals _ _ (.EVarRef "x" rfl) (.EIntLit 1) (by simp [Value.beq?]))
+
+-- A later match is the same rule with the elements it turned down in `pre`, and how many there are
+-- is the index: the call for each of them is what says the search went past it.
+example :
+    Eval {} ∅ [lgtm| findIndex [1, 2 : int] (fun (x : int) => x == 2)]
+      (.option (some (.int 1))) :=
+  .EListFindIndexSome (pre := [.int 1]) (w := .int 2) (post := []) _ _
+    (.ECons _ _ (.EIntLit 1) (.ECons _ _ (.EIntLit 2) (.ENil _))) (.ELam _ _)
+    (by rintro u hu
+        simp at hu
+        subst hu
+        exact .cons "x" (.int 1) .nil)
+    (by rintro u hu
+        simp at hu
+        subst hu
+        exact .EEquals _ _ (.EVarRef "x" rfl) (.EIntLit 2) (by simp [Value.beq?]))
+    (.cons "x" (.int 2) .nil)
+    (.EEquals _ _ (.EVarRef "x" rfl) (.EIntLit 2) (by simp [Value.beq?]))
+
+-- And a predicate no element satisfies is the second rule over a list that has elements: every one
+-- of them answered `false`, which is what makes this the rule that speaks for the whole list.
+example : Eval {} ∅ [lgtm| findIndex [1 : int] (fun (x : int) => x == 2)] (.option none) :=
+  .EListFindIndexNone (vs := [.int 1]) _ _ (.ECons _ _ (.EIntLit 1) (.ENil _)) (.ELam _ _)
+    (by rintro u hu
+        simp at hu
+        subst hu
+        exact .cons "x" (.int 1) .nil)
+    (by rintro u hu
+        simp at hu
+        subst hu
+        exact .EEquals _ _ (.EVarRef "x" rfl) (.EIntLit 2) (by simp [Value.beq?]))
+
+-- The short circuit, as a value where the other examples are shapes: the predicate has no value at
+-- all on the second element — `unreachable` has no rule — and the search has one anyway, because the
+-- first element matched and the second was never handed to it.  That is what `post` not appearing in
+-- any premise buys, and no other form here has it.
+example :
+    Eval {} ∅
+      [lgtm| findIndex [1, 2 : int]
+        (fun (x : int) => if x == 1 then { true } else { unreachable "never reached" : bool })]
+      (.option (some (.int 0))) :=
+  .EListFindIndexSome (pre := []) (w := .int 1) (post := [.int 2]) _ _
+    (.ECons _ _ (.EIntLit 1) (.ECons _ _ (.EIntLit 2) (.ENil _))) (.ELam _ _) (by simp) (by simp)
+    (.cons "x" (.int 1) .nil)
+    (.EIteTrue _ _ _ (.EEquals _ _ (.EVarRef "x" rfl) (.EIntLit 1) (by simp [Value.beq?]))
+      (.EBoolLit true))
+
+-- A second operand that is not a function leaves this stuck, exactly as it leaves a mapping stuck,
+-- and it is both rules it leaves stuck: neither has a closure to call.
+example (v : Value) : ¬Eval {} ∅ [lgtm| findIndex[ : int]1] v := by
+  intro h
+  cases h with
+  | EListFindIndexSome _ _ _ hf _ _ _ _ => cases hf
+  | EListFindIndexNone _ _ _ hf _ _ => cases hf
+
+-- A predicate that does not answer with a `bool` is the thing that can go wrong here and nowhere
+-- else, and it rules out both rules at once: the element can neither match nor be turned down, so
+-- the search has no value.  That is exactly what the predicate's result type being held to `bool`
+-- rules out.
+example (v : Value) : ¬Eval {} ∅ [lgtm| findIndex [1 : int] (fun (x : int) => 0)] v := by
+  intro h
+  obtain ⟨vs, cb, cg, ps, body, hl, hf, hcase⟩ := h.listFindIndex_inv
+  obtain rfl : vs = [.int 1] := by
+    cases hl with
+    | ECons _ _ h₁ h₂ =>
+      cases h₁ with
+      | EIntLit _ =>
+        cases h₂ with
+        | ENil _ => rfl
+  cases hf with
+  | ELam _ _ =>
+    rcases hcase with ⟨pre, w, post, heq, -, hw, -⟩ | ⟨hall, -⟩
+    · -- One element, so it is the match whichever way the list is split, and the call for it
+      -- answered `0` where the rule needs `true`.
+      obtain ⟨rfl, rfl⟩ : pre = [] ∧ w = .int 1 := by
+        rcases pre with _ | ⟨u, pre'⟩ <;> simp_all
+      cases hw
+    · -- And the other rule needs the same call to have answered `false`.
+      cases hall (.int 1) (by simp)
+
+/-- Where `xs` first holds a zero, or nothing if it holds none. -/
+lgtm private def indexOfZero as "index-of-zero" (xs : list int) : option int :=
+  findIndex xs (fun (x : int) => x == 0)
+
+#guard (indexOfZero.check {} []).isOk
+
+-- The closure the predicate evaluates to captures the call's environment, the way a mapping's does,
+-- so the answers are computed over the parameter of the `fun` rather than over `xs`.
+example : FuncDecl.Apply indexOfZero {} [] [.list [.int 1, .int 0]] (.option (some (.int 1))) :=
+  .EApply _ (.cons "xs" (hasType_intList (is := [1, 0])) .nil)
+    (.EListFindIndexSome (pre := [.int 1]) (w := .int 0) (post := []) _ _ (.EVarRef "xs" rfl)
+      (.ELam _ _)
+      (by rintro u hu
+          simp at hu
+          subst hu
+          exact .cons "x" (.int 1) .nil)
+      (by rintro u hu
+          simp at hu
+          subst hu
+          exact .EEquals _ _ (.EVarRef "x" rfl) (.EIntLit 0) (by simp [Value.beq?]))
+      (.cons "x" (.int 0) .nil)
+      (.EEquals _ _ (.EVarRef "x" rfl) (.EIntLit 0) (by simp [Value.beq?])))
+
+-- A list with no zero in it is the empty option, which is a value like any other: a search that
+-- finds nothing is not stuck.
+example : FuncDecl.Apply indexOfZero {} [] [.list [.int 1]] (.option none) :=
+  .EApply _ (.cons "xs" (hasType_intList (is := [1])) .nil)
+    (.EListFindIndexNone (vs := [.int 1]) _ _ (.EVarRef "xs" rfl) (.ELam _ _)
+      (by rintro u hu
+          simp at hu
+          subst hu
+          exact .cons "x" (.int 1) .nil)
+      (by rintro u hu
+          simp at hu
+          subst hu
+          exact .EEquals _ _ (.EVarRef "x" rfl) (.EIntLit 0) (by simp [Value.beq?])))
+
+-- Soundness covers the form, and what comes back mentions neither the list's element type nor the
+-- predicate's `bool`: an `option int` whatever the list held.
+example (vs : List Value) (v : Value) (h : FuncDecl.Apply indexOfZero {} [] [.list vs] v) :
+    v.HasType {} (.option .int) :=
+  h.hasType Globals.wellTyped_nil (by simp [indexOfZero, List.lookup])
+
+-- So declaring the element type as the result type does not check, where `sortOn` with the same
+-- operands would need exactly that.
+#guard !(({ indexOfZero with resultType := [lgtm_ty| list int] } : FuncDecl).check {} []).isOk
+
+#guard !(({ indexOfZero with resultType := [lgtm_ty| int] } : FuncDecl).check {} []).isOk
+
+-- Only a list can be searched, and only by a predicate of one of its elements answering with a
+-- `bool`: a body searching an `int` parameter is turned down, and so is one whose predicate takes
+-- two elements or answers with one.
+example : ¬({ indexOfZero with body := [lgtm| findIndex n f] } : FuncDecl).WellTyped {} [] := by
+  simp [indexOfZero, List.lookup]
+
+example :
+    ¬({ indexOfZero with
+          body := [lgtm| findIndex xs (fun (a : int) (b : int) => a == b)] } :
+        FuncDecl).WellTyped {} [] := by
+  simp [indexOfZero, List.lookup]
+
+example :
+    ¬({ indexOfZero with body := [lgtm| findIndex xs (fun (x : int) => x)] } :
+        FuncDecl).WellTyped {} [] := by
+  simp [indexOfZero, List.lookup]
+
+/-- What a search means, for every list rather than for one: the index it answers is a position the
+list has.
+
+The fact a proof about a searched list carries on with, and the one the form is for — an index
+nothing bounds would be of no use to the `tupleGet`-shaped reads a caller makes.  Inverting the rule
+leaves it as the length of the elements the predicate turned down, which is a position in
+`pre ++ w :: post` because `w` is there. -/
+private theorem indexOfZero.lt_length {vs : List Value} {i : Int}
+    (h : Eval {} ⟨[("xs", .list vs)], []⟩
+      [lgtm| findIndex xs (fun (x : int) => x == 0)] (.option (some (.int i)))) :
+    i < vs.length := by
+  obtain ⟨vs', _cb, _cg, _ps, _body, hl, -, hcase⟩ := h.listFindIndex_inv
+  obtain rfl : vs' = vs := by
+    cases hl with
+    | EVarRef _ hlx =>
+      simp [Env.lookup, List.lookup] at hlx
+      exact hlx.symm
+  rcases hcase with ⟨pre, w, post, rfl, -, -, heq⟩ | ⟨-, heq⟩
+  · simp only [Value.option.injEq, Option.some.injEq, Value.int.injEq] at heq
+    simp [← heq]
+    omega
+  · simp at heq
+
 /-- The body of the inner lambda of `adderExpr`, `x + n`, which needs an `n` from outside itself. -/
 private def adderInner : Expression :=
   [lgtm| x + n]

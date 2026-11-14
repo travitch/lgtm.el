@@ -592,6 +592,25 @@ comes out of a nest of forms names the innermost expression that nothing could b
     | .ok (.list _) => .ok .int
     | .ok t => .error s!"`length` needs a list, but its operand has type {t}"
     | .error m => .error m
+  | .listFindIndex l f =>
+    match l.inferE td ctx with
+    | .ok (.list t) =>
+      match f.inferE td ctx with
+      | .ok (.fn ps r) =>
+        if ps != [t] then
+          .error
+            s!"`findIndex` over a list of {t} needs a predicate taking one {t} parameter, \
+            but this one takes ({Ty.renderGroup ps})"
+        else
+          if r == .bool then .ok (.option .int)
+          else
+            .error
+              s!"a predicate must answer whether an element matches, but this one \
+              returns {r} rather than a bool"
+      | .ok ft => .error s!"`findIndex` needs a predicate, but its second operand has type {ft}"
+      | .error m => .error m
+    | .ok t => .error s!"`findIndex` needs a list, but its first operand has type {t}"
+    | .error m => .error m
   | .listReverse l =>
     match l.inferE td ctx with
     | .ok (.list t) => .ok (.list t)
@@ -973,6 +992,28 @@ public theorem Expression.infer_listSortBy_eq_some {td : TypeDecls} {ctx : Conte
       ∃ t',
         l.infer td ctx = some (.list t') ∧
           f.infer td ctx = some (.fn [t', t'] .bool) ∧ t = .list t' := by
+  simp only [Expression.infer, Expression.inferE, Except.toOption_eq_some_iff]
+  split <;> simp_all <;> grind
+
+/-- A `listFindIndex` is typeable when its first operand is a list and its second is a function of
+one parameter at that list's element type returning a `bool` — and then it is an `option int`.
+
+`listSortBy`'s rule with the function taking one element where that takes two, and a result type that
+mentions neither the list's nor the function's.  A predicate is asked the same `.bool` a comparison is
+and nothing is asked of any type, so this is the second list form imposing no condition on one; what
+sets it apart is what comes back.  An index is a position in the list rather than anything the list
+held, so the element type goes into the parameter and no further — the way `listLength` discards it —
+and the option is there because a list may hold nothing the predicate accepts.
+
+That makes this the one list form whose type is neither a list nor an `int`: `listLength` counts
+elements and always has an answer, where a search for one may have none. -/
+@[simp, grind =]
+public theorem Expression.infer_listFindIndex_eq_some {td : TypeDecls} {ctx : Context}
+    {l f : Expression} {t : Ty} :
+    (Expression.listFindIndex l f).infer td ctx = some t ↔
+      ∃ t',
+        l.infer td ctx = some (.list t') ∧
+          f.infer td ctx = some (.fn [t'] .bool) ∧ t = .option .int := by
   simp only [Expression.infer, Expression.inferE, Except.toOption_eq_some_iff]
   split <;> simp_all <;> grind
 

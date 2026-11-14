@@ -269,6 +269,46 @@ wrong here and is exactly what typing rules out. -/
   |
   EListLength (e : Expression) :
     Eval td env e (.list vs) → Eval td env (.listLength e) (.int (vs.length : Int))
+  /-- A search evaluates the list and the predicate, calls the predicate on the elements in order,
+and hands back the index of the first one that answered `true`.
+
+Two rules rather than one, the way `ite` has two: the value is an option, and which of its two shapes
+it is is what the calls answered.  `pre ++ w :: post` is what says *first* — every element before `w`
+answered `false`, `w` answered `true`, and how many came before it is the index.
+
+`post` is the one thing no premise speaks of, and that is the short circuit: the elements after the
+match are never handed to the predicate, so a search whose predicate would be stuck on one of them
+has a value anyway.  That is where this parts company with `EListSortBy`, whose comparison must
+answer for every pair of elements it is asked about.
+
+The calls are `EListMap`'s otherwise: the element is the one argument, `ArgsHaveType` holds it to the
+closure's parameter, and the body is evaluated in the environment the closure captured.  What each one
+must produce is a `.bool`, which is the one thing asked of a call's result here and is what typing
+guarantees.
+
+The index is a `Nat` cast to the `Int` a `Value.int` holds, exactly as `EListLength`'s count is: the
+IR has no natural number type, and a position is never negative. -/
+  |
+  EListFindIndexSome (e f : Expression) :
+    Eval td env e (.list (pre ++ w :: post)) →
+      Eval td env f (.closure cbindings cglobals ps body) →
+      (∀ u ∈ pre, ArgsHaveType td ps [u]) →
+      (∀ u ∈ pre, Eval td (Env.extend ⟨cbindings, cglobals⟩ ps [u]) body (.bool false)) →
+      ArgsHaveType td ps [w] →
+      Eval td (Env.extend ⟨cbindings, cglobals⟩ ps [w]) body (.bool true) →
+      Eval td env (.listFindIndex e f) (.option (some (.int (pre.length : Int))))
+  /-- And a search that found nothing: every element answered `false`, so there is no index and the
+value is the empty option.
+
+This is the one of the two rules that speaks for the whole list, where the other stops at the first
+match — a search that finds nothing is the search that has been made to look at every element. -/
+  |
+  EListFindIndexNone (e f : Expression) :
+    Eval td env e (.list vs) →
+      Eval td env f (.closure cbindings cglobals ps body) →
+      (∀ u ∈ vs, ArgsHaveType td ps [u]) →
+      (∀ u ∈ vs, Eval td (Env.extend ⟨cbindings, cglobals⟩ ps [u]) body (.bool false)) →
+      Eval td env (.listFindIndex e f) (.option none)
   |
   EListReverse (e : Expression) :
     Eval td env e (.list vs) → Eval td env (.listReverse e) (.list vs.reverse)
@@ -563,6 +603,33 @@ public theorem Eval.listSortBy_inv {td : TypeDecls} {env : Env} {e f : Expressio
     ∃ vs cmp, Eval td env e (.list vs) ∧ v = .list (Value.sortWith cmp vs) := by
   cases h with
   | EListSortBy _ _ he _ _ _ => exact ⟨_, _, he, rfl⟩
+
+/-- A search inverted is its two rules read as the two shapes its value can have: an index, with
+every element before it one the predicate turned down and the element at it the one it accepted, or
+the empty option with every element turned down.
+
+Which disjunct holds is settled by the value rather than by anything a proof has to choose — an
+`.option (some ...)` is the first rule's and an `.option none` the second's, since neither rule
+produces the other's shape.  So a proof that knows what the search answered has one case to make.
+
+`post` is existential and nothing is said about it: the elements after the match were never handed to
+the predicate, which is the short circuit the rule carries and the one thing this inversion cannot
+hand back.
+
+`ArgsHaveType` premises are dropped as they are everywhere here. -/
+public theorem Eval.listFindIndex_inv {td : TypeDecls} {env : Env} {e f : Expression} {v : Value}
+    (h : Eval td env (.listFindIndex e f) v) :
+    ∃ vs cb cg ps body, Eval td env e (.list vs) ∧ Eval td env f (.closure cb cg ps body) ∧
+      ((∃ pre w post,
+            vs = pre ++ w :: post ∧
+              (∀ u ∈ pre, Eval td (Env.extend ⟨cb, cg⟩ ps [u]) body (.bool false)) ∧
+                Eval td (Env.extend ⟨cb, cg⟩ ps [w]) body (.bool true) ∧
+                  v = .option (some (.int (pre.length : Int)))) ∨
+        (∀ u ∈ vs, Eval td (Env.extend ⟨cb, cg⟩ ps [u]) body (.bool false)) ∧ v = .option none) := by
+  cases h with
+  | EListFindIndexSome _ _ he hf _ hpre _ hw =>
+    exact ⟨_, _, _, _, _, he, hf, .inl ⟨_, _, _, rfl, hpre, hw, rfl⟩⟩
+  | EListFindIndexNone _ _ he hf _ hall => exact ⟨_, _, _, _, _, he, hf, .inr ⟨hall, rfl⟩⟩
 
 /-- Evaluating a well-typed expression produces a value of its inferred type.
 

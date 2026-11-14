@@ -66,7 +66,8 @@ negates one of these: `¬v.IsBool` is what leaves a conditional stuck on a condi
 `EIteTrue` nor `EIteFalse` accepts. -/
 
 /-- `v` is a `bool`: what a conditional asks of its condition, `boolAnd` and `boolOr` of their
-operands, and `listSortBy` of what its comparison answered. -/
+operands, `listSortBy` of what its comparison answered, and `listFindIndex` of what its predicate
+answered. -/
 @[expose] public def Value.IsBool (v : Value) : Prop := ∃ b, v = .bool b
 
 /-- `v` is an `int`: what `plus`, `minus`, `min` and `max` ask of their operands. -/
@@ -321,6 +322,46 @@ than a list, which is the one thing it asks of what its function returned. -/
 that is all either of them can be: neither looks at an element. -/
   | listLengthOperand : Stuck td env e → Stuck td env (.listLength e)
   | listLengthNotList : Eval td env e v → ¬v.IsList → Stuck td env (.listLength e)
+  /-- A search is a mapping's six rules with an answer that is not a `bool` for a seventh — which is
+`listSortBy`'s seventh, since both hold their function to a `bool` — and with the elements its calls
+are made about the ones it reaches rather than all of them.
+
+That is what `pre` is for in the last three rules.  A search stops at the first element the predicate
+accepts, so an element is handed to it only when every element before that one answered `false`, and
+the rules say so: an element the search never reaches contributes no way to be stuck, exactly as the
+branch a conditional did not take contributes none.  Everywhere else a call per element is made about
+every element, so `w ∈ vs` is all those rules need.
+
+A list the predicate accepts nothing in is not among the failures.  That is the empty option, which
+is a value like any other — the same thing a key the map does not bind is to `hashmapGet`. -/
+  | listFindIndexOperand : Stuck td env e → Stuck td env (.listFindIndex e f)
+  | listFindIndexNotList : Eval td env e v → ¬v.IsList → Stuck td env (.listFindIndex e f)
+  | listFindIndexFn : Stuck td env f → Stuck td env (.listFindIndex e f)
+  | listFindIndexFnNotClosure : Eval td env f v → ¬v.IsClosure → Stuck td env (.listFindIndex e f)
+  |
+  listFindIndexArg :
+    Eval td env e (.list (pre ++ w :: post)) →
+      Eval td env f (.closure cbindings cglobals ps body) →
+      (∀ u ∈ pre, ArgsHaveType td ps [u]) →
+      (∀ u ∈ pre, Eval td (Env.extend ⟨cbindings, cglobals⟩ ps [u]) body (.bool false)) →
+      ¬ArgsHaveType td ps [w] → Stuck td env (.listFindIndex e f)
+  |
+  listFindIndexCall :
+    Eval td env e (.list (pre ++ w :: post)) →
+      Eval td env f (.closure cbindings cglobals ps body) →
+      (∀ u ∈ pre, ArgsHaveType td ps [u]) →
+      (∀ u ∈ pre, Eval td (Env.extend ⟨cbindings, cglobals⟩ ps [u]) body (.bool false)) →
+      ArgsHaveType td ps [w] →
+      Stuck td (Env.extend ⟨cbindings, cglobals⟩ ps [w]) body → Stuck td env (.listFindIndex e f)
+  |
+  listFindIndexCallNotBool :
+    Eval td env e (.list (pre ++ w :: post)) →
+      Eval td env f (.closure cbindings cglobals ps body) →
+      (∀ u ∈ pre, ArgsHaveType td ps [u]) →
+      (∀ u ∈ pre, Eval td (Env.extend ⟨cbindings, cglobals⟩ ps [u]) body (.bool false)) →
+      ArgsHaveType td ps [w] →
+      Eval td (Env.extend ⟨cbindings, cglobals⟩ ps [w]) body w' →
+      ¬w'.IsBool → Stuck td env (.listFindIndex e f)
   | listReverseOperand : Stuck td env e → Stuck td env (.listReverse e)
   | listReverseNotList : Eval td env e v → ¬v.IsList → Stuck td env (.listReverse e)
   /-- A sort by a key is a mapping's six rules with a seventh for the ordering: two keys the

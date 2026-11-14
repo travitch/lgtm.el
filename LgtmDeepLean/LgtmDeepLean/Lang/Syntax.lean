@@ -51,7 +51,8 @@ the IR name `Foo.bar` when an `lgtm` command has declared that IR name, and othe
 so a module calling another's declarations no longer needs to import it twice.
 
 The keywords inside a DSL term — `bool`, `int`, `string`, `list`, `option`, `hashmap`, `tuple`,
-`true`, `false`, `some`, `none`, `min`, `max`, `reverse`, `length`, `map`, `sortOn`, `sortBy`,
+`true`, `false`, `some`, `none`, `min`, `max`, `reverse`, `length`, `map`, `flatMap`, `findIndex`,
+`sortOn`, `sortBy`,
 `toList`,
 `unreachable`, `var`,
 `struct`, `new`, and
@@ -402,11 +403,14 @@ is the minimum plus one.
 A list literal carries its element type, because `lnil` does: `[1, 2 : int]` is
 `.lcons (.intLit 1) (.lcons (.intLit 2) (.lnil .int))`, and the empty list is `[: int]`.
 
-The five list operations are `reverse xs`, `length xs`, `map list xs f`, `sortOn xs f` and
+The seven list operations are `reverse xs`, `length xs`, `map list xs f`, `flatMap xs f`,
+`findIndex xs f`, `sortOn xs f` and
 `sortBy xs f`, all prefix
 keywords binding as tightly as application.  They differ in what comes back out: a reversal and the
-two sorts are lists of the same type, a mapping is a list of whatever its function returns, and a
-length is an `int` whatever the elements were.  A sort takes a function as a mapping does and still
+two sorts are lists of the same type, a mapping is a list of whatever its function returns, a flat
+mapping is the lists its function returns run together, a length is an `int` whatever the elements
+were, and a search is an `option int` — the position of the first element its predicate accepts,
+and nothing where it accepts none.  A sort takes a function as a mapping does and still
 produces a list of the type it was given, because what the function returns is how the elements are
 ordered rather than what they become: a key apiece under `sortOn`, and the comparison itself under
 `sortBy`.  `map` is written with a tag because it is also a
@@ -642,6 +646,28 @@ no parentheses while a function written out does: `flatMap xs (fun (x : int) => 
 `flatMap` is a keyword, so it is not available as a variable name inside a DSL term; `var "flatMap"`
 is the escape hatch, the same one `map` and `sortOn` leave. -/
 syntax :max &"flatMap" lgtmExpr:max lgtmExpr:max : lgtmExpr
+
+/-- `findIndex xs f` is the position of the first element of `xs` that `f` accepts, as an
+`option int`: `some(i)` for the first element `f` answered `true` for, and `none : int` when it
+accepts none of them.
+
+The predicate takes one parameter at the element type, as a list's mapping's function does, and
+answers with a `bool` — so it is of type `(int) -> bool` over a `list int`, which is the type
+checker's business rather than the parser's.  What comes back mentions neither type: an index is a
+position rather than anything the list held, which makes this the one list form whose result is
+neither a list nor an `int`.  The option is there because a list may hold nothing the predicate
+accepts.
+
+The elements after the first match are never handed to the predicate, which is `Eval`'s business
+rather than anything here.
+
+The two operands bind as tightly as `sortBy`'s, so `findIndex xs f` and `findIndex p.items g(1)` need
+no parentheses while a predicate written out does:
+`findIndex xs (fun (x : int) => x == 0)`.
+
+`findIndex` is a keyword, so it is not available as a variable name inside a DSL term;
+`var "findIndex"` is the escape hatch, the same one `flatMap` and `sortBy` leave. -/
+syntax :max &"findIndex" lgtmExpr:max lgtmExpr:max : lgtmExpr
 
 /-- `sortOn xs f` is `xs` with its elements in the order `f`'s results put them in: `f` is applied to
 each element to get the key that element is ordered by.
@@ -1099,6 +1125,8 @@ meta partial def elabLgtmExprCore (ctx : Context) (stx : TSyntax `lgtmExpr) :
   | `(lgtmExpr| map list $l $f) => return .listMap (← elabLgtmExpr ctx l) (← elabLgtmExpr ctx f)
   | `(lgtmExpr| flatMap $l $f) =>
       return .listFlatMap (← elabLgtmExpr ctx l) (← elabLgtmExpr ctx f)
+  | `(lgtmExpr| findIndex $l $f) =>
+      return .listFindIndex (← elabLgtmExpr ctx l) (← elabLgtmExpr ctx f)
   | `(lgtmExpr| sortOn $l $f) =>
       return .listSortOn (← elabLgtmExpr ctx l) (← elabLgtmExpr ctx f)
   | `(lgtmExpr| sortBy $l $f) =>

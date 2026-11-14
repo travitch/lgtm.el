@@ -241,6 +241,11 @@ For a list `l` of type `list a`, and a function `f` of type `(a) -> b`, `map l f
   | listFlatMap : Expression → Expression → Expression
   /-- Calculate the length of the given list. -/
   | listLength : Expression → Expression
+  /-- Find the index of the first element of the given list that matches the predicate.
+
+  > findIndex : list α → (a → bool) → option int
+  -/
+  | listFindIndex : Expression → Expression → Expression
   | listReverse : Expression → Expression
   /-- Sort the given list, applying the given function to project out the sort key.
 
