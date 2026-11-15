@@ -26,8 +26,8 @@ order), and therefore:
   nothing `Program.check` would have accepted; and
 * a declaration that mentions something declared *after* it fails here and would have passed there,
   which is why `LgtmDeepLean.Model.Tests` keeps checking the whole program rather than trusting
-  this, and why `lgtm forward` exists for the one case that needs it — two declarations that call
-  each other.
+  this, and why `@[lgtm, forward]` exists for the one case that needs it — two declarations that
+  call each other.
 
 Declaring something before it is used is what the model does anyway, so the second case is a
 convention rather than a restriction.

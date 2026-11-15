@@ -12,7 +12,7 @@ evaluates to, what it gets stuck on, and how a proof about a declaration is carr
 relation rather than about the `Expression` itself. -/
 
 /-- Add `x` to one less than `y`. -/
-lgtm private def addPred as"add-pred"(x : int)(y : int) : int := x + (y - 1)
+@[lgtm] private def addPred as"add-pred"(x : int)(y : int) : int := x + (y - 1)
 
 -- This is a simple proof demonstrating how proofs work through the
 -- relational evaluator
@@ -61,7 +61,7 @@ example (v : Value) : ¬FuncDecl.Apply addPred {} [] [.int 2, .int 5, .int 8] v 
     | cons _ _ hrest => cases hrest
 
 /-- Put `x` on the front of `xs`. -/
-lgtm private def cons(x : int)(xs : list int) : list int := x :: xs
+@[lgtm] private def cons(x : int)(xs : list int) : list int := x :: xs
 
 /-- A one-element list is homogeneous for the reason its only element is. -/
 private theorem hasType_singleton {v : Value} {t : Ty} (h : v.HasType td t) :
@@ -82,7 +82,7 @@ example (v : Value) : ¬FuncDecl.Apply cons {} [] [.int 1, .int 2] v := by
     | cons _ hv _ => cases hv
 
 /-- Reverse `xs` with `x` on the front. -/
-lgtm private def revCons as"rev-cons"(x : int)(xs : list int) : list int := reverse(x :: xs)
+@[lgtm] private def revCons as"rev-cons"(x : int)(xs : list int) : list int := reverse(x :: xs)
 
 /-- A list of `int`s is homogeneous at `.list .int`, whatever its length. -/
 private theorem hasType_intList {is : List Int} :
@@ -109,7 +109,7 @@ example : ¬({ revCons with body := [lgtm| reverse x] } : FuncDecl).WellTyped {}
   simp [revCons, List.lookup]
 
 /-- Reverse `xs` twice, which gives `xs` back. -/
-lgtm private def reverseTwice as"reverse-twice"(xs : list int) : list int := reverse(reverse xs)
+@[lgtm] private def reverseTwice as"reverse-twice"(xs : list int) : list int := reverse(reverse xs)
 
 /-- Reversing twice is the identity.
 
@@ -130,7 +130,7 @@ private theorem reverseTwice.eq_self {vs : List Value} {res : Value}
         grind
 
 /-- The length of `xs` with `x` on the front. -/
-lgtm private def lengthCons as"length-cons"(x : int)(xs : list int) : int := length(x :: xs)
+@[lgtm] private def lengthCons as"length-cons"(x : int)(xs : list int) : int := length(x :: xs)
 
 -- `EListLength` counts the list `ECons` has just built, so the element pushed on the front is
 -- counted along with the ones that were already there.
@@ -154,7 +154,7 @@ example : ¬({ lengthCons with resultType := [lgtm_ty| list int] } : FuncDecl).W
   simp [lengthCons, List.lookup]
 
 /-- The length of `xs` reversed. -/
-lgtm private def lengthOfReverse as"length-of-reverse"(xs : list int) : int := length(reverse xs)
+@[lgtm] private def lengthOfReverse as"length-of-reverse"(xs : list int) : int := length(reverse xs)
 
 /-- Reversing a list does not change its length.
 
@@ -224,7 +224,7 @@ example (v : Value) : ¬Eval {} ∅ [lgtm| map list[ : int]1] v := by
 
 /-- Every element of `xs` with one added to it: the shortest declaration the form is in, and the one
 place a list is read element by element rather than whole. -/
-lgtm private def bumpAll as "bump-all" (xs : list int) : list int :=
+@[lgtm] private def bumpAll as "bump-all" (xs : list int) : list int :=
   map list xs (fun (x : int) => x + 1)
 
 #guard (bumpAll.check {} []).isOk
@@ -353,7 +353,7 @@ example (v : Value) : ¬Eval {} ∅ [lgtm| flatMap[ : int]1] v := by
 
 /-- Every element of `xs` twice over: the shortest declaration the form is in, and the one place a
 list comes back longer than it went in. -/
-lgtm private def dupAll as "dup-all" (xs : list int) : list int :=
+@[lgtm] private def dupAll as "dup-all" (xs : list int) : list int :=
   flatMap xs (fun (x : int) => [x, x : int])
 
 #guard (dupAll.check {} []).isOk
@@ -539,7 +539,7 @@ example (v : Value) : ¬Eval {} ∅ [lgtm| sortOn [1 : int] (fun (x : int) => tr
 
 /-- `xs` largest first: the shortest declaration the form is in, and the one place a list is
 reordered by something read off its elements rather than by where they were. -/
-lgtm private def sortDesc as "sort-desc" (xs : list int) : list int :=
+@[lgtm] private def sortDesc as "sort-desc" (xs : list int) : list int :=
   sortOn xs (fun (x : int) => 0 - x)
 
 #guard (sortDesc.check {} []).isOk
@@ -724,7 +724,7 @@ example (v : Value) : ¬Eval {} ∅ [lgtm| sortBy [1 : int] (fun (a : int) (b : 
 
 /-- `xs` largest first, by a comparison rather than by a key: the same reordering `sortDesc` performs,
 and the place the two forms can be read against each other. -/
-lgtm private def sortDescBy as "sort-desc-by" (xs : list int) : list int :=
+@[lgtm] private def sortDescBy as "sort-desc-by" (xs : list int) : list int :=
   sortBy xs (fun (a : int) (b : int) => b <= a)
 
 #guard (sortDescBy.check {} []).isOk
@@ -901,7 +901,7 @@ example (v : Value) : ¬Eval {} ∅ [lgtm| findIndex [1 : int] (fun (x : int) =>
       cases hall (.int 1) (by simp)
 
 /-- Where `xs` first holds a zero, or nothing if it holds none. -/
-lgtm private def indexOfZero as "index-of-zero" (xs : list int) : option int :=
+@[lgtm] private def indexOfZero as "index-of-zero" (xs : list int) : option int :=
   findIndex xs (fun (x : int) => x == 0)
 
 #guard (indexOfZero.check {} []).isOk
@@ -1047,7 +1047,7 @@ example (v : Value) : ¬Eval {} ∅ [lgtm| [1 : int]["a"]] v := by
 /-- The element of `xs` at `i`, and zero where there is none: the two halves of an index, which is
 what an option result is for.  `getOr` over a hashmap further down is the same declaration written
 in the same brackets, and the type of what is indexed is the whole of what tells them apart. -/
-lgtm private def elemOr as "elem-or" (xs : list int) (i : int) : int :=
+@[lgtm] private def elemOr as "elem-or" (xs : list int) (i : int) : int :=
   match xs[i] with | none => 0 | some(x) => x
 
 #guard (elemOr.check {} []).isOk
@@ -1216,7 +1216,7 @@ example : Eval {} ∅ [lgtm| let x := 1; let y := x + 1; x + y] (.int 3) :=
       (.EPlus (n₁ := 1) (n₂ := 2) _ _ (.EVarRef "x" rfl) (.EVarRef "y" rfl)))
 
 /-- Twice one more than `n`. -/
-lgtm private def letDouble as"let-double"(n : int) : int := let m := n + 1; m + m
+@[lgtm] private def letDouble as"let-double"(n : int) : int := let m := n + 1; m + m
 
 #guard (letDouble.check {} []).isOk
 
@@ -1280,7 +1280,7 @@ example (v : Value) : ¬Eval {} ∅ [lgtm| let x := x + 1; x] v := by
       | EVarRef _ hlx => simp [Env.lookup] at hlx
 
 /-- Build a function that adds `n` to its argument. -/
-lgtm private def adder(n : int) : (int) -> int := fun(m : int) => n + m
+@[lgtm] private def adder(n : int) : (int) -> int := fun(m : int) => n + m
 
 -- A declaration can return a function, and `FuncDecl.Apply.hasType` covers that result type like
 -- any other: what comes back is a closure, and the theorem says it is one of the declared type.
@@ -1312,7 +1312,7 @@ example : ¬Eval {} ∅ [lgtm| true] (.int 1) := by
   intro h; cases h
 
 /-- `x` when `b`, and `y` otherwise. -/
-lgtm private def pick(b : bool)(x : int)(y : int) : int := if b then (x) else (y)
+@[lgtm] private def pick(b : bool)(x : int)(y : int) : int := if b then (x) else (y)
 
 #guard (pick.check {} []).isOk
 
@@ -1377,7 +1377,7 @@ example :
 
 /-- `xs` reversed when `b`, and as it came otherwise.  The branches are `list`s rather than `int`s,
 which is what the form being polymorphic comes to: a conditional produces whatever they produce. -/
-lgtm private def maybeReverse as"maybe-reverse"(b : bool)(xs : list int) : list int :=
+@[lgtm] private def maybeReverse as"maybe-reverse"(b : bool)(xs : list int) : list int :=
   if b then (reverse xs) else (xs)
 
 #guard (maybeReverse.check {} []).isOk
@@ -1401,7 +1401,7 @@ example (v : Value) (b : Bool) (vs : List Value)
 
 /-- `x` when the condition is spelled out, which is `pick` with its own condition: a declaration of no
 `bool` parameter that still runs a conditional. -/
-lgtm private def pickFirst as"pick-first"(x : int)(y : int) : int := if true then (x) else (y)
+@[lgtm] private def pickFirst as"pick-first"(x : int)(y : int) : int := if true then (x) else (y)
 
 #guard (pickFirst.check {} []).isOk
 
@@ -1429,7 +1429,7 @@ example (v : Value) (x y : Int) (h : FuncDecl.Apply pickFirst {} [] [.int x, .in
   h.hasType Globals.wellTyped_nil (by simp [pickFirst, List.lookup])
 
 /-- The literal on its own, which is the shortest declaration that returns a `bool`. -/
-lgtm private def yes : bool := true
+@[lgtm] private def yes : bool := true
 
 #guard (yes.check {} []).isOk
 
@@ -1495,7 +1495,7 @@ example (v : Value) : ¬Eval {} ∅ [lgtm| true && 1] v := by
   | EBoolAndTrue _ _ _ hr => cases hr
 
 /-- Whether `b` and `c` both hold: the shortest declaration a conjunction is in. -/
-lgtm private def both(b : bool)(c : bool) : bool := b && c
+@[lgtm] private def both(b : bool)(c : bool) : bool := b && c
 
 #guard (both.check {} []).isOk
 
@@ -1551,7 +1551,7 @@ private theorem both.eq_and {b c : Bool} {res : Value}
 
 /-- Whether either of `b` and `c` holds, which is `both` with the values the two rules turn on
 exchanged. -/
-lgtm private def either(b : bool)(c : bool) : bool := b || c
+@[lgtm] private def either(b : bool)(c : bool) : bool := b || c
 
 #guard (either.check {} []).isOk
 
@@ -1625,20 +1625,20 @@ Everything above ran with an empty table, so every name a body mentioned was one
 parameters.  These declare a table and call across it. -/
 
 /-- Twice `n`. -/
-lgtm private def double(n : int) : int := n + n
+@[lgtm] private def double(n : int) : int := n + n
 
 /-- Four times `n`, which is `double` calling `double`. -/
-lgtm private def quad(n : int) : int := double(double(n))
+@[lgtm] private def quad(n : int) : int := double(double(n))
 
 /-- One more than twice `n`. -/
-lgtm private def doublePlus as"double-plus"(n : int) : int := double(n) + 1
+@[lgtm] private def doublePlus as"double-plus"(n : int) : int := double(n) + 1
 
 /-- The answer.  A declaration of no parameters is how a global *variable* is written: its name has
 type `() -> int`, so reading it is the call `answer()`. -/
-lgtm private def answer : int := 42
+@[lgtm] private def answer : int := 42
 
 /-- One more than the answer, which is where the nullary global gets read. -/
-lgtm private def answerPlus as"answer-plus" : int := answer() + 1
+@[lgtm] private def answerPlus as"answer-plus" : int := answer() + 1
 
 private def arith : Globals :=
   Globals.ofDecls [double, quad, doublePlus, answer, answerPlus]
@@ -1727,20 +1727,20 @@ example (v : Value) (h : FuncDecl.Apply answerPlus {} arith [] v) : v.HasType {}
 
 /-- Recursion is what a table of declarations buys over a table of values: `countdown` is checked in
 a context that already holds `countdown`, so it may call itself. -/
-lgtm private def countdown(n : int) : int := countdown(n - 1)
+@[lgtm] private def countdown(n : int) : int := countdown(n - 1)
 
 #guard (Globals.check {} (Globals.ofDecls [countdown])).isOk
 
 #guard !(countdown.check {} []).isOk
 
 /-- Mutual recursion needs nothing further *of the type checker*: both are in the context both are
-checked against.  What it does need is `lgtm forward`, since the command checking `ping` where it is
-written has only the declarations before it, and `pong` is not one of them yet. -/
-lgtm forward def pong(n : int) : int
+checked against.  What it does need is `@[lgtm, forward]`, since the command checking `ping` where
+it is written has only the declarations before it, and `pong` is not one of them yet. -/
+@[lgtm, forward] def pong(n : int) : int
 
-lgtm private def ping(n : int) : int := pong(n - 1)
+@[lgtm] private def ping(n : int) : int := pong(n - 1)
 
-lgtm private def pong(n : int) : int := ping(n - 1)
+@[lgtm] private def pong(n : int) : int := ping(n - 1)
 
 #guard (Globals.check {} (Globals.ofDecls [ping, pong])).isOk
 
@@ -1825,7 +1825,9 @@ work on the value alone — so it shows up only where a type does: in `check`, i
 in `ArgsHaveType`, which is why `Eval` carries it at all. -/
 
 /-- A point in the plane. -/
-lgtm private struct Point{x : int, y : int}
+@[lgtm] private structure Point where
+  x : int
+  y : int
 
 private def points : TypeDecls :=
   { ss := Structs.ofDecls [Point] }
@@ -1844,7 +1846,7 @@ private theorem hasType_point {a b : Int} :
       rcases hp with rfl | rfl <;> exact .int _)
 
 /-- Swap `p`'s coordinates. -/
-lgtm private def swap(p : struct Point) : struct Point := new Point{x = p.y, y = p.x}
+@[lgtm] private def swap(p : struct Point) : struct Point := new Point{x = p.y, y = p.x}
 
 #guard (swap.check points []).isOk
 
@@ -1877,7 +1879,7 @@ example (v : Value)
     (by simp [swap, Point, points, List.lookup, Expression.fieldsComplete_eq_true] <;> grind)
 
 /-- One more than `p`'s `x`, which is the field read on its own. -/
-lgtm private def getX as"get-x"(p : struct Point) : int := p.x + 1
+@[lgtm] private def getX as"get-x"(p : struct Point) : int := p.x + 1
 
 #guard (getX.check points []).isOk
 
@@ -1911,7 +1913,7 @@ private theorem getX.eq_succ_x {fvs : FieldValues} {a : Int} {res : Value}
           grind
 
 /-- Move `p` along the x axis. -/
-lgtm private def shiftX as"shift-x"(p : struct Point)(d : int) : struct Point :=
+@[lgtm] private def shiftX as"shift-x"(p : struct Point)(d : int) : struct Point :=
   {p with x = p.x + d}
 
 #guard (shiftX.check points []).isOk
@@ -2075,10 +2077,15 @@ the same way.  Evaluation does not consult that table either: `EIndNew` keeps th
 given, and `EIndMatch` finds its alternative by the constructor the value it took apart carries. -/
 
 /-- A colour, which is what an inductive type carrying nothing anywhere comes to. -/
-lgtm private inductive Color{Red, Green, Blue}
+@[lgtm] private inductive Color where
+  | Red
+  | Green
+  | Blue
 
 /-- A shape, whose constructors carry what it takes to measure one. -/
-lgtm private inductive Shape{Circle(int), Rect(int, int)}
+@[lgtm] private inductive Shape where
+  | Circle(int)
+  | Rect(int, int)
 
 private def shapes : TypeDecls :=
   { is := Inductives.ofDecls [Color, Shape] }
@@ -2100,7 +2107,7 @@ private theorem hasType_red : Value.HasType shapes (.ind "Color" "Red" []) (.ind
   .ind rfl rfl rfl (by simp)
 
 /-- How big `s` is, for a rough enough notion of size. -/
-lgtm private def area(s : inductive Shape) : int :=
+@[lgtm] private def area(s : inductive Shape) : int :=
   match s with | Circle(r) => r + r | Rect(w, h) => w + h
 
 #guard (area.check shapes []).isOk
@@ -2115,7 +2122,7 @@ lgtm private def area(s : inductive Shape) : int :=
 An alternative says which constructor it is for, so this is the same function as `area`: it checks,
 and `EIndMatch` finds the alternative for the value's constructor wherever in the match it was
 written. -/
-lgtm private def areaSwapped as"area-swapped"(s : inductive Shape) : int :=
+@[lgtm] private def areaSwapped as"area-swapped"(s : inductive Shape) : int :=
   match s with | Rect(w, h) => w + h | Circle(r) => r + r
 
 #guard (areaSwapped.check shapes []).isOk
@@ -2201,7 +2208,7 @@ private theorem area.rect {w h : Int} {res : Value}
             grind
 
 /-- A square of side `n`, which is the other half: a constructor applied to values. -/
-lgtm private def square(n : int) : inductive Shape := new Shape.Rect(n, n)
+@[lgtm] private def square(n : int) : inductive Shape := new Shape.Rect(n, n)
 
 #guard (square.check shapes []).isOk
 
@@ -2225,13 +2232,15 @@ A constructor may carry the very type it belongs to, and a global may call itsel
 function over a recursive type needs nothing this language does not already have. -/
 
 /-- A binary tree with an `int` at each branch. -/
-lgtm private inductive Tree{Leaf, Node(inductive Tree, int, inductive Tree)}
+@[lgtm] private inductive Tree where
+  | Leaf
+  | Node(inductive Tree, int, inductive Tree)
 
 private def trees : TypeDecls :=
   { is := Inductives.ofDecls [Tree] }
 
 /-- The sum of `t`'s labels. -/
-lgtm private def total(t : inductive Tree) : int :=
+@[lgtm] private def total(t : inductive Tree) : int :=
   match t with | Leaf => 0 | Node(l, n, r) => total(l) + n + total(r)
 
 private def forest : Globals :=
@@ -2393,7 +2402,7 @@ example : Eval {} ∅ [lgtm| [1 : int] == [ : int]] (.bool false) :=
   .EEquals _ _ (.ECons _ _ (.EIntLit 1) (.ENil .int)) (.ENil .int) rfl
 
 /-- Whether `x` and `y` are the same. -/
-lgtm private def same(x : int)(y : int) : bool := x == y
+@[lgtm] private def same(x : int)(y : int) : bool := x == y
 
 #guard (same.check {} []).isOk
 
@@ -2440,7 +2449,7 @@ declaration performs. -/
 /-- Whether two trees are the same tree.  A recursive type is comparable — each value of one is
 finite, however deep the type is — so this is a declaration about a type a comparison has to walk all
 the way down. -/
-lgtm private def sameTree as"same-tree"(a : inductive Tree)(b : inductive Tree) : bool := a == b
+@[lgtm] private def sameTree as"same-tree"(a : inductive Tree)(b : inductive Tree) : bool := a == b
 
 #guard (sameTree.check trees []).isOk
 
@@ -2517,7 +2526,7 @@ fields hold, name for name — whichever order either of them carries its fields
 written in. -/
 
 /-- Whether two points are the same point. -/
-lgtm private def samePoint as"same-point"(p : struct Point)(q : struct Point) : bool := p == q
+@[lgtm] private def samePoint as"same-point"(p : struct Point)(q : struct Point) : bool := p == q
 
 #guard (samePoint.check points []).isOk
 
@@ -2724,10 +2733,10 @@ example : Eval {} ∅ [lgtm| tuple("a", 1) < tuple("a", 2)] (.bool true) :=
     rfl
 
 /-- Whether `x` is below `y`. -/
-lgtm private def below(x : int)(y : int) : bool := x < y
+@[lgtm] private def below(x : int)(y : int) : bool := x < y
 
 /-- Whether `x` is below `y` or is `y`. -/
-lgtm private def atMost as"at-most"(x : int)(y : int) : bool := x <= y
+@[lgtm] private def atMost as"at-most"(x : int)(y : int) : bool := x <= y
 
 #guard (below.check {} []).isOk
 
@@ -2901,7 +2910,7 @@ example (v : Value) : ¬Eval {} ∅ [lgtm| max 1 "b"] v := by
   | EMax _ _ _ h₂ => cases h₂
 
 /-- Clamp `x` up to `lo` and down to `hi`. -/
-lgtm private def clamp(x : int)(lo : int)(hi : int) : int := min (max x lo) hi
+@[lgtm] private def clamp(x : int)(lo : int)(hi : int) : int := min (max x lo) hi
 
 #guard (clamp.check {} []).isOk
 
@@ -2955,7 +2964,7 @@ there is for the struct and inductive sections: an `option` carries its element 
 naming a declaration, so nothing about one is resolved anywhere.
 
 They have no surface syntax yet, so the expressions are spliced in with `~(...)`: the DSL is what
-`lgtm def` is written in, and a form it does not cover is still an ordinary `Expression`. -/
+`@[lgtm] def` is written in, and a form it does not cover is still an ordinary `Expression`. -/
 
 -- An empty option evaluates to the empty value, and its annotation goes nowhere: a value carries no
 -- type, so the two below produce the same value and it is only the type checker that tells them
@@ -2998,7 +3007,7 @@ example : Value.HasType ({} : TypeDecls) (.option none) (.option (.fn [.int] .in
   .optionNone
 
 /-- One more than what `o` holds, and `0` when it holds nothing. -/
-lgtm private def succOr as"succ-or"(o : ~(Ty.option .int)) : int :=
+@[lgtm] private def succOr as"succ-or"(o : ~(Ty.option .int)) : int :=
   ~(Expression.optionMatch (.varRef "o") (.intLit 0) "x" [lgtm| x + 1])
 
 #guard (succOr.check {} []).isOk
@@ -3102,7 +3111,7 @@ example (v : Value) :
   | EOptionMatchSome _ _ _ _ hsc _ => cases hsc
 
 /-- `n`, held in an option, which is the other half: a value put into one rather than taken out. -/
-lgtm private def justIt as"just-it"(n : int) : ~(Ty.option .int) :=
+@[lgtm] private def justIt as"just-it"(n : int) : ~(Ty.option .int) :=
   ~(Expression.optionSome [lgtm| n])
 
 #guard (justIt.check {} []).isOk
@@ -3116,7 +3125,7 @@ example (v : Value) (a : Int) (h : FuncDecl.Apply justIt {} [] [.int a] v) :
 
 /-- Nothing, at `int`: the shortest declaration that returns an option, and the one place the
 annotation is all there is to go on. -/
-lgtm private def nothing : ~(Ty.option .int) := ~(Expression.optionNone .int)
+@[lgtm] private def nothing : ~(Ty.option .int) := ~(Expression.optionNone .int)
 
 #guard (nothing.check {} []).isOk
 
@@ -3300,7 +3309,7 @@ private theorem hasType_mapEmpty {td : TypeDecls} {kt vt : Ty} :
   .hashmap (by simp) (by simp)
 
 /-- What `k` is bound to in `m`, and zero when it is bound to nothing. -/
-lgtm private def getOr as"get-or"(m : hashmap string int)(k : string) : int :=
+@[lgtm] private def getOr as"get-or"(m : hashmap string int)(k : string) : int :=
   match m[k] with | none => 0 | some(x) => x
 
 #guard (getOr.check {} []).isOk
@@ -3340,7 +3349,7 @@ example (v : Value) : ¬FuncDecl.Apply getOr {} [] [.list [], .string "a"] v := 
 
 /-- `m` with `k` bound to `v`, which is the other half: a binding put into a map rather than read
 out of one. -/
-lgtm private def bind(m : hashmap string int)(k : string)(v : int) : hashmap string int :=
+@[lgtm] private def bind(m : hashmap string int)(k : string)(v : int) : hashmap string int :=
   {m with [k] = v}
 
 #guard (bind.check {} []).isOk
@@ -3448,7 +3457,7 @@ private theorem hasType_toListA {td : TypeDecls} :
 The conversion is what makes this writable: a hashmap has no comparison — its bindings have no
 canonical order — while the list they convert to is compared like any other list, against the empty
 one. -/
-lgtm private def isEmpty as"is-empty"(m : hashmap string int) : bool :=
+@[lgtm] private def isEmpty as"is-empty"(m : hashmap string int) : bool :=
   toList m == [ : tuple(string, int)]
 
 #guard (isEmpty.check {} []).isOk
@@ -3557,7 +3566,7 @@ example (v : Value) : ¬Eval {} ∅ [lgtm| map hashmap hashmap(string, int)1] v 
 
 /-- Every value of `m` with one added to it, the keys left as they were: the shortest declaration
 the form is in, and the one place a map is read by something other than a key. -/
-lgtm private def bump (m : hashmap string int) : hashmap string int :=
+@[lgtm] private def bump (m : hashmap string int) : hashmap string int :=
   map hashmap m (fun (k : string) (v : int) => v + 1)
 
 #guard (bump.check {} []).isOk
@@ -3718,10 +3727,10 @@ example (v : Value) : ¬Eval {} ⟨[("t", .list [.string "a"])], []⟩ [lgtm| t.
 
 /-- The first half of a pair of a `string` and an `int`, which is the shortest declaration the two
 forms are both in: a parameter of tuple type read at one position. -/
-lgtm private def fst(t : tuple(string, int)) : string := t.0
+@[lgtm] private def fst(t : tuple(string, int)) : string := t.0
 
 /-- And the pair itself, which is the other half: a declaration whose result type is a tuple. -/
-lgtm private def pair(s : string)(n : int) : tuple(string, int) := tuple(s, n)
+@[lgtm] private def pair(s : string)(n : int) : tuple(string, int) := tuple(s, n)
 
 -- A tuple names nothing, so both check against no `TypeDecls` at all.
 #guard (fst.check {} []).isOk
@@ -3805,7 +3814,7 @@ rules out rather than something the type checker already did. -/
 
 /-- One less than a positive `n`.  The `else` is the branch the guard rules out, so it is written as
 the unreachable it is: annotated `int` because the branch beside it is, and evaluated by nothing. -/
-lgtm private def pred(n : int) : int :=
+@[lgtm] private def pred(n : int) : int :=
   if 0 < n then (n - 1) else (unreachable"n is positive" : int)
 
 #guard (pred.check {} []).isOk

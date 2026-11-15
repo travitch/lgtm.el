@@ -18,13 +18,20 @@ Five entry points:
 
 * `[lgtm_ty| (int) -> string]` elaborates to a `Ty`.
 * `[lgtm| fun (x : int) => x + 1]` elaborates to an `Expression`.
-* `lgtm def` is a command that declares a `FuncDecl`.
-* `lgtm struct` is a command that declares a `StructDecl`.
-* `lgtm inductive` is a command that declares an `InductiveDecl`.
-* `lgtm forward def` is a command that declares a signature and nothing else, for two declarations
-  that call each other.
+* `@[lgtm] def` is a command that declares a `FuncDecl`.
+* `@[lgtm] structure` is a command that declares a `StructDecl`.
+* `@[lgtm] inductive` is a command that declares an `InductiveDecl`.
+* `@[lgtm, forward] def` is a command that declares a signature and nothing else, for two
+  declarations that call each other.
 
-`[lgtm_body| ...]` is one more and is not for writing by hand: `lgtm def` generates it as the value
+The four commands are spelled the way the Lean declaration each of them generates is: an attribute,
+then `def`, `structure` or `inductive`, with a `structure`'s fields and an `inductive`'s
+constructors one to a line under a `where`.  They are not Lean's declarations — the signature and
+the body are the DSL's, and `(x : int)` is a `FuncDecl` parameter rather than a Lean binder — but
+the text is shaped like Lean's, which is what lets a tool that reads Lean by its grammar rather than
+by its parser get through a file of them.
+
+`[lgtm_body| ...]` is one more and is not for writing by hand: `@[lgtm] def` generates it as the value
 of the Lean declaration it makes, because the body has to be read under the declaration's own
 context rather than as a fragment.  See "What the commands do besides declare".
 
@@ -65,9 +72,10 @@ with `&`, Lean's
 non-reserved symbol form, so importing this module does not stop `int` or `some` from being used as
 ordinary Lean identifiers.  What it does cost is those names as *DSL variables*: the categories
 below are declared `behavior := symbol`, so an identifier matching one of them is that keyword and
-never a `varRef`, and `var "true"` is how a variable of such a name is reached.  `lgtm` is the one
-exception and *is* a reserved token: a command's leading keyword has to be reserved for the command
-parser to find it at all, so a file importing this module cannot also name something `lgtm`.
+never a `varRef`, and `var "true"` is how a variable of such a name is reached.  `lgtm` itself costs
+nothing either: the commands below lead with `@[lgtm]`, which is one token of its own, and the
+`forward` form spells both of its words with `&`, so a file importing this module may still name
+something `lgtm`.
 
 `let`, `with`, `match`, `inductive`, `if`, `then` and `else` are written as plain symbols rather
 than with `&`, because Lean reserves all of them already: declaring them here takes nothing away that
@@ -126,15 +134,15 @@ relates rather than naming a declaration, so there is no `lgtm` command declarin
 `TypeDecls` entry to resolve. -/
 syntax :max &"tuple" "(" lgtmTy,* ")" : lgtmTy
 
-/-- `struct Point` is the type the `lgtm struct` named `Point` declares.  The string form,
+/-- `struct Point` is the type the `@[lgtm] structure` named `Point` declares.  The string form,
 `struct "my-struct"`, is for struct names that are not Lean identifiers — the same escape hatch
 `var` is for variables. -/
 syntax :max &"struct" ident : lgtmTy
 
 syntax :max &"struct" str : lgtmTy
 
-/-- `inductive Color` is the type the `lgtm inductive` named `Color` declares, with the same string
-escape hatch `struct` has. -/
+/-- `inductive Color` is the type the `@[lgtm] inductive` named `Color` declares, with the same
+string escape hatch `struct` has. -/
 syntax :max "inductive " ident : lgtmTy
 
 syntax :max "inductive " str : lgtmTy
@@ -1344,11 +1352,11 @@ elab_rules : term
 
 /-! ## Declarations -/
 
-/-- The visibility of a `lgtm def`.  `public` because a `module` hides even the names of its own
+/-- The visibility of an `@[lgtm] def`.  `public` because a `module` hides even the names of its own
 parser aliases otherwise, and this one is referred to by the command syntax below. -/
 public syntax lgtmVis := "private "
 
-/-- `lgtm def f (x : int) : int := body` declares `f : FuncDecl`.
+/-- `@[lgtm] def f (x : int) : int := body` declares `f : FuncDecl`.
 
 The IR name defaults to the Lean name; `as "f-name"` overrides it, which is what IR names that are
 not Lean identifiers need.  A doc comment becomes the `FuncDecl.docstring` field as well as the Lean
@@ -1357,9 +1365,10 @@ declaration's own documentation.
 The parameters are the `FuncDecl`'s parameter list and so are also the context its body is checked
 in; they are not Lean binders.
 
-`lgtm private def` makes the generated Lean declaration `private`.  The visibility comes after
-`lgtm` rather than before it because a command's first token is what the parser dispatches on. -/
-syntax (docComment)? "lgtm " (lgtmVis)? "def " ident (&"as" str)? ("(" ident " : " lgtmTy ")")*
+`@[lgtm] private def` makes the generated Lean declaration `private`, and the visibility sits where
+Lean's own declarations put it: `@[lgtm]` is the command's leading token, so what follows it is free
+to be spelled the way the declaration it generates is. -/
+syntax (docComment)? "@[lgtm] " (lgtmVis)? "def " ident (&"as" str)? ("(" ident " : " lgtmTy ")")*
   " : " lgtmTy " := " lgtmExpr : command
 
 /-! ## What the commands do besides declare
@@ -1409,7 +1418,7 @@ meta def resolveDeclName (n : Ident) : Elab.Command.CommandElabM (Option Name) :
 /-- A doc comment carrying `text`, for the generated Lean declaration to be documented with.
 
 Assembled rather than written, because what it documents the declaration with is partly the
-declaration itself: the signature of a `lgtm def` is written in the DSL, and what a mention of it
+declaration itself: the signature of an `@[lgtm] def` is written in the DSL, and what a mention of it
 hovers to is the Lean constant it generated — so the signature goes in the docstring of that
 constant, where it is the one place an editor will show it.
 
@@ -1419,7 +1428,7 @@ meta def mkDocComment (text : String) : TSyntax ``Lean.Parser.Command.docComment
   let text := text.replace "-/" "- /"
   ⟨mkNode ``Lean.Parser.Command.docComment #[mkAtom "/--", mkAtom (text ++ "-/")]⟩
 
-/-- The documentation the Lean declaration of a `lgtm def` is given: its DSL signature as written,
+/-- The documentation the Lean declaration of an `@[lgtm] def` is given: its DSL signature as written,
 and the doc comment it was written with under it.
 
 The signature is the source text of the parameters and the result type rather than the `Ty`s they
@@ -1431,10 +1440,10 @@ meta def declDocString (irName : String) (xs : Array Ident) (ts : Array (TSyntax
     (rt : TSyntax `lgtmTy) (docText : String) : String :=
   let src (stx : Syntax) : String := (stx.reprint.getD "").trimAscii.toString
   let ps := (xs.zip ts).toList.map fun (x, t) => s!" ({x.getId} : {src t})"
-  let sig := s!"lgtm def {irName}{String.join ps} : {src rt}"
+  let sig := s!"@[lgtm] def {irName}{String.join ps} : {src rt}"
   s!"```lgtm\n{sig}\n```" ++ if docText.isEmpty then "" else s!"\n***\n{docText}"
 
-/-- The `FuncDecl` a `lgtm def` denotes, together with the `TypeDecls` it was read against.
+/-- The `FuncDecl` an `@[lgtm] def` denotes, together with the `TypeDecls` it was read against.
 
 The body is elaborated under the context the declaration gives it — the parameters, every global's
 type, and a provisional entry for the declaration itself, so that it may call itself — which is
@@ -1465,7 +1474,7 @@ meta def elabFuncDecl (docstring : String) (irName : String) (leanName : Name) (
     return ({ self with body := bodyExpr }, (← read).allTypeDecls)
 
 /-- `[lgtm_body| f "ir-name" (x : int) : int := e]` is the `Expression` that the body of that
-`lgtm def` denotes.
+`@[lgtm] def` denotes.
 
 What it adds over `[lgtm| e]` is the context: a fragment has none, where this has the one the
 declaration gives its body.  Generated by the command below as the value of the Lean declaration it
@@ -1484,7 +1493,7 @@ elab_rules : term
       return lgtmTerm d.body st
 
 elab_rules : command
-  | `($[$doc:docComment]? lgtm $[$vis:lgtmVis]? def $n:ident $[as $ir:str]?
+  | `($[$doc:docComment]? @[lgtm] $[$vis:lgtmVis]? def $n:ident $[as $ir:str]?
         $[($xs:ident : $ts:lgtmTy)]* : $rt:lgtmTy := $body:lgtmExpr) => do
       let irName := (ir.map (·.getString)).getD n.getId.toString
       let docText := match doc with
@@ -1528,23 +1537,28 @@ elab_rules : command
               | some (stx, m') => logErrorAt stx m'
               | none => logErrorAt body m
 
-/-- `lgtm forward def f (x : int) : int` says that `f` is declared further down, so that something
-written before it may call it.
+/-- `@[lgtm, forward] def f (x : int) : int` says that `f` is declared further down, so that
+something written before it may call it.
 
 What it declares is a signature and nothing else: no Lean declaration is generated and nothing is
-added to any `Program`, so the promise is kept by writing the `lgtm def` itself, and broken by not
+added to any `Program`, so the promise is kept by writing the `@[lgtm] def` itself, and broken by not
 writing it — which `Program.check` is what catches, since a caller of something no program declares
 is a caller of nothing.
+
+`forward` is a second attribute rather than a word of its own between `@[lgtm]` and `def`, so that
+the text stays shaped like the Lean attribute list it is spelled as.  Both words are written with
+`&`, Lean's non-reserved form, since this is the one of the four commands whose leading token is
+`@[` and not `@[lgtm]`.
 
 This is the escape hatch for mutual recursion, which is the one thing checking a declaration where
 it is written cannot do on its own: `ping` calling `pong` and `pong` calling `ping` means one of
 them is written before the other is declared, and a table built as the declarations go by does not
 have it yet. -/
-syntax (docComment)? "lgtm " &"forward" "def " ident (&"as" str)? ("(" ident " : " lgtmTy ")")*
-  " : " lgtmTy : command
+syntax (docComment)? "@[" &"lgtm" ", " &"forward" "] " "def " ident (&"as" str)?
+  ("(" ident " : " lgtmTy ")")* " : " lgtmTy : command
 
 elab_rules : command
-  | `($[$doc:docComment]? lgtm forward def $n:ident $[as $ir:str]?
+  | `($[$doc:docComment]? @[lgtm, forward] def $n:ident $[as $ir:str]?
         $[($xs:ident : $ts:lgtmTy)]* : $rt:lgtmTy) => do
       let irName := (ir.map (·.getString)).getD n.getId.toString
       let docText := match doc with
@@ -1579,11 +1593,32 @@ meta def throwOnRepeatedName (what : String) (ns : Array Ident) :
       throwErrorAt n s!"duplicate {what} `{s}`: a declaration names each {what} once"
     seen := seen.push s
 
-/-- `lgtm struct Point { x : int, y : int }` declares `Point : StructDecl`.
+/-- One field of an `@[lgtm] structure`: its name and its type.  `public` for the reason `lgtmVis`
+is, and a parser alias of its own so that the fields can be written one to a line. -/
+public syntax lgtmField := ident " : " lgtmTy
 
-The same shape as `lgtm def`: the IR name defaults to the Lean name and `as "point"` overrides it,
-and `lgtm private struct` makes the generated Lean declaration `private`.  The fields are in the
-order they are written, which is the order a `new` has to give them in.
+/-- The name and the type of one `lgtmField`, which is the one shape both passes over an
+`@[lgtm] structure` read it in. -/
+meta def lgtmFieldParts (f : TSyntax `lgtmField) :
+    Elab.Command.CommandElabM (Ident × TSyntax `lgtmTy) := do
+  match f with
+  | `(lgtmField| $fn:ident : $t:lgtmTy) => return (fn, t)
+  | _ => throwErrorAt f "not a field of an `@[lgtm] structure`"
+
+/-- ```
+@[lgtm] structure Point where
+  x : int
+  y : int
+```
+declares `Point : StructDecl`.
+
+The same shape as `@[lgtm] def`: the IR name defaults to the Lean name and `as "point"` overrides
+it, and `@[lgtm] private structure` makes the generated Lean declaration `private`.  The fields are
+one to a line under the `where`, in the order they are written, which is the order a `new` has to
+give them in.  A structure with no fields at all is the `where` and nothing after it.
+
+The field list is `manyIndent`, so it ends where the indentation does: a line at or left of the
+first field's column is the next command rather than a field of this one.
 
 No two fields may share a name, which `StructDecl.FieldNamesUnique` is the condition for: a second
 `x` is a field no `p.x` could read and no `{ p with x = ... }` could rebind, so it is an error here
@@ -1591,12 +1626,15 @@ rather than a declaration only `Program.check` would turn down.
 
 A doc comment documents the Lean declaration only.  A `StructDecl` has no docstring field to put it
 in, unlike a `FuncDecl`. -/
-syntax (docComment)? "lgtm " (lgtmVis)? &"struct" ident (&"as" str)? "{" (ident " : " lgtmTy),*
-  "}" : command
+syntax (docComment)? "@[lgtm] " (lgtmVis)? "structure " ident (&"as" str)? " where "
+  manyIndent(ppLine lgtmField) : command
 
 elab_rules : command
-  | `($[$doc:docComment]? lgtm $[$vis:lgtmVis]? struct $n:ident $[as $ir:str]?
-        { $[$fs:ident : $ts:lgtmTy],* }) => do
+  | `($[$doc:docComment]? @[lgtm] $[$vis:lgtmVis]? structure $n:ident $[as $ir:str]?
+        where $[$fieldStxs:lgtmField]*) => do
+      let parts ← fieldStxs.mapM lgtmFieldParts
+      let fs := parts.map Prod.fst
+      let ts := parts.map Prod.snd
       throwOnRepeatedName "field" fs
       let irName := (ir.map (·.getString)).getD n.getId.toString
       let fields ← (fs.zip ts).mapM fun (f, t) =>
@@ -1608,7 +1646,8 @@ elab_rules : command
         | none => `($[$doc:docComment]? def $n : StructDecl := $val)
       let leanName := (← resolveDeclName n).getD n.getId
       -- The declaration's own name is in scope for its field types, so a struct may hold a value
-      -- of itself: `lgtm struct Tree { kids : list (struct Tree) }` names something declared.
+      -- of itself: `@[lgtm] structure Tree where kids : list (struct Tree)` names something
+      -- declared.
       Elab.Command.liftTermElabM do
         let (d, _) ← LgtmElabM.run' (report := true)
             (extra := LgtmScope.addEntry {}
@@ -1618,16 +1657,24 @@ elab_rules : command
           return ({ name := irName, fields } : StructDecl)
         addLgtmEntry { irName, leanName, decl := .st d }
 
-/-- One constructor of a `lgtm inductive`: its name, and the types of the data it carries.  A
+/-- One constructor of an `@[lgtm] inductive`: its name, and the types of the data it carries.  A
 constructor that carries nothing takes no parentheses, which is what makes a plain enumeration look
 like one. -/
 public syntax lgtmCtor := ident ("(" lgtmTy,* ")")?
 
-/-- `lgtm inductive Color { Red, Green, Rgb(int, int, int) }` declares `Color : InductiveDecl`.
+/-- ```
+@[lgtm] inductive Color where
+  | Red
+  | Green
+  | Rgb(int, int, int)
+```
+declares `Color : InductiveDecl`.
 
-The same shape as `lgtm struct`: the IR name defaults to the Lean name and `as "color"` overrides it,
-and `lgtm private inductive` makes the generated Lean declaration `private`.  The constructors are in
-the order they are written, which is the order a `match` has to give its alternatives in.
+The same shape as `@[lgtm] structure`: the IR name defaults to the Lean name and `as "color"`
+overrides it, and `@[lgtm] private inductive` makes the generated Lean declaration `private`.  The
+constructors are one to a line under the `where`, each behind a `|`, in the order they are written,
+which is the order a `match` has to give its alternatives in.  A type with no constructors at all is
+the `where` and nothing after it.
 
 A constructor's data has types but no names — it is taken apart by position — so a constructor is
 written like a function type's parameter list rather than like a struct's fields.
@@ -1638,20 +1685,21 @@ could never build and one a `match` would have to write a second alternative for
 
 A doc comment documents the Lean declaration only.  An `InductiveDecl` has no docstring field to put
 it in, as a `StructDecl` has not. -/
-syntax (docComment)? "lgtm " (lgtmVis)? "inductive " ident (&"as" str)? "{" lgtmCtor,* "}" : command
+syntax (docComment)? "@[lgtm] " (lgtmVis)? "inductive " ident (&"as" str)? " where "
+  manyIndent(ppLine "| " lgtmCtor) : command
 
-/-- The name and the types of one `lgtmCtor`, which is the one shape both passes over a `lgtm
-inductive` read it in. -/
+/-- The name and the types of one `lgtmCtor`, which is the one shape both passes over an
+`@[lgtm] inductive` read it in. -/
 meta def lgtmCtorParts (c : TSyntax `lgtmCtor) :
     Elab.Command.CommandElabM (Ident × Array (TSyntax `lgtmTy)) := do
   match c with
   | `(lgtmCtor| $cn:ident $[($ts:lgtmTy,*)]?) => return (cn, (ts.map (·.getElems)).getD #[])
-  | _ => throwErrorAt c "not a constructor of a `lgtm inductive`"
+  | _ => throwErrorAt c "not a constructor of an `@[lgtm] inductive`"
 
 elab_rules : command
-  | `($[$doc:docComment]? lgtm $[$vis:lgtmVis]? inductive $n:ident $[as $ir:str]?
-        { $cs:lgtmCtor,* }) => do
-      let parts ← cs.getElems.mapM lgtmCtorParts
+  | `($[$doc:docComment]? @[lgtm] $[$vis:lgtmVis]? inductive $n:ident $[as $ir:str]?
+        where $[| $cs:lgtmCtor]*) => do
+      let parts ← cs.mapM lgtmCtorParts
       throwOnRepeatedName "constructor" (parts.map Prod.fst)
       let irName := (ir.map (·.getString)).getD n.getId.toString
       let ctors ← parts.mapM fun (cn, ts) => do

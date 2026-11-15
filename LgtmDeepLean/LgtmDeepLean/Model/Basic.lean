@@ -10,166 +10,146 @@ as public: a proof about one of these declarations unfolds it to reach the `Expr
 and a type table built from them is read by `rfl`. -/
 @[expose] public section
 
-lgtm struct CommentRef {
+@[lgtm] structure CommentRef where
   id : string
-}
 
-lgtm struct FileRef {
+@[lgtm] structure FileRef where
   path : string
-}
 
-lgtm inductive FileVersion {
-  Base, Current
-}
+@[lgtm] inductive FileVersion where
+  | Base
+  | Current
 
-lgtm inductive ThreadLocation {
-  TopLevel,
-  LineNumber(int)
-}
+@[lgtm] inductive ThreadLocation where
+  | TopLevel
+  | LineNumber(int)
 
-lgtm def ThreadLocation.isTopLevel (l : inductive ThreadLocation) : bool :=
+@[lgtm] def ThreadLocation.isTopLevel (l : inductive ThreadLocation) : bool :=
   match l with
   | TopLevel => true
   | LineNumber(_n) => false
 
-lgtm struct GitRevision {
+@[lgtm] structure GitRevision where
   hash : string
-}
 
-lgtm struct RepositoryRef {
-  name : string,
-  path : string,
+@[lgtm] structure RepositoryRef where
+  name : string
+  path : string
   baseRevision: struct GitRevision
-}
 
-lgtm inductive ModificationType {
-  Modified,
-  Added,
-  Deleted,
-  Renamed,
-  Copied,
-  TypeChange
-}
+@[lgtm] inductive ModificationType where
+  | Modified
+  | Added
+  | Deleted
+  | Renamed
+  | Copied
+  | TypeChange
 
-lgtm struct ModifiedFileRef {
-  repositoryRef : struct RepositoryRef,
-  modificationType : inductive ModificationType,
-  baseFileName : string,
-  baseFileHash : struct GitRevision,
-  currentFileName : string,
+@[lgtm] structure ModifiedFileRef where
+  repositoryRef : struct RepositoryRef
+  modificationType : inductive ModificationType
+  baseFileName : string
+  baseFileHash : struct GitRevision
+  currentFileName : string
   currentFileHash : struct GitRevision
-}
 
-lgtm struct CommentFileLocation {
-  version : inductive FileVersion,
-  fileRef : struct ModifiedFileRef,
-  startLine : int,
-  startColumn : int,
-  endLine : int,
+@[lgtm] structure CommentFileLocation where
+  version : inductive FileVersion
+  fileRef : struct ModifiedFileRef
+  startLine : int
+  startColumn : int
+  endLine : int
   endColumn : int
-}
 
-lgtm inductive CommentLocation {
-  TopLevel,
-  FileLocation(struct CommentFileLocation)
-}
+@[lgtm] inductive CommentLocation where
+  | TopLevel
+  | FileLocation(struct CommentFileLocation)
 
-lgtm struct ServerId {
+@[lgtm] structure ServerId where
   id : string
-}
 
-lgtm struct Comment {
-  ref : struct CommentRef,
-  backendId : option (struct ServerId),
-  location : inductive CommentLocation,
-  author : string,
-  createdTimestamp : int,
-  updatedTimestamp : int,
-  parent : option (struct ServerId),
-  replyToId : option (struct ServerId),
+@[lgtm] structure Comment where
+  ref : struct CommentRef
+  backendId : option (struct ServerId)
+  location : inductive CommentLocation
+  author : string
+  createdTimestamp : int
+  updatedTimestamp : int
+  parent : option (struct ServerId)
+  replyToId : option (struct ServerId)
   content : string
-}
 
-lgtm def Comment.isPersistedToServer (c : struct Comment) : bool :=
+@[lgtm] def Comment.isPersistedToServer (c : struct Comment) : bool :=
   match c.backendId with
   | none => false
   | some(_t) => true
 
-lgtm struct CommentThread {
-  value : struct CommentRef,
+@[lgtm] structure CommentThread where
+  value : struct CommentRef
   children : list (struct CommentRef)
-}
 
-lgtm struct CommentThreads {
-  commentTreeNodes : hashmap (struct CommentRef) (struct CommentThread),
-  serverCommentIds : hashmap (struct ServerId) (struct CommentRef),
+@[lgtm] structure CommentThreads where
+  commentTreeNodes : hashmap (struct CommentRef) (struct CommentThread)
+  serverCommentIds : hashmap (struct ServerId) (struct CommentRef)
   locationRoots : hashmap (inductive ThreadLocation) (list (struct CommentRef))
-}
 
-lgtm def CommentThreads.empty : struct CommentThreads :=
+@[lgtm] def CommentThreads.empty : struct CommentThreads :=
    new CommentThreads { commentTreeNodes = hashmap(struct CommentRef, struct CommentThread),
                         serverCommentIds = hashmap(struct ServerId, struct CommentRef),
                         locationRoots = hashmap(inductive ThreadLocation, list (struct CommentRef))
                       }
 
-lgtm struct SelectedComment {
-  version : inductive FileVersion,
-  thread : struct CommentThread,
+@[lgtm] structure SelectedComment where
+  version : inductive FileVersion
+  thread : struct CommentThread
   comment : struct CommentRef
-}
 
-lgtm struct CommentManager {
-  comments : hashmap (struct CommentRef) (struct Comment),
-  topLevelThreads : struct CommentThreads,
+@[lgtm] structure CommentManager where
+  comments : hashmap (struct CommentRef) (struct Comment)
+  topLevelThreads : struct CommentThreads
   selectedComment : option (struct SelectedComment)
-}
 
-lgtm struct Repository {
-  name : string,
-  path : string,
-  baseRevision : struct GitRevision,
+@[lgtm] structure Repository where
+  name : string
+  path : string
+  baseRevision : struct GitRevision
   commits : list (tuple(struct GitRevision, string))
-}
 
 -- TODO: Need boolean conjunction
 --
--- lgtm def repositoryRefMatches (repository : struct Repository) (ref : struct RepositoryRef) : bool
+-- @[lgtm] def repositoryRefMatches (repository : struct Repository)
+--   (ref : struct RepositoryRef) : bool
 
-lgtm struct ModifiedFileState {
-  ref : struct ModifiedFileRef,
-  fileRef : struct FileRef,
-  selectedComment : option (struct SelectedComment),
-  baseThreads : struct CommentThreads,
+@[lgtm] structure ModifiedFileState where
+  ref : struct ModifiedFileRef
+  fileRef : struct FileRef
+  selectedComment : option (struct SelectedComment)
+  baseThreads : struct CommentThreads
   currentThreads : struct CommentThreads
-}
 
-lgtm struct ModifiedFileManager {
-  state : hashmap (struct ModifiedFileRef) (struct ModifiedFileState),
+@[lgtm] structure ModifiedFileManager where
+  state : hashmap (struct ModifiedFileRef) (struct ModifiedFileState)
   modifiedFiles : list (struct ModifiedFileRef)
-}
 
-lgtm struct ChangesetStatus {
+@[lgtm] structure ChangesetStatus where
   status : string
-}
 
-lgtm struct Configuration {
-  user : string,
-  changesetId : string,
-  repositories : list (struct Repository),
-  author : string,
-  createdAt : int,
-  status : struct ChangesetStatus,
-  createComment : (struct Comment) -> option (struct ServerId),
+@[lgtm] structure Configuration where
+  user : string
+  changesetId : string
+  repositories : list (struct Repository)
+  author : string
+  createdAt : int
+  status : struct ChangesetStatus
+  createComment : (struct Comment) -> option (struct ServerId)
   getRemoteConversations : (struct ModifiedFileManager) -> option (list (struct Comment))
-}
 
-lgtm struct State {
-  configuration : struct Configuration,
-  activeReviewedFile : option (struct ModifiedFileRef),
-  commentBeingEdited : option (struct Comment),
-  commentManager : struct CommentManager,
+@[lgtm] structure State where
+  configuration : struct Configuration
+  activeReviewedFile : option (struct ModifiedFileRef)
+  commentBeingEdited : option (struct Comment)
+  commentManager : struct CommentManager
   fileManager : struct ModifiedFileManager
-}
 
 /-! ## What this module contributes to the model
 

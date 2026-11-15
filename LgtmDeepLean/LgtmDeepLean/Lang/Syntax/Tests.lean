@@ -5,10 +5,10 @@ meta import LgtmDeepLean.Lang.Syntax
 
 /-! # Tests for the surface syntax
 
-What `[lgtm_ty| ...]`, `[lgtm| ...]`, `lgtm def`, `lgtm struct`, and `lgtm inductive` elaborate to:
-each form against the constructors it describes, the precedences that decide how a term without
-parentheses is read, and the declarations the commands build — checked, where it is the point, with
-`FuncDecl.check`. -/
+What `[lgtm_ty| ...]`, `[lgtm| ...]`, `@[lgtm] def`, `@[lgtm] structure`, and `@[lgtm] inductive`
+elaborate to: each form against the constructors it describes, the precedences that decide how a
+term without parentheses is read, and the declarations the commands build — checked, where it is the
+point, with `FuncDecl.check`. -/
 
 -- Types elaborate to the constructors they describe, `fn` taking all its parameters at once.
 example : [lgtm_ty| int] = Ty.int :=
@@ -416,7 +416,7 @@ example :
 
 /-- The head of `xs`, and `d` when it has none: the two cases a list has and the match between them,
 which is what a declaration reading one element off a list looks like. -/
-lgtm def headOr as"head-or"(xs : list int)(d : int) : int :=
+@[lgtm] def headOr as"head-or"(xs : list int)(d : int) : int :=
   match xs with | [] => d | hd :: tl => hd
 
 -- A list needs no declaration to be well formed, so this checks against no `TypeDecls` at all.
@@ -466,7 +466,7 @@ lgtm def headOr as"head-or"(xs : list int)(d : int) : int :=
 -- The names are in scope in the case that binds them and nowhere else, the way `some(x)`'s is.
 /-- error: no variable named 'hd' is in scope -/
 #guard_msgs (error) in
-lgtm def headOfEmpty as"head-of-empty"(xs : list int) : int :=
+@[lgtm] def headOfEmpty as"head-of-empty"(xs : list int) : int :=
   match xs with | [] => hd | hd :: tl => hd
 
 -- `reverse` is a form of its own, not a call, so it takes its operand without parentheses.
@@ -641,7 +641,7 @@ example : [lgtm_ty| list~(Ty.int)] = Ty.list .int :=
   rfl
 
 /-- Add `x` to one less than `y`. -/
-lgtm def addPred as"add-pred"(x : int)(y : int) : int := x + (y - 1)
+@[lgtm] def addPred as"add-pred"(x : int)(y : int) : int := x + (y - 1)
 
 -- The command builds the `FuncDecl` field by field: the doc comment, the `as` name, the parameters
 -- in order, the body, and the result type.
@@ -658,7 +658,7 @@ example :
 #guard (addPred.check {} []).isOk
 
 /-- Put `s` after an exclamation mark. -/
-lgtm def bang(s : string) : list string := ["!", s : string]
+@[lgtm] def bang(s : string) : list string := ["!", s : string]
 
 -- With no `as`, the IR name is the Lean name.
 example : bang.name = "bang" :=
@@ -666,23 +666,23 @@ example : bang.name = "bang" :=
 
 #guard (bang.check {} []).isOk
 
-lgtm def applyTo as"apply-to"(g : (int) -> int)(x : int) : int := g(x)
+@[lgtm] def applyTo as"apply-to"(g : (int) -> int)(x : int) : int := g(x)
 
 #guard (applyTo.check {} []).isOk
 
 /-- Build a function that adds `n` to its argument. -/
-lgtm def adder(n : int) : (int) -> int := fun(m : int) => n + m
+@[lgtm] def adder(n : int) : (int) -> int := fun(m : int) => n + m
 
 #guard (adder.check {} []).isOk
 
 /-- Reverse `xs` with `x` on the front. -/
-lgtm def revCons as"rev-cons"(x : int)(xs : list int) : list int := reverse(x :: xs)
+@[lgtm] def revCons as"rev-cons"(x : int)(xs : list int) : list int := reverse(x :: xs)
 
 #guard (revCons.check {} []).isOk
 
 /-- Every element of `xs` with one added to it.  The function takes one parameter, at the list's
 element type, which is what the `list` tag on the `map` is standing in for. -/
-lgtm def bumpAll as "bump-all" (xs : list int) : list int :=
+@[lgtm] def bumpAll as "bump-all" (xs : list int) : list int :=
   map list xs (fun (x : int) => x + 1)
 
 #guard (bumpAll.check {} []).isOk
@@ -713,7 +713,7 @@ lgtm def bumpAll as "bump-all" (xs : list int) : list int :=
 /-- Whether `xs` is empty or is `ys`: the shortest declaration the two boolean operators are in,
 and the one place their being looser than `==` is what keeps a comparison on either side
 unparenthesized. -/
-lgtm def emptyOrEqual as"empty-or-equal"(xs : list int)(ys : list int) : bool :=
+@[lgtm] def emptyOrEqual as"empty-or-equal"(xs : list int)(ys : list int) : bool :=
   length xs == 0 || xs == ys
 
 #guard (emptyOrEqual.check {} []).isOk
@@ -730,23 +730,23 @@ lgtm def emptyOrEqual as"empty-or-equal"(xs : list int)(ys : list int) : bool :=
 #guard !(({ emptyOrEqual with resultType := [lgtm_ty| int] } : FuncDecl).check {} []).isOk
 
 /-- Twice one more than `n`. -/
-lgtm def letDouble as"let-double"(n : int) : int := let m := n + 1; m + m
+@[lgtm] def letDouble as"let-double"(n : int) : int := let m := n + 1; m + m
 
 #guard (letDouble.check {} []).isOk
 
 /-- `x` when `b`, and `y` otherwise. -/
-lgtm def pick(b : bool)(x : int)(y : int) : int := if b then (x) else (y)
+@[lgtm] def pick(b : bool)(x : int)(y : int) : int := if b then (x) else (y)
 
 #guard (pick.check {} []).isOk
 
 -- A `bool` is a type like any other, so a declaration can return one and a list can hold them, and
 -- a literal is where one comes from when no parameter has one.
-lgtm def firstOf as"first-of"(b : bool)(bs : list bool) : list bool := b :: bs
+@[lgtm] def firstOf as"first-of"(b : bool)(bs : list bool) : list bool := b :: bs
 
 #guard (firstOf.check {} []).isOk
 
 /-- The two literals, which is the shortest declaration that returns a `bool`. -/
-lgtm def yes : bool := true
+@[lgtm] def yes : bool := true
 
 #guard (yes.check {} []).isOk
 
@@ -756,18 +756,18 @@ lgtm def yes : bool := true
 
 -- So a `bool` no longer has to be passed in: a conditional can be written with its condition spelled
 -- out, and a list of them needs no parameter either.
-lgtm def flags : list bool := [true, false, true : bool]
+@[lgtm] def flags : list bool := [true, false, true : bool]
 
 #guard (flags.check {} []).isOk
 
-lgtm def pickFirst as"pick-first"(x : int)(y : int) : int := if true then (x) else (y)
+@[lgtm] def pickFirst as"pick-first"(x : int)(y : int) : int := if true then (x) else (y)
 
 #guard (pickFirst.check {} []).isOk
 
 #guard !(({ pickFirst with body := [lgtm| if 1 then (x) else (y)] } : FuncDecl).check {} []).isOk
 
 /-- Whether `x` and `y` are the same, which is the other way a declaration returns a `bool`. -/
-lgtm def same(x : int)(y : int) : bool := x == y
+@[lgtm] def same(x : int)(y : int) : bool := x == y
 
 #guard (same.check {} []).isOk
 
@@ -807,14 +807,14 @@ private def sameFnLists : FuncDecl :=
 #guard (({ pick with body := [lgtm| if x == y then (x) else (y)] } : FuncDecl).check {} []).isOk
 
 -- A declaration with no parameters is fine, and so is one that returns a function.
-lgtm def three : int := 3
+@[lgtm] def three : int := 3
 
 #guard (three.check {} []).isOk
 
 -- A declaration is called by its IR name, and a dotted one is the whole name rather than a field
 -- read: `Nested.one` is the declaration below, which is how one declaration calls another.  A
 -- nullary one still takes the parentheses — `Ty.fn [] .int` is not `Ty.int`.
-lgtm def Nested.one : int := 1
+@[lgtm] def Nested.one : int := 1
 
 example : [lgtm| Nested.one] = Expression.varRef "Nested.one" :=
   rfl
@@ -838,9 +838,9 @@ example : [lgtm| Nested.two] = Expression.structGet (.varRef "Nested") "two" :=
 example : [lgtm| (var"Nested.one").x] = Expression.structGet (.varRef "Nested.one") "x" :=
   rfl
 
--- `lgtm private def` makes the Lean declaration private; the `FuncDecl` it builds is the same.
+-- `@[lgtm] private def` makes the Lean declaration private; the `FuncDecl` it builds is the same.
 /-- One more than `x`. -/
-lgtm private def succ as"succ-one"(x : int) : int := x + 1
+@[lgtm] private def succ as"succ-one"(x : int) : int := x + 1
 
 example : succ.name = "succ-one" :=
   rfl
@@ -952,14 +952,17 @@ example :
   rfl
 
 /-- A point in the plane. -/
-lgtm struct Point{x : int, y : int}
+@[lgtm] structure Point where
+  x : int
+  y : int
 
 -- The command builds the `StructDecl` field by field, in the order the fields are written.
 example : Point = { name := "Point", fields := [("x", .int), ("y", .int)] } :=
   rfl
 
--- With no `as`, the IR name is the Lean name; `as` overrides it, as it does for `lgtm def`.
-lgtm struct Renamed as"my-struct"{f : list int}
+-- With no `as`, the IR name is the Lean name; `as` overrides it, as it does for `@[lgtm] def`.
+@[lgtm] structure Renamed as"my-struct" where
+  f : list int
 
 example : Renamed.name = "my-struct" :=
   rfl
@@ -968,12 +971,15 @@ example : Renamed.fields = [("f", .list .int)] :=
   rfl
 
 -- A struct may have no fields, and its fields may be of any type — another struct included.
-lgtm struct Nothing{}
+@[lgtm] structure Nothing where
 
 example : Nothing.fields = [] :=
   rfl
 
-lgtm private struct Box{label : string, origin : struct Point, step : (int) -> int}
+@[lgtm] private structure Box where
+  label : string
+  origin : struct Point
+  step : (int) -> int
 
 example :
     Box.fields = [("label", .string), ("origin", .struct "Point"), ("step", .fn [.int] .int)] :=
@@ -983,29 +989,32 @@ example :
 -- says so where the name is rather than leaving `Program.check` to turn the declaration down.
 /-- error: duplicate field `x`: a declaration names each field once -/
 #guard_msgs in
-lgtm struct TwoXs{x : int, x : string}
+@[lgtm] structure TwoXs where
+  x : int
+  x : string
 
 -- Two structs may of course each have an `x`: a field name is scoped to the struct that declares
 -- it, so the condition is on one declaration and never across them.
-lgtm private struct OtherX{x : string}
+@[lgtm] private structure OtherX where
+  x : string
 
 example : OtherX.fields = [("x", .string)] :=
   rfl
 
 /-- `fun (p : Point) => new Point { x = p.y, y = p.x }` -/
-lgtm def swap(p : struct Point) : struct Point := new Point{x = p.y, y = p.x}
+@[lgtm] def swap(p : struct Point) : struct Point := new Point{x = p.y, y = p.x}
 
 -- And what the two commands build together type checks, which is the point of writing it this way.
 #guard (swap.check { ss := Structs.ofDecls [Point] } []).isOk
 
 #guard !(swap.check {} []).isOk
 
-lgtm def shift(p : struct Point)(d : int) : struct Point := {p with x = p.x + d}
+@[lgtm] def shift(p : struct Point)(d : int) : struct Point := {p with x = p.x + d}
 
 #guard (shift.check { ss := Structs.ofDecls [Point] } []).isOk
 
 /-- Whether two points are the same point, which is field for field. -/
-lgtm def samePoint as"same-point"(p : struct Point)(q : struct Point) : bool := p == q
+@[lgtm] def samePoint as"same-point"(p : struct Point)(q : struct Point) : bool := p == q
 
 #guard (samePoint.check { ss := Structs.ofDecls [Point] } []).isOk
 
@@ -1096,38 +1105,47 @@ example : [lgtm| match c with] = Expression.indMatch (.varRef "c") [] :=
   rfl
 
 /-- A colour. -/
-lgtm inductive Color{Red, Green, Blue}
+@[lgtm] inductive Color where
+  | Red
+  | Green
+  | Blue
 
 -- The command builds the `InductiveDecl` constructor by constructor, in the order they are written,
 -- with an empty list of data types for the ones that carry nothing.
 example : Color = { name := "Color", constructors := [("Red", []), ("Green", []), ("Blue", [])] } :=
   rfl
 
-lgtm inductive Shape{Circle(int), Rect(int, int)}
+@[lgtm] inductive Shape where
+  | Circle(int)
+  | Rect(int, int)
 
 example : Shape.constructors = [("Circle", [.int]), ("Rect", [.int, .int])] :=
   rfl
 
 -- A constructor's data may be of any type, another inductive type and the type being declared
 -- included: nothing about a constructor's types is resolved when it is declared.
-lgtm inductive Tree{Leaf, Node(inductive Tree, inductive Tree)}
+@[lgtm] inductive Tree where
+  | Leaf
+  | Node(inductive Tree, inductive Tree)
 
 example : Tree.constructors = [("Leaf", []), ("Node", [.ind "Tree", .ind "Tree"])] :=
   rfl
 
-lgtm inductive Wrapped{C(list int, struct Point, (int) -> int)}
+@[lgtm] inductive Wrapped where
+  | C(list int, struct Point, (int) -> int)
 
 example : Wrapped.constructors = [("C", [.list .int, .struct "Point", .fn [.int] .int])] :=
   rfl
 
 -- With no `as`, the IR name is the Lean name; `as` overrides it, and a type may declare no
 -- constructors at all — nothing can build a value of it, and nothing can take one apart.
-lgtm inductive RenamedInd as"my-type"{C}
+@[lgtm] inductive RenamedInd as"my-type" where
+  | C
 
 example : RenamedInd.name = "my-type" :=
   rfl
 
-lgtm private inductive NoCtors{}
+@[lgtm] private inductive NoCtors where
 
 example : NoCtors.constructors = [] :=
   rfl
@@ -1136,18 +1154,23 @@ example : NoCtors.constructors = [] :=
 -- one nothing could build and no alternative of a match could be checked against.
 /-- error: duplicate constructor `Red`: a declaration names each constructor once -/
 #guard_msgs in
-lgtm inductive TwoReds{Red, Green, Red(int)}
+@[lgtm] inductive TwoReds where
+  | Red
+  | Green
+  | Red(int)
 
 -- Two types may each have a `Red` all the same: a constructor name is scoped to the type that
 -- declares it, which is why `new` and `Value.ind` both name the type as well.
-lgtm private inductive Hue{Red, Green}
+@[lgtm] private inductive Hue where
+  | Red
+  | Green
 
 example : Hue.constructors = [("Red", []), ("Green", [])] :=
   rfl
 
 /-- The perimeter of `s`, which is what a `match` is for: one answer per constructor, computed from
 what that constructor carries. -/
-lgtm def perimeter(s : inductive Shape) : int :=
+@[lgtm] def perimeter(s : inductive Shape) : int :=
   match s with | Circle(r) => r + r + r + r + r + r | Rect(w, h) => w + w + h + h
 
 -- And what the two commands build together type checks, which is the point of writing it this way.
@@ -1156,14 +1179,14 @@ lgtm def perimeter(s : inductive Shape) : int :=
 #guard !(perimeter.check {} []).isOk
 
 /-- `Rect` with both sides `n`, which is the other half: a constructor applied to values. -/
-lgtm def square(n : int) : inductive Shape := new Shape.Rect(n, n)
+@[lgtm] def square(n : int) : inductive Shape := new Shape.Rect(n, n)
 
 #guard (square.check { is := Inductives.ofDecls [Shape] } []).isOk
 
 /-- Whether two trees are the same tree: the same constructors all the way down, carrying the same
 data.  A type being recursive is no obstacle to comparing two values of it — each value is finite —
 which is what makes this check. -/
-lgtm def sameTree as"same-tree"(a : inductive Tree)(b : inductive Tree) : bool := a == b
+@[lgtm] def sameTree as"same-tree"(a : inductive Tree)(b : inductive Tree) : bool := a == b
 
 #guard (sameTree.check { is := Inductives.ofDecls [Tree] } []).isOk
 
@@ -1335,7 +1358,7 @@ example :
 
 /-- One more than what `o` holds, and zero when it holds nothing: the two option forms and the match
 between them, which is what a declaration returning an `int` from an option looks like. -/
-lgtm def succOrZero as"succ-or-zero"(o : option int) : int :=
+@[lgtm] def succOrZero as"succ-or-zero"(o : option int) : int :=
   match o with | none => 0 | some(x) => x + 1
 
 -- An option needs no declaration to be well formed, so this checks against no `TypeDecls` at all.
@@ -1357,7 +1380,7 @@ lgtm def succOrZero as"succ-or-zero"(o : option int) : int :=
   !(({ succOrZero with parameters := [("o", [lgtm_ty| list int])] } : FuncDecl).check {} []).isOk
 
 /-- `n`, held in an option, which is the other half: a value put into one rather than taken out. -/
-lgtm def justInt as"just-int"(n : int) : option int := some(n)
+@[lgtm] def justInt as"just-int"(n : int) : option int := some(n)
 
 #guard (justInt.check {} []).isOk
 
@@ -1365,14 +1388,14 @@ lgtm def justInt as"just-int"(n : int) : option int := some(n)
 
 /-- Nothing, at `int`: the shortest declaration returning an option, and the one place the
 annotation is all there is to go on. -/
-lgtm def noInt as"no-int" : option int := none : int
+@[lgtm] def noInt as"no-int" : option int := none : int
 
 #guard (noInt.check {} []).isOk
 
 #guard !(({ noInt with resultType := [lgtm_ty| option string] } : FuncDecl).check {} []).isOk
 
 /-- Whether two options are the same option, which an option is as comparable as what it holds. -/
-lgtm def sameOpt as"same-opt"(a : option int)(b : option int) : bool := a == b
+@[lgtm] def sameOpt as"same-opt"(a : option int)(b : option int) : bool := a == b
 
 #guard (sameOpt.check {} []).isOk
 
@@ -1642,12 +1665,13 @@ example :
   rfl
 
 /-- A struct with a list in it, to index a field read. -/
-lgtm struct Bag{items : list int}
+@[lgtm] structure Bag where
+  items : list int
 
 /-- The element of `xs` at `i`, and zero where there is none.  A parameter is where a declaration's
 operands come from, and the type declared for it is what the brackets are read by — so this is the
 shape real code writes an index in, where a fragment needs an operand carrying its own type. -/
-lgtm def elemOr as"elem-or"(xs : list int)(i : int) : int :=
+@[lgtm] def elemOr as"elem-or"(xs : list int)(i : int) : int :=
   match xs[i] with | none => 0 | some(x) => x
 
 #guard (elemOr.check {} []).isOk
@@ -1668,7 +1692,7 @@ example :
 
 /-- The same declaration over a hashmap, which is the dispatch read the other way: the brackets are
 the ones above, and the type of what is indexed is the whole of what tells the two apart. -/
-lgtm def valueOr as"value-or"(m : hashmap int int)(k : int) : int :=
+@[lgtm] def valueOr as"value-or"(m : hashmap int int)(k : int) : int :=
   match m[k] with | none => 0 | some(x) => x
 
 #guard (valueOr.check {} []).isOk
@@ -1681,7 +1705,7 @@ example :
 
 /-- The same read over a `let`, which is the other place a declaration's operands come from: the
 type the name is bound at is what the brackets are read by, exactly as a parameter's is. -/
-lgtm def firstOrZero as"first-or-zero"(p : struct Point) : int :=
+@[lgtm] def firstOrZero as"first-or-zero"(p : struct Point) : int :=
   let ys := [p.x, p.y : int];
   match ys[0] with | none => 0 | some(x) => x
 
@@ -1696,13 +1720,13 @@ example :
 
 /-- A field's list and a call's list are both indexed with no parentheses, the way a lookup reads
 `p.m[k]` and `f(1)[k]`: the brackets bind as tightly as the field read and the call do. -/
-lgtm def bagAt as"bag-at"(b : struct Bag)(i : int) : option int :=
+@[lgtm] def bagAt as"bag-at"(b : struct Bag)(i : int) : option int :=
   b.items[i]
 
 example : bagAt.body = Expression.listIndex (.structGet (.varRef "b") "items") (.varRef "i") :=
   rfl
 
-lgtm def bangAt as"bang-at"(s : string) : option string :=
+@[lgtm] def bangAt as"bang-at"(s : string) : option string :=
   bang(s)[0]
 
 example :
@@ -1715,7 +1739,7 @@ example :
 -- than anywhere else.
 /-- error: `m[k]` needs a hashmap, but what is looked up in here has type option list int -/
 #guard_msgs (error) in
-lgtm def chkChainedIndex(xss : list list int) : option int :=
+@[lgtm] def chkChainedIndex(xss : list list int) : option int :=
   xss[0][0]
 
 example :
@@ -2205,7 +2229,7 @@ example : [lgtm| var"sortBy"] = Expression.varRef "sortBy" :=
 
 /-- The empty map from `string` to `int`: the shortest declaration that returns one, and the one
 place the annotations are all there is to go on. -/
-lgtm def noneBound as"none-bound" : hashmap string int := hashmap(string, int)
+@[lgtm] def noneBound as"none-bound" : hashmap string int := hashmap(string, int)
 
 -- A hashmap needs no declaration to be well formed, so this checks against no `TypeDecls` at all.
 #guard (noneBound.check {} []).isOk
@@ -2215,7 +2239,7 @@ lgtm def noneBound as"none-bound" : hashmap string int := hashmap(string, int)
 
 /-- `m` with `k` bound to `v`, which is the other half: a binding put into a map rather than read
 out of one. -/
-lgtm def bind(m : hashmap string int)(k : string)(v : int) : hashmap string int := {m with [k] = v}
+@[lgtm] def bind(m : hashmap string int)(k : string)(v : int) : hashmap string int := {m with [k] = v}
 
 #guard (bind.check {} []).isOk
 
@@ -2225,7 +2249,7 @@ lgtm def bind(m : hashmap string int)(k : string)(v : int) : hashmap string int 
 
 /-- What `k` is bound to in `m`, and zero when it is bound to nothing: the two halves of a lookup,
 which is what an option result is for. -/
-lgtm def getOr as"get-or"(m : hashmap string int)(k : string) : int :=
+@[lgtm] def getOr as"get-or"(m : hashmap string int)(k : string) : int :=
   match m[k] with | none => 0 | some(x) => x
 
 #guard (getOr.check {} []).isOk
@@ -2239,7 +2263,7 @@ lgtm def getOr as"get-or"(m : hashmap string int)(k : string) : int :=
 
 /-- Every value of `m` with one added to it, the keys left as they were.  The function takes the key
 as well as the value, so its parameters are the map's two types in that order. -/
-lgtm def bump (m : hashmap string int) : hashmap string int :=
+@[lgtm] def bump (m : hashmap string int) : hashmap string int :=
   map hashmap m (fun (k : string) (v : int) => v + 1)
 
 #guard (bump.check {} []).isOk
@@ -2365,7 +2389,7 @@ example : [lgtm| reverse tuple(1)] = Expression.listReverse (.tupleNew [.intLit 
 
 /-- The pair of its two arguments: the shortest declaration whose result type is a tuple, and the
 one place the element types are the arguments' and nothing else. -/
-lgtm def pair(s : string)(n : int) : tuple(string, int) := tuple(s, n)
+@[lgtm] def pair(s : string)(n : int) : tuple(string, int) := tuple(s, n)
 
 -- A tuple needs no declaration to be well formed, so this checks against no `TypeDecls` at all.
 #guard (pair.check {} []).isOk
@@ -2378,7 +2402,7 @@ lgtm def pair(s : string)(n : int) : tuple(string, int) := tuple(s, n)
 
 /-- The first half of a pair, which is the other half: a value read out of a tuple rather than put
 into one. -/
-lgtm def fst(t : tuple(string, int)) : string := t.0
+@[lgtm] def fst(t : tuple(string, int)) : string := t.0
 
 #guard (fst.check {} []).isOk
 
@@ -2408,7 +2432,7 @@ lgtm def fst(t : tuple(string, int)) : string := t.0
 
 /-- The bindings of a map as a list of pairs, which is the type `toList` gives one: the form a
 `tuple` is in the IR for. -/
-lgtm def bindings(m : hashmap string int) : list tuple(string, int) := toList m
+@[lgtm] def bindings(m : hashmap string int) : list tuple(string, int) := toList m
 
 #guard (bindings.check {} []).isOk
 
@@ -2466,7 +2490,7 @@ example : [lgtm| (unreachable"why" : int)] = Expression.unreachable .int "why" :
 /-- One less than a positive `n`, with the branch that would have gone negative written as the
 unreachable it is: the annotation is the `int` the branch beside it has, and nothing else about the
 form is the type checker's business. -/
-lgtm def pred(n : int) : int := if 0 < n then (n - 1) else (unreachable"n is positive" : int)
+@[lgtm] def pred(n : int) : int := if 0 < n then (n - 1) else (unreachable"n is positive" : int)
 
 #guard (pred.check {} []).isOk
 
@@ -2489,11 +2513,15 @@ The commands report rather than throw, so the Lean declaration is still made and
 declaration do not bury the next.  See the "What the commands do besides declare" section of
 `LgtmDeepLean.Lang.Syntax`. -/
 
-lgtm struct ChkPt{x : int, y : int}
+@[lgtm] structure ChkPt where
+  x : int
+  y : int
 
-lgtm inductive ChkHue{Dark, Rgb(int, int, int)}
+@[lgtm] inductive ChkHue where
+  | Dark
+  | Rgb(int, int, int)
 
-lgtm def chkPtX(p : struct ChkPt) : int := p.x
+@[lgtm] def chkPtX(p : struct ChkPt) : int := p.x
 
 /-! ### Names
 
@@ -2502,15 +2530,15 @@ scope, and one neither of them has is reported on the token itself. -/
 
 /-- error: no variable named 'q' is in scope; did you mean 'p'? -/
 #guard_msgs (error) in
-lgtm def chkUnbound(p : struct ChkPt) : int := q
+@[lgtm] def chkUnbound(p : struct ChkPt) : int := q
 
 -- A dotted name is either one declaration or a field read of a variable, so one that is neither is
 -- reported over the whole of it: what it was meant to be is far more often the declaration.
 /-- error: nothing named 'q.x' is declared, and 'q' is not a variable in scope -/
 #guard_msgs (error) in
-lgtm def chkDotted(p : struct ChkPt) : int := q.x
+@[lgtm] def chkDotted(p : struct ChkPt) : int := q.x
 
-lgtm def Threads.asAlist.sortThreadLists(n : int) : int := n
+@[lgtm] def Threads.asAlist.sortThreadLists(n : int) : int := n
 
 -- Four edits apart and over twenty characters long is a rename rather than a coincidence, and is
 -- said to be.  This is the mistake the model had in it when the checking was added.
@@ -2518,43 +2546,44 @@ lgtm def Threads.asAlist.sortThreadLists(n : int) : int := n
 error: nothing named 'Threads.asAlist.sortThreads' is declared, and 'Threads' is not a variable in scope; did you mean 'Threads.asAlist.sortThreadLists'?
 -/
 #guard_msgs (error) in
-lgtm def chkRenamed(n : int) : int := Threads.asAlist.sortThreads(n)
+@[lgtm] def chkRenamed(n : int) : int := Threads.asAlist.sortThreads(n)
 
 /-- error: 'ChkPt' is a struct, not an inductive type: write `struct ChkPt` -/
 #guard_msgs (error) in
-lgtm def chkWrongKind(p : inductive ChkPt) : int := 1
+@[lgtm] def chkWrongKind(p : inductive ChkPt) : int := 1
 
 /-- error: 'ChkHue' is an inductive type, not a struct: write `inductive ChkHue` -/
 #guard_msgs (error) in
-lgtm def chkWrongKind2(h : struct ChkHue) : int := 1
+@[lgtm] def chkWrongKind2(h : struct ChkHue) : int := 1
 
 -- A field's type is a name like any other, which `Program.check` never looks at: it checks the
 -- bodies of declarations, so a field of a type nothing declares is a mistake only this reports.
 /-- error: no struct named 'Nope' is declared -/
 #guard_msgs (error) in
-lgtm struct ChkNoSuchField{f : struct Nope}
+@[lgtm] structure ChkNoSuchField where
+  f : struct Nope
 
 /-- error: struct 'ChkPt' has no field named 'z'; did you mean 'x'? -/
 #guard_msgs (error) in
-lgtm def chkBadField : struct ChkPt := new ChkPt{z = 1, y = 2}
+@[lgtm] def chkBadField : struct ChkPt := new ChkPt{z = 1, y = 2}
 
 /-- error: inductive 'ChkHue' has no constructor named 'Darkk'; did you mean 'Dark'? -/
 #guard_msgs (error) in
-lgtm def chkBadCtor : inductive ChkHue := new ChkHue.Darkk()
+@[lgtm] def chkBadCtor : inductive ChkHue := new ChkHue.Darkk()
 
 /-- error: constructor 'Rgb' of inductive 'ChkHue' carries 3 value(s), but 1 are given here -/
 #guard_msgs (error) in
-lgtm def chkBadCtorArity : inductive ChkHue := new ChkHue.Rgb(1)
+@[lgtm] def chkBadCtorArity : inductive ChkHue := new ChkHue.Rgb(1)
 
 /-- error: 'chkPtX' takes 1 argument(s), but 2 are given here -/
 #guard_msgs (error) in
-lgtm def chkBadArity(p : struct ChkPt) : int := chkPtX(p, p)
+@[lgtm] def chkBadArity(p : struct ChkPt) : int := chkPtX(p, p)
 
 -- A `let` binds for its body and nowhere else, so the second mention of `m` is out of scope rather
 -- than ill typed, and is reported on the name.
 /-- error: no variable named 'm' is in scope; did you mean 'n'? -/
 #guard_msgs (error) in
-lgtm def chkLetEscapes(n : int) : int := (let m := n + 1; m) + m
+@[lgtm] def chkLetEscapes(n : int) : int := (let m := n + 1; m) + m
 
 /-! ### Types
 
@@ -2563,26 +2592,26 @@ part of it that does not check rather than on the whole body. -/
 
 /-- error: the left operand of `+` has type struct ChkPt where int was expected -/
 #guard_msgs (error) in
-lgtm def chkDeepTypeError(p : struct ChkPt)(n : int) : int :=
+@[lgtm] def chkDeepTypeError(p : struct ChkPt)(n : int) : int :=
   let a := n + 1;
   (a + (p + 1)) + 3
 
 /-- error: the `else` branch of an `if` has type string where int was expected -/
 #guard_msgs (error) in
-lgtm def chkBadBranch(b : bool)(n : int) : int := n + (if b then (1) else ("two"))
+@[lgtm] def chkBadBranch(b : bool)(n : int) : int := n + (if b then (1) else ("two"))
 
 -- A body that checks but not at the type declared for it is a disagreement between the two rather
 -- than a mistake inside the body, and is reported on the body.
 /-- error: this expression has type int where string was expected -/
 #guard_msgs (error) in
-lgtm def chkWrongResult(n : int) : string := n + 1
+@[lgtm] def chkWrongResult(n : int) : string := n + 1
 
 -- A name nothing declares is reported once.  The type checker would reach it again, one form out,
 -- and say the same thing about more of the term, so a declaration that has had something said
 -- about it is not then checked.
 /-- error: no variable named 'zzqqxx' is in scope -/
 #guard_msgs (error) in
-lgtm def chkOneErrorOnly(n : int) : string := zzqqxx + 1
+@[lgtm] def chkOneErrorOnly(n : int) : string := zzqqxx + 1
 
 /-! ### What is not reported
 
@@ -2590,7 +2619,7 @@ A correct declaration reports nothing, and neither does a bare `[lgtm| ...]`: a 
 context in which a name could be wrong, so it is read but not resolved. -/
 
 #guard_msgs (error) in
-lgtm def chkFine(p : struct ChkPt) : int := chkPtX(p) + p.y
+@[lgtm] def chkFine(p : struct ChkPt) : int := chkPtX(p) + p.y
 
 #guard_msgs (error) in
 example : [lgtm| anything.at.all + unknownName] =
@@ -2600,21 +2629,23 @@ example : [lgtm| anything.at.all + unknownName] =
 
 -- A declaration may call itself: its own name and signature are in scope for its body.
 #guard_msgs (error) in
-lgtm def chkCountdown(n : int) : int := chkCountdown(n - 1)
+@[lgtm] def chkCountdown(n : int) : int := chkCountdown(n - 1)
 
 -- And a struct may hold a value of its own type.
 #guard_msgs (error) in
-lgtm struct ChkNest{kids : list (struct ChkNest)}
+@[lgtm] structure ChkNest where
+  kids : list (struct ChkNest)
 
--- Two that call each other need `lgtm forward`, which declares a signature and no Lean declaration.
+-- Two that call each other need `@[lgtm, forward]`, which declares a signature and no Lean
+-- declaration.
 #guard_msgs (error) in
-lgtm forward def chkEvenish(n : int) : bool
+@[lgtm, forward] def chkEvenish(n : int) : bool
 
 #guard_msgs (error) in
-lgtm def chkOddish(n : int) : bool := chkEvenish(n - 1)
+@[lgtm] def chkOddish(n : int) : bool := chkEvenish(n - 1)
 
 #guard_msgs (error) in
-lgtm def chkEvenish(n : int) : bool := chkOddish(n - 1)
+@[lgtm] def chkEvenish(n : int) : bool := chkOddish(n - 1)
 
 /-! ### A term with a splice in it is not checked here
 
@@ -2623,6 +2654,69 @@ should be and is not what the writer wrote.  Nothing is reported about it, and `
 what checks it. -/
 
 #guard_msgs (error) in
-lgtm def chkSpliced(n : int) : string := ~(Expression.plus (.varRef "n") (.intLit 1))
+@[lgtm] def chkSpliced(n : int) : string := ~(Expression.plus (.varRef "n") (.intLit 1))
 
 #guard !(chkSpliced.check {} []).isOk
+
+/-! ## The commands are shaped like the Lean declarations they generate
+
+Each command is spelled as an attribute and then `def`, `structure` or `inductive`, with a
+`structure`'s fields and an `inductive`'s constructors one to a line under a `where`.  What that
+buys is a file of DSL declarations that a tool reading Lean by its grammar can get through, and what
+it costs is nothing: the declarations below are Lean's own, written in a module that imports this
+syntax, and they still mean what they always did. -/
+
+@[simp] theorem lgtmAttrLeavesLeanAttrsAlone : 1 + 1 = 2 :=
+  rfl
+
+@[inline] private def leanDefStillParses (n : Nat) : Nat :=
+  n + 1
+
+example : leanDefStillParses 1 = 2 :=
+  rfl
+
+private structure LeanStructStillParses where
+  f : Nat
+
+private inductive LeanIndStillParses where
+  | a
+  | b
+
+example : (LeanStructStillParses.mk 1).f = 1 :=
+  rfl
+
+-- `@[lgtm]` is one token of its own and the `forward` form spells both of its words with `&`, so
+-- `lgtm` is not reserved and is an ordinary Lean name.
+private def lgtm : Nat :=
+  0
+
+example : lgtm = 0 :=
+  rfl
+
+-- A field list ends where its indentation does: the command after one is a command and not a field
+-- of it, which is what `manyIndent` is for.  `EndsAtIndent` has the two fields written and no
+-- more, and the `def` under it is its own declaration.
+@[lgtm] private structure EndsAtIndent where
+  x : int
+  y : int
+
+private def notAFieldOfEndsAtIndent : Nat :=
+  1
+
+example : EndsAtIndent.fields = [("x", .int), ("y", .int)] :=
+  rfl
+
+example : notAFieldOfEndsAtIndent = 1 :=
+  rfl
+
+-- And a declaration with nothing under the `where` is followed by whatever comes next, which the
+-- empty list of fields and the empty list of constructors below are read with.
+@[lgtm] private structure NoFieldsAtAll where
+
+@[lgtm] private inductive NoCtorsAtAll as"no-ctors-at-all" where
+
+example : NoFieldsAtAll.fields = [] :=
+  rfl
+
+example : NoCtorsAtAll = { name := "no-ctors-at-all", constructors := [] } :=
+  rfl

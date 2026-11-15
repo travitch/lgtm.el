@@ -9,14 +9,14 @@ public import LgtmDeepLean.Model.Location.Operations
 @[expose] public section
 
 
-lgtm def CommentThreads.isEmpty (threads : struct CommentThreads) : bool :=
+@[lgtm] def CommentThreads.isEmpty (threads : struct CommentThreads) : bool :=
   length (toList threads.locationRoots) == 0
 
-lgtm def CommentThreads.commentCount (threads : struct CommentThreads) : int :=
+@[lgtm] def CommentThreads.commentCount (threads : struct CommentThreads) : int :=
   length (toList threads.commentTreeNodes)
 
 -- Sort the thread lists at each thread location
-lgtm def CommentThreads.asAlist.sortThreadLists (threads : struct CommentThreads) (manager : struct CommentManager) (commentThreadRoots : tuple(inductive ThreadLocation, list (struct Comment))) : tuple(inductive ThreadLocation, list (struct CommentThread)) :=
+@[lgtm] def CommentThreads.asAlist.sortThreadLists (threads : struct CommentThreads) (manager : struct CommentManager) (commentThreadRoots : tuple(inductive ThreadLocation, list (struct Comment))) : tuple(inductive ThreadLocation, list (struct CommentThread)) :=
   let sortedRoots := sortOn commentThreadRoots.1 (fun (c : struct Comment) => c.createdTimestamp);
   let lookupThreadForComment := fun (c : struct Comment) => match threads.commentTreeNodes[c.ref] with
       | none => (unreachable "Comments are required to have entries in CommentManager" : struct CommentThread)
@@ -24,7 +24,7 @@ lgtm def CommentThreads.asAlist.sortThreadLists (threads : struct CommentThreads
   let sortedThreads := map list sortedRoots lookupThreadForComment;
   tuple(commentThreadRoots.0, sortedThreads)
 
-lgtm def CommentThreads.asAlist (threads : struct CommentThreads) (manager : struct CommentManager) : list (tuple(inductive ThreadLocation, list (struct CommentThread))) :=
+@[lgtm] def CommentThreads.asAlist (threads : struct CommentThreads) (manager : struct CommentManager) : list (tuple(inductive ThreadLocation, list (struct CommentThread))) :=
   let refToComment := fun (commentRef : struct CommentRef) =>
       match CommentManager.get(manager, commentRef) with
       | none => (unreachable "Comment references must be in the CommentManager" : struct Comment)
@@ -40,11 +40,11 @@ lgtm def CommentThreads.asAlist (threads : struct CommentThreads) (manager : str
   let threadsSortedAtLocations := map list locatedRootComments sortThreadsAtLocation;
   sortBy threadsSortedAtLocations (fun (lt1 : tuple(inductive ThreadLocation, list (struct CommentThread))) (lt2 : tuple(inductive ThreadLocation, list (struct CommentThread))) => ThreadLocation.compare(lt1.0, lt2.0))
 
-lgtm def CommentThreads.toThreadsOrdered (threads : struct CommentThreads) (manager : struct CommentManager) : list (struct CommentThread) :=
+@[lgtm] def CommentThreads.toThreadsOrdered (threads : struct CommentThreads) (manager : struct CommentManager) : list (struct CommentThread) :=
   flatMap CommentThreads.asAlist(threads, manager) (fun (locThreads : tuple(inductive ThreadLocation, list (struct CommentThread))) => locThreads.1)
 
 
-lgtm def CommentThreads.rootComments (threads : struct CommentThreads) (manager : struct CommentManager) : list (struct Comment) :=
+@[lgtm] def CommentThreads.rootComments (threads : struct CommentThreads) (manager : struct CommentManager) : list (struct Comment) :=
   map list CommentThreads.toThreadsOrdered(threads, manager) (fun (tree : struct CommentThread) => match CommentManager.get(manager, tree.value) with
     | none => (unreachable "Comments must be defined in the CommentManager" : struct Comment)
     | some(c) => c)
@@ -57,7 +57,7 @@ different file, the whole selection resets.
 
 The linear order is as established in the ordering defined by THREADS.
 The MANAGER is required to get information about comments. -/
-lgtm def CommentThreads.nextThread (threads : struct CommentThreads) (manager : struct CommentManager) (version : inductive FileVersion) (selection : struct SelectedComment) : option (struct SelectedComment) :=
+@[lgtm] def CommentThreads.nextThread (threads : struct CommentThreads) (manager : struct CommentManager) (version : inductive FileVersion) (selection : struct SelectedComment) : option (struct SelectedComment) :=
   let orderedThreads := CommentThreads.toThreadsOrdered(threads, manager);
   let expectThreadAt := fun (idx : int) => match orderedThreads[idx] with
     | none => (unreachable "Thread indexing is required to be total" : struct CommentThread)
@@ -83,7 +83,7 @@ different file, the whole selection resets.
 
 The linear order is as established in the ordering defined by THREADS.
 The MANAGER is required to get information about comments. -/
-lgtm def CommentThreads.previousThread (threads : struct CommentThreads) (manager : struct CommentManager) (version : inductive FileVersion) (selection : struct SelectedComment) : option (struct SelectedComment) :=
+@[lgtm] def CommentThreads.previousThread (threads : struct CommentThreads) (manager : struct CommentManager) (version : inductive FileVersion) (selection : struct SelectedComment) : option (struct SelectedComment) :=
   let orderedThreads := CommentThreads.toThreadsOrdered(threads, manager);
   let expectThreadAt := fun (idx : int) => match orderedThreads[idx] with
     | none => (unreachable "Thread indexing is required to be total" : struct CommentThread)
@@ -103,9 +103,9 @@ lgtm def CommentThreads.previousThread (threads : struct CommentThreads) (manage
         | last :: _rest => some(new SelectedComment { version = version, thread = last, comment = last.value })
   )
 
-lgtm forward def CommentThread.linearizeRecWithFuel (threads : struct CommentThreads) (manager : struct CommentManager) (fuel : int) (thread : struct CommentThread) : list (struct Comment)
+@[lgtm, forward] def CommentThread.linearizeRecWithFuel (threads : struct CommentThreads) (manager : struct CommentManager) (fuel : int) (thread : struct CommentThread) : list (struct Comment)
 
-lgtm def CommentThread.linearizeRecWithFuel (threads : struct CommentThreads) (manager : struct CommentManager) (fuel : int) (thread : struct CommentThread) : list (struct Comment) :=
+@[lgtm] def CommentThread.linearizeRecWithFuel (threads : struct CommentThreads) (manager : struct CommentManager) (fuel : int) (thread : struct CommentThread) : list (struct Comment) :=
   if fuel == 0 then (
     [: struct Comment]
   ) else (
@@ -119,14 +119,14 @@ lgtm def CommentThread.linearizeRecWithFuel (threads : struct CommentThreads) (m
       | some(childThread) => CommentThread.linearizeRecWithFuel(threads, manager, fuel - 1, childThread))
   )
 
-lgtm def CommentThread.linearize (thread : struct CommentThread) (threads : struct CommentThreads) (manager : struct CommentManager) : list (struct Comment) :=
+@[lgtm] def CommentThread.linearize (thread : struct CommentThread) (threads : struct CommentThreads) (manager : struct CommentManager) : list (struct Comment) :=
   CommentThread.linearizeRecWithFuel(threads, manager, length (toList threads.commentTreeNodes), thread)
 
 /-- Given a SELECTION, select the next comment in the linear order.
 
     This requires the comment MANAGER to sort comments and the THREADS
     structure to find the other comments in the thread. -/
-lgtm def CommentThreads.nextCommentInThread (threads : struct CommentThreads) (manager : struct CommentManager) (selection : struct SelectedComment) : struct SelectedComment :=
+@[lgtm] def CommentThreads.nextCommentInThread (threads : struct CommentThreads) (manager : struct CommentManager) (selection : struct SelectedComment) : struct SelectedComment :=
   let selectedThread := selection.thread;
   let linearizedComments := CommentThread.linearize(selectedThread, threads, manager);
   let linearizedCommentRefs := map list linearizedComments (fun (c : struct Comment) => c.ref);
@@ -145,7 +145,7 @@ lgtm def CommentThreads.nextCommentInThread (threads : struct CommentThreads) (m
 
     This requires the comment MANAGER to sort comments and the THREADS
     structure to find the other comments in the thread. -/
-lgtm def CommentThreads.previousCommentInThread (threads : struct CommentThreads) (manager : struct CommentManager) (selection : struct SelectedComment) : struct SelectedComment :=
+@[lgtm] def CommentThreads.previousCommentInThread (threads : struct CommentThreads) (manager : struct CommentManager) (selection : struct SelectedComment) : struct SelectedComment :=
   let selectedThread := selection.thread;
   let linearizedComments := CommentThread.linearize(selectedThread, threads, manager);
   let linearizedCommentRefs := map list linearizedComments (fun (c : struct Comment) => c.ref);
