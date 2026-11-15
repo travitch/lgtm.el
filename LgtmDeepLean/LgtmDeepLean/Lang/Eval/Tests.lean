@@ -185,12 +185,12 @@ a function at all, and a function the element does not fit. -/
 
 -- An empty list maps to an empty list: there is no element for the function to be applied to, so
 -- both premises over the elements are vacuous and the function is never entered.
-example : Eval {} ∅ [lgtm| map list [: int] (fun (x : int) => x + 1)] (.list []) :=
+example : Eval {} ∅ [lgtm| map [: int] (fun (x : int) => x + 1)] (.list []) :=
   .EListMap (vs' := []) _ _ (.ENil _) (.ELam _ _) rfl (by simp) (by simp)
 
 -- One element is one call, and what it produced takes that element's place: the result is as long as
 -- the list it came from, which is the whole of what a mapping says about the shape of either.
-example : Eval {} ∅ [lgtm| map list [1 : int] (fun (x : int) => x + 1)] (.list [.int 2]) :=
+example : Eval {} ∅ [lgtm| map [1 : int] (fun (x : int) => x + 1)] (.list [.int 2]) :=
   .EListMap (vs' := [.int 2]) _ _ (.ECons _ _ (.EIntLit 1) (.ENil _)) (.ELam _ _) rfl
     (by rintro p hp
         simp at hp
@@ -204,7 +204,7 @@ example : Eval {} ∅ [lgtm| map list [1 : int] (fun (x : int) => x + 1)] (.list
 -- The function's result is what the elements become, so a mapping can produce a list of a type
 -- nothing in the list it was given had — which is the one thing a list's mapping does that a
 -- hashmap's cannot do to its keys.
-example : Eval {} ∅ [lgtm| map list [1 : int] (fun (x : int) => "a")] (.list [.string "a"]) :=
+example : Eval {} ∅ [lgtm| map [1 : int] (fun (x : int) => "a")] (.list [.string "a"]) :=
   .EListMap (vs' := [.string "a"]) _ _ (.ECons _ _ (.EIntLit 1) (.ENil _)) (.ELam _ _) rfl
     (by rintro p hp
         simp at hp
@@ -217,7 +217,7 @@ example : Eval {} ∅ [lgtm| map list [1 : int] (fun (x : int) => "a")] (.list [
 
 -- A second operand that is not a function leaves this stuck, which is one of the two things that
 -- can go wrong here and is exactly what typing rules out.
-example (v : Value) : ¬Eval {} ∅ [lgtm| map list[ : int]1] v := by
+example (v : Value) : ¬Eval {} ∅ [lgtm| map[ : int]1] v := by
   intro h
   cases h with
   | EListMap _ _ _ hf _ _ _ => cases hf
@@ -225,7 +225,7 @@ example (v : Value) : ¬Eval {} ∅ [lgtm| map list[ : int]1] v := by
 /-- Every element of `xs` with one added to it: the shortest declaration the form is in, and the one
 place a list is read element by element rather than whole. -/
 @[lgtm] private def bumpAll as "bump-all" (xs : list int) : list int :=
-  map list xs (fun (x : int) => x + 1)
+  map xs (fun (x : int) => x + 1)
 
 #guard (bumpAll.check {} []).isOk
 
@@ -261,7 +261,7 @@ example (vs : List Value) (v : Value) (h : FuncDecl.Apply bumpAll {} [] [.list v
 -- argument, so `ArgsHaveType` turns down a function expecting a `string` exactly as a call with the
 -- wrong argument type is turned down.
 example (v : Value) :
-    ¬ Eval {} ⟨[("xs", .list [.int 1])], []⟩ [lgtm| map list xs (fun (x : string) => x)] v := by
+    ¬ Eval {} ⟨[("xs", .list [.int 1])], []⟩ [lgtm| map xs (fun (x : string) => x)] v := by
   intro h
   cases h with
   | @EListMap _ _ _ _ _ _ vs' _ _ hl hf hlen hat _ =>
@@ -292,7 +292,7 @@ set of keys.  Inverting the rule leaves exactly that equality: the elements are 
 produced, and the length is what no call was made about. -/
 private theorem bumpAll.length_of_eval {vs vs' : List Value}
     (h : Eval {} ⟨[("xs", .list vs)], []⟩
-      [lgtm| map list xs (fun (x : int) => x + 1)] (.list vs')) :
+      [lgtm| map xs (fun (x : int) => x + 1)] (.list vs')) :
     vs.length = vs'.length := by
   cases h with
   | EListMap _ _ hl _ hlen _ _ =>
@@ -583,11 +583,11 @@ private def sortByLabel : FuncDecl :=
 #guard (sortByLabel.check {} []).isOk
 
 -- So declaring the key's type as the result type does not check, where the same body under
--- `map list` would need exactly that.
+-- `map` would need exactly that.
 #guard !(({ sortByLabel with resultType := [lgtm_ty| list string] } : FuncDecl).check {} []).isOk
 
 -- Only a list can be sorted, and only by a key with an ordering: a body sorting by a `bool` is
--- turned down where the same body under `map list` would be accepted.
+-- turned down where the same body under `map` would be accepted.
 example : ¬({ sortDesc with body := [lgtm| sortOn n f] } : FuncDecl).WellTyped {} [] := by
   simp [sortDesc, List.lookup]
 
@@ -754,7 +754,7 @@ example (vs : List Value) (v : Value) (h : FuncDecl.Apply sortDescBy {} [] [.lis
   h.hasType Globals.wellTyped_nil (by simp [sortDescBy, List.lookup])
 
 -- So declaring the comparison's own type as the result type does not check, where the same body
--- under `map list` would need exactly that.
+-- under `map` would need exactly that.
 #guard
   !(({ sortDescBy with resultType := [lgtm_ty| list bool] } : FuncDecl).check {} []).isOk
 
@@ -3518,13 +3518,13 @@ function at all, and a function the key and the value do not fit. -/
 -- An empty map maps to an empty map: there is no binding for the function to be applied to, so both
 -- premises over the bindings are vacuous and the function is never entered.
 example : Eval {} ∅
-    [lgtm| map hashmap hashmap(string, int) (fun (k : string) (v : int) => v + 1)] (.hashmap []) :=
+    [lgtm| map hashmap(string, int) (fun (k : string) (v : int) => v + 1)] (.hashmap []) :=
   .EHashmapMap (kvs' := []) _ _ (.EHashmapEmpty _ _) (.ELam _ _) rfl (by simp) (by simp)
 
 -- One binding is one call, and the key it was bound under is the key it comes back under: the
 -- function is handed both halves of the binding and only the value half is replaced.
 example : Eval {} ∅
-    [lgtm| map hashmap ({ hashmap(string, int) with ["a"] = 1 })
+    [lgtm| map ({ hashmap(string, int) with ["a"] = 1 })
       (fun (k : string) (v : int) => v + 1)]
     (.hashmap [(.string "a", .int 2)]) :=
   .EHashmapMap (kvs' := [(.string "a", .int 2)]) _ _
@@ -3542,7 +3542,7 @@ example : Eval {} ∅
 -- The function sees the key as well, so a mapping can produce a map whose values are its keys —
 -- which is the one way a map's value type changes while its keys stay what they were.
 example : Eval {} ∅
-    [lgtm| map hashmap ({ hashmap(string, int) with ["a"] = 1 })
+    [lgtm| map ({ hashmap(string, int) with ["a"] = 1 })
       (fun (k : string) (v : int) => k)]
     (.hashmap [(.string "a", .string "a")]) :=
   .EHashmapMap (kvs' := [(.string "a", .string "a")]) _ _
@@ -3559,15 +3559,18 @@ example : Eval {} ∅
 
 -- A second operand that is not a function leaves this stuck, which is one of the two things that
 -- can go wrong here and is exactly what typing rules out.
-example (v : Value) : ¬Eval {} ∅ [lgtm| map hashmap hashmap(string, int)1] v := by
+example (v : Value) : ¬Eval {} ∅ [lgtm| map hashmap(string, int)1] v := by
   intro h
   cases h with
   | EHashmapMap _ _ _ hf _ _ _ => cases hf
 
 /-- Every value of `m` with one added to it, the keys left as they were: the shortest declaration
-the form is in, and the one place a map is read by something other than a key. -/
+the form is in, and the one place a map is read by something other than a key.
+
+It is also where a mapping over a *name* is written: the parameter's declared type is what the
+keyword is read by, where a fragment has none to read and would take this for a list's mapping. -/
 @[lgtm] private def bump (m : hashmap string int) : hashmap string int :=
-  map hashmap m (fun (k : string) (v : int) => v + 1)
+  map m (fun (k : string) (v : int) => v + 1)
 
 #guard (bump.check {} []).isOk
 
@@ -3608,10 +3611,11 @@ example (kvs : KeyValues) (v : Value) (h : FuncDecl.Apply bump {} [] [.hashmap k
 
 -- A function the key and the value do not fit is the other thing that can go wrong: the arguments
 -- are the binding, so `ArgsHaveType` turns down a function expecting an `int` key exactly as a call
--- with the wrong argument types is turned down.
+-- with the wrong argument types is turned down.  The expression is written out rather than as a
+-- fragment, since a `map` over a name with no type to read is a list's mapping.
 example (v : Value) :
     ¬ Eval {} ⟨[("m", .hashmap [(.string "a", .int 1)])], []⟩
-      [lgtm| map hashmap m (fun (k : int) (v : int) => v)] v := by
+      (Expression.hashmapMap (.varRef "m") (.lam [("k", .int), ("v", .int)] (.varRef "v"))) v := by
   intro h
   cases h with
   | @EHashmapMap _ _ _ _ _ _ kvs' _ _ hm hf hkeys hat _ =>
@@ -3638,10 +3642,12 @@ keys of the map it was given.
 
 This is the fact a proof about a mapped map carries on with, the way `isEmpty.mem_of_eval` is for a
 converted one.  Inverting the rule leaves exactly that equality — the values are what the calls
-produced, and the keys are what no call was made about. -/
+produced, and the keys are what no call was made about.
+
+Stated over `bump.body` rather than a fragment, since that is where a mapping over a name is read as
+a hashmap's: the declaration's parameter is what gives `m` the type the keyword is read by. -/
 private theorem bump.keys_of_eval {kvs kvs' : KeyValues}
-    (h : Eval {} ⟨[("m", .hashmap kvs)], []⟩
-      [lgtm| map hashmap m (fun (k : string) (v : int) => v + 1)] (.hashmap kvs')) :
+    (h : Eval {} ⟨[("m", .hashmap kvs)], []⟩ bump.body (.hashmap kvs')) :
     kvs.map Prod.fst = kvs'.map Prod.fst := by
   cases h with
   | EHashmapMap _ _ hm _ hkeys _ _ =>

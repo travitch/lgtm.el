@@ -454,8 +454,8 @@ private def ctx : Context :=
 #guard (Expression.listMap (.varRef "xs") (.varRef "f")).infer types ctx == none
 
 -- Either operand being the wrong kind of thing is enough: the first has to be a list and the second
--- a function.  A hashmap under a list's mapping is turned down here rather than by the tag the
--- surface syntax writes.
+-- a function.  A hashmap under a list's mapping is turned down here, where the surface syntax would
+-- have deduced the hashmap's mapping from the same operand.
 #guard (Expression.listMap (.varRef "m") (.lam [("x", .int)] (.varRef "x"))).infer types ctx == none
 
 #guard (Expression.listMap (.varRef "n") (.lam [("x", .int)] (.varRef "x"))).infer types ctx == none
@@ -510,7 +510,7 @@ private def ctx : Context :=
         (.list .string)).isOk
 
 -- A flat mapping takes its element type from *inside* what the function returns, which is the one
--- place a result type is read a layer in rather than whole: the same function under `map list` gives
+-- place a result type is read a layer in rather than whole: the same function under `map` gives
 -- a list of lists where this gives the list those were run together into.
 #guard
   (Expression.listFlatMap (.varRef "xs") (.lam [("x", .int)] (.lnil .string))).infer types ctx ==
@@ -539,7 +539,7 @@ private def ctx : Context :=
       ctx ==
     some (.list (.list .string))
 
--- What the function returns has to be a list: that is the whole of what this asks over `map list`,
+-- What the function returns has to be a list: that is the whole of what this asks over `map`,
 -- and it is asked of the function's result type rather than of any element.
 #guard
   (Expression.listFlatMap (.varRef "xs") (.lam [("x", .int)] (.varRef "x"))).infer types ctx == none
@@ -3382,7 +3382,7 @@ private def message (r : Except String Unit) : String :=
   message
       ((Expression.listMap (.varRef "xs") (.lam [("x", .string)] (.varRef "x"))).check types ctx
         (.list .string)) ==
-    "`map list` over a list of int needs a function of one int parameter, \
+    "a list's mapping over a list of int needs a function of one int parameter, \
       but this one takes (string)"
 
 #guard

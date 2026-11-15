@@ -576,11 +576,11 @@ comes out of a nest of forms names the innermost expression that nothing could b
         if ps == [t] then .ok (.list r)
         else
           .error
-            s!"`map list` over a list of {t} needs a function of one {t} parameter, \
+            s!"a list's mapping over a list of {t} needs a function of one {t} parameter, \
           but this one takes ({Ty.renderGroup ps})"
-      | .ok ft => .error s!"`map list` needs a function, but its second operand has type {ft}"
+      | .ok ft => .error s!"a list's mapping needs a function, but its second operand has type {ft}"
       | .error m => .error m
-    | .ok t => .error s!"`map list` needs a list, but its first operand has type {t}"
+    | .ok t => .error s!"`map` needs a list or a hashmap, but its first operand has type {t}"
     | .error m => .error m
   | .listFlatMap l f =>
     match l.inferE td ctx with
@@ -699,12 +699,13 @@ comes out of a nest of forms names the innermost expression that nothing could b
       | .ok (.fn ps r) =>
         if ps != [kt, vt] then
           .error
-            s!"`map hashmap` over a {Ty.hashmap kt vt} needs a function taking \
+            s!"a hashmap's mapping over a {Ty.hashmap kt vt} needs a function taking \
             ({Ty.renderGroup [kt, vt]}), but this one takes ({Ty.renderGroup ps})"
         else if Ty.comparable td kt then .ok (.hashmap kt r) else .error (Ty.keyProblem kt)
-      | .ok ft => .error s!"`map hashmap` needs a function, but its second operand has type {ft}"
+      | .ok ft =>
+        .error s!"a hashmap's mapping needs a function, but its second operand has type {ft}"
       | .error m => .error m
-    | .ok t => .error s!"`map hashmap` needs a hashmap, but its first operand has type {t}"
+    | .ok t => .error s!"a hashmap's mapping needs a hashmap, but its first operand has type {t}"
     | .error m => .error m
   | .hashmapToList m =>
     match m.inferE td ctx with

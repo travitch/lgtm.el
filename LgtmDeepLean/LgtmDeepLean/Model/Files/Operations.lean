@@ -20,7 +20,7 @@ meta import LgtmDeepLean.Lang.Syntax
                         }
 
 @[lgtm] def ModifiedFileManager.resetCommentState (fileState : struct ModifiedFileManager) : struct ModifiedFileManager :=
-  let newState := map hashmap fileState.state (fun (_r : struct ModifiedFileRef) (s : struct ModifiedFileState) => ModifiedFileState.resetFileState(s));
+  let newState := map fileState.state (fun (_r : struct ModifiedFileRef) (s : struct ModifiedFileState) => ModifiedFileState.resetFileState(s));
   new ModifiedFileManager { modifiedFiles = fileState.modifiedFiles
                           , state = newState
                           }

@@ -21,7 +21,7 @@ public import LgtmDeepLean.Model.Location.Operations
   let lookupThreadForComment := fun (c : struct Comment) => match threads.commentTreeNodes[c.ref] with
       | none => (unreachable "Comments are required to have entries in CommentManager" : struct CommentThread)
       | some(thread) => thread;
-  let sortedThreads := map list sortedRoots lookupThreadForComment;
+  let sortedThreads := map sortedRoots lookupThreadForComment;
   tuple(commentThreadRoots.0, sortedThreads)
 
 @[lgtm] def CommentThreads.asAlist (threads : struct CommentThreads) (manager : struct CommentManager) : list (tuple(inductive ThreadLocation, list (struct CommentThread))) :=
@@ -32,12 +32,12 @@ public import LgtmDeepLean.Model.Location.Operations
   let lookupCommentForRef := fun (entry : tuple(inductive ThreadLocation, list (struct CommentRef))) =>
       let loc := entry.0;
       let threadsAtLoc := entry.1;
-      let rootCommentsAtLoc := map list threadsAtLoc refToComment;
+      let rootCommentsAtLoc := map threadsAtLoc refToComment;
       tuple(loc, rootCommentsAtLoc);
-  let locatedRootComments := map list (toList threads.locationRoots) lookupCommentForRef;
+  let locatedRootComments := map (toList threads.locationRoots) lookupCommentForRef;
   let sortThreadsAtLocation := fun (locatedThreads : tuple(inductive ThreadLocation, list (struct Comment))) =>
          (CommentThreads.asAlist.sortThreadLists(threads, manager, locatedThreads));
-  let threadsSortedAtLocations := map list locatedRootComments sortThreadsAtLocation;
+  let threadsSortedAtLocations := map locatedRootComments sortThreadsAtLocation;
   sortBy threadsSortedAtLocations (fun (lt1 : tuple(inductive ThreadLocation, list (struct CommentThread))) (lt2 : tuple(inductive ThreadLocation, list (struct CommentThread))) => ThreadLocation.compare(lt1.0, lt2.0))
 
 @[lgtm] def CommentThreads.toThreadsOrdered (threads : struct CommentThreads) (manager : struct CommentManager) : list (struct CommentThread) :=
@@ -45,7 +45,7 @@ public import LgtmDeepLean.Model.Location.Operations
 
 
 @[lgtm] def CommentThreads.rootComments (threads : struct CommentThreads) (manager : struct CommentManager) : list (struct Comment) :=
-  map list CommentThreads.toThreadsOrdered(threads, manager) (fun (tree : struct CommentThread) => match CommentManager.get(manager, tree.value) with
+  map CommentThreads.toThreadsOrdered(threads, manager) (fun (tree : struct CommentThread) => match CommentManager.get(manager, tree.value) with
     | none => (unreachable "Comments must be defined in the CommentManager" : struct Comment)
     | some(c) => c)
 
@@ -129,7 +129,7 @@ The MANAGER is required to get information about comments. -/
 @[lgtm] def CommentThreads.nextCommentInThread (threads : struct CommentThreads) (manager : struct CommentManager) (selection : struct SelectedComment) : struct SelectedComment :=
   let selectedThread := selection.thread;
   let linearizedComments := CommentThread.linearize(selectedThread, threads, manager);
-  let linearizedCommentRefs := map list linearizedComments (fun (c : struct Comment) => c.ref);
+  let linearizedCommentRefs := map linearizedComments (fun (c : struct Comment) => c.ref);
   let currentlySelectedRef := selection.comment;
   let matchesSelectedRef := fun (ref : struct CommentRef) => ref == currentlySelectedRef;
   let currentlySelectedIndex := match findIndex linearizedCommentRefs matchesSelectedRef with
@@ -148,7 +148,7 @@ The MANAGER is required to get information about comments. -/
 @[lgtm] def CommentThreads.previousCommentInThread (threads : struct CommentThreads) (manager : struct CommentManager) (selection : struct SelectedComment) : struct SelectedComment :=
   let selectedThread := selection.thread;
   let linearizedComments := CommentThread.linearize(selectedThread, threads, manager);
-  let linearizedCommentRefs := map list linearizedComments (fun (c : struct Comment) => c.ref);
+  let linearizedCommentRefs := map linearizedComments (fun (c : struct Comment) => c.ref);
   let currentlySelectedRef := selection.comment;
   let matchesSelectedRef := fun (ref : struct CommentRef) => ref == currentlySelectedRef;
   let currentlySelectedIndex := match findIndex linearizedCommentRefs matchesSelectedRef with

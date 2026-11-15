@@ -415,7 +415,7 @@ is the minimum plus one.
 A list literal carries its element type, because `lnil` does: `[1, 2 : int]` is
 `.lcons (.intLit 1) (.lcons (.intLit 2) (.lnil .int))`, and the empty list is `[: int]`.
 
-The seven prefix list operations are `reverse xs`, `length xs`, `map list xs f`, `flatMap xs f`,
+The seven prefix list operations are `reverse xs`, `length xs`, `map xs f`, `flatMap xs f`,
 `findIndex xs f`, `sortOn xs f` and
 `sortBy xs f`, all prefix
 keywords binding as tightly as application.  They differ in what comes back out: a reversal and the
@@ -425,8 +425,8 @@ were, and a search is an `option int` — the position of the first element its 
 and nothing where it accepts none.  A sort takes a function as a mapping does and still
 produces a list of the type it was given, because what the function returns is how the elements are
 ordered rather than what they become: a key apiece under `sortOn`, and the comparison itself under
-`sortBy`.  `map` is written with a tag because it is also a
-hashmap's operation — see the note on the two forms below.
+`sortBy`.  `map` is also a hashmap's operation, and which of the two a term is is decided by the
+type inferred for what is mapped over — see the note on the two forms below.
 
 The eighth is `xs[i]`, an index, which is not a prefix keyword but the brackets a hashmap lookup is
 written in: it hands back an `option` of the element type, `none` where the list has no element at
@@ -439,12 +439,12 @@ literal does — it holds nothing to read one off — while `some` needs none, s
 it.
 
 The five hashmap forms are `hashmap(string, int)`, `m[k]` — the brackets again, read as a lookup for
-everything that is not a list — `{ m with [k] = v }`, `map hashmap m f`,
-and `toList m`.  The third is the shape a struct update is written in, and the brackets are what tell
-the two apart: a key is an expression where a field is a name.  The last two are written like
-`reverse`, as prefix keywords, because they are the same kind of thing: a map to read and a value of
-a different type out — `map` with the function to apply as a second operand, and with the tag that
-says it is a hashmap being mapped over rather than a list.
+everything that is not a list — `{ m with [k] = v }`, `map m f` — the keyword again, read as a
+hashmap's mapping for a hashmap and a list's for everything else — and `toList m`.  The third is the
+shape a struct update is written in, and the brackets are what tell the two apart: a key is an
+expression where a field is a name.  The last two are written like `reverse`, as prefix keywords,
+because they are the same kind of thing: a map to read and a value of a different type out, with
+`map` taking the function to apply as a second operand.
 
 The two tuple forms are `tuple(1, "a")` and `t.0`.  The first is written the way the *type*
 `tuple(int, string)` is, with its elements in one comma-separated group; the second is `p.x` with an
@@ -601,8 +601,8 @@ reported for it here, since an operand with no type is itself the innermost expr
 check and is already reported as such.  What it costs is that an index can only be written where the
 operand's type is readable — inside a declaration that is everywhere, while a bare `[lgtm| ...]`
 fragment has no context at all, so only an operand carrying its own type is one, and `[lgtm| xs[0]]`
-for a free `xs` is a lookup.  See the note below on why this form is deduced where `map`'s tag is
-written.
+for a free `xs` is a lookup.  `map` below is the other form read this way, and the note on it says
+what the two have in common.
 
 Written with no space before the `[`, which is what tells it from a list literal: `m [1 : int]` is
 two expressions and no parse, while `m[1]` is a lookup.  It binds as tightly as a field read and
@@ -612,57 +612,52 @@ operand like any other.  Chaining is where the two part company: `m[k1][k2]` is 
 list, so the second bracket reads as a lookup and does not check. -/
 syntax :max lgtmExpr:max noWs "[" lgtmExpr "]" : lgtmExpr
 
-/-! `map` is one keyword over two forms — a list's mapping and a hashmap's — so it is written with a
-tag saying which: `map list xs f` and `map hashmap m f`.
+/-! `map` is one keyword over two forms — a list's mapping and a hashmap's — told apart the way the
+brackets above are: by the type inferred for what is mapped over.  A `hashmap` is a hashmap's
+mapping and everything else a list's.
 
-The tag is written rather than deduced, and stays written now that the elaborator has types to hand.
-What an `Expression` a term denotes depends on is a thing to be sparing with: a type is available
-here only where everything the operand is built from was itself resolved — not through a splice, not
-under a `let` whose bound expression is ill typed (see `unknownTy`) — so a `map` that chose its
-constructor by inference would be a different expression depending on whether the term around it had
-a mistake in it, which is a worse thing than a tag.  What the two forms do also differ in is the
+A tag saying which would have nowhere to go that reads as the operation does, which is the first of
+the bracket form's two reasons over again: `map` is the word every language writing either mapping
+writes it as, so tagging means a word neither form wants between the keyword and its operand.  And
+the second reason holds here too — a declaration resolves its operands, so the reading inside one is
+the reading the types give, and only a bare fragment, which is not type checked at all, can read a
+term the declaration around it would have read the other way.
+
+What an `Expression` a term denotes depends on is still a thing to be sparing with, which is why the
+deduction is one test of the one type a hashmap's mapping can be written over at all.  A type is
+available here only where everything the operand is built from was itself resolved — not through a
+splice, not under a `let` whose bound expression is ill typed (see `unknownTy`) — and everything no
+type is available for therefore reads as a list's mapping, the commoner of the two and the one a
+`map` over a free name in a fragment is overwhelmingly meant as.  The two forms also differ in the
 arity of the function, one parameter against two, but that is readable only where the function is
-written out as a `fun` and says nothing about `map xs f` for a named `f`.
+written out as a `fun` and says nothing about `map m f` for a named `f`.
 
-It is written once per `map` rather than being a form of its own because the two mappings are the
-same operation over the two things the IR has to map over.
+It is one keyword rather than a form apiece because the two mappings are the same operation over the
+two things the IR has to map over. -/
 
-The bracket form above is the one place the trade came out the other way, for two reasons.  A tag
-there would have nowhere to go: brackets are the notation a lookup and an index are *both* already
-written in — it is what every language writing either writes it as — so tagging them means inventing
-a word neither form wants, where `map`'s tag costs the one word already following the keyword.  And
-what deducing costs is paid where nothing is checked: a declaration resolves its operands, so the
-reading inside one is the reading the types give, and it is only a bare fragment that can read a term
-the declaration around it would have read the other way — and a fragment is not type checked at all,
-so the two never disagree anywhere a mistake would have been reported. -/
+/-- `map xs f` is `xs` with `f` applied to each of its elements, and `map m f` is `m` with `f`
+applied to each of its bindings — which of the two read off the type of the first operand: a
+`hashmap` is a hashmap's mapping, and a list, anything else, or an operand with no type at all a
+list's.
 
-/-- `map list xs f` is `xs` with `f` applied to each of its elements: a list of the same length,
-each element replaced by what `f` returned for it.
+Over a list, what comes back is a list of the same length, each element replaced by what `f`
+returned for it.  The function takes one parameter, so it is of type `(int) -> string` over a
+`list int`, and the result is a `list string` — the element type is the one thing a mapping over a
+list does *not* carry through.
 
-The function takes one parameter, so it is of type `(int) -> string` over a `list int`, and what
-comes back is a `list string` — the element type is the one thing a mapping over a list does *not*
-carry through, which is the type checker's business rather than the parser's.
+Over a hashmap, what comes back is a map from the same keys, each bound to what `f` returned for
+that key and the value it was bound to.  The function takes the key as well as the value, so it is
+of type `(string, int) -> int` over a `hashmap string int`: two parameters where a list's mapping
+takes one.  Both arities, and what either mapping produces, are the type checker's business rather
+than the parser's.
 
-The two operands bind as tightly as `reverse`'s one, so `map list xs f` and `map list p.items g(1)`
-need no parentheses while a function written out does — a `fun` is the loosest form there is:
-`map list xs (fun (x : int) => x + 1)`. -/
-syntax :max &"map" &"list" lgtmExpr:max lgtmExpr:max : lgtmExpr
-
-/-- `map hashmap m f` is `m` with `f` applied to each of its bindings: a map from the same keys, each
-bound to what `f` returned for that key and the value it was bound to.
-
-The function takes the key as well as the value, so it is of type `(string, int) -> int` over a
-`hashmap string int`, which is the type checker's business rather than the parser's.  That is also
-what the tag is standing in for: two parameters where a list's mapping takes one.
-
-The two operands bind as tightly as `toList`'s one, so `map hashmap m f` and `map hashmap p.m g(1)`
-need no parentheses while a function written out does: `map hashmap m (fun (k : string) (v : int) =>
-v + 1)`.
+The two operands bind as tightly as `reverse`'s one, so `map xs f`, `map p.items g(1)` and
+`map p.m g(1)` need no parentheses while a function written out does — a `fun` is the loosest form
+there is: `map xs (fun (x : int) => x + 1)` and `map m (fun (k : string) (v : int) => v + 1)`.
 
 `map` is a keyword, so it is not available as a variable name inside a DSL term; `var "map"` is the
-escape hatch, the same one `reverse` and `toList` leave.  `list` is one too, now that it tags a
-mapping, and `var "list"` is the same escape hatch for it. -/
-syntax :max &"map" &"hashmap" lgtmExpr:max lgtmExpr:max : lgtmExpr
+escape hatch, the same one `reverse` and `toList` leave. -/
+syntax :max &"map" lgtmExpr:max lgtmExpr:max : lgtmExpr
 
 /-- `flatMap xs f` is `f` applied to each element of `xs` and the lists that came back run together:
 one list per element, concatenated in the order the elements were in.
@@ -670,18 +665,18 @@ one list per element, concatenated in the order the elements were in.
 The function takes one parameter as a list's mapping's does, but it returns a *list*, so it is of
 type `(int) -> list string` over a `list int` — and what comes back is a `list string` rather than a
 list of lists.  That it must return a list at all is the type checker's business rather than the
-parser's, and it is the whole of what separates this from `map list`: the same function under the
-other keyword would give a `list (list string)`.
+parser's, and it is the whole of what separates this from `map`: the same function under the other
+keyword would give a `list (list string)`.
 
 So this is the one list form whose result is not as long as its operand.  A call returning `[: int]`
 drops the element it was given and one returning several puts several in its place, which is why
-there is a form for it rather than a `map list` with something after it.
+there is a form for it rather than a `map` with something after it.
 
-It is a keyword of its own rather than a third `map` tag, since the tags are what tell apart the two
-things the IR maps *over* — a list and a hashmap — where this is the other thing to do with the
-results of mapping over a list.
+It is a keyword of its own rather than a third reading of `map`, since what `map` is read by is what
+it maps *over* — a list or a hashmap — where this is the other thing to do with the results of
+mapping over a list.
 
-The two operands bind as tightly as `map list`'s, so `flatMap xs f` and `flatMap p.items g(1)` need
+The two operands bind as tightly as `map`'s, so `flatMap xs f` and `flatMap p.items g(1)` need
 no parentheses while a function written out does: `flatMap xs (fun (x : int) => [x, x : int])`.
 
 `flatMap` is a keyword, so it is not available as a variable name inside a DSL term; `var "flatMap"`
@@ -722,7 +717,7 @@ handed back unchanged.
 Elements sharing a key keep the order they were in, which is what `Eval` says of the form rather
 than anything here.
 
-The two operands bind as tightly as `map list`'s, so `sortOn xs f` and `sortOn p.items g(1)` need no
+The two operands bind as tightly as `map`'s, so `sortOn xs f` and `sortOn p.items g(1)` need no
 parentheses while a projection written out does: `sortOn xs (fun (x : int) => 0 - x)`.
 
 `sortOn` is a keyword, so it is not available as a variable name inside a DSL term; `var "sortOn"`
@@ -1105,7 +1100,8 @@ meta partial def elabLgtmExpr (ctx : Context) (stx : TSyntax `lgtmExpr) :
   return e
 
 /-- The type `stx`'s expression has, or `unknownTy` when it has none.  Used where a binder's type is
-read off what it is bound to, and by the brackets of `m[k]` to tell an index from a lookup. -/
+read off what it is bound to, by the brackets of `m[k]` to tell an index from a lookup, and by `map`
+to tell a list's mapping from a hashmap's. -/
 meta partial def inferredTy (ctx : Context) (e : Expression) : LgtmElabM Ty := do
   match e.inferE (← read).allTypeDecls ctx with
   | .ok t => return t
@@ -1227,7 +1223,15 @@ meta partial def elabLgtmExprCore (ctx : Context) (stx : TSyntax `lgtmExpr) :
       match ← inferredTy ctx m with
       | .list _ => return .listIndex m k
       | _ => return .hashmapGet m k
-  | `(lgtmExpr| map list $l $f) => return .listMap (← elabLgtmExpr ctx l) (← elabLgtmExpr ctx f)
+  | `(lgtmExpr| map $l $f) => do
+      -- One form over two readings, told apart by the type inferred for what is mapped over: a
+      -- hashmap is a hashmap's mapping and anything else — an operand with no type included — a
+      -- list's, which is the commoner of the two.
+      let l ← elabLgtmExpr ctx l
+      let f ← elabLgtmExpr ctx f
+      match ← inferredTy ctx l with
+      | .hashmap _ _ => return .hashmapMap l f
+      | _ => return .listMap l f
   | `(lgtmExpr| flatMap $l $f) =>
       return .listFlatMap (← elabLgtmExpr ctx l) (← elabLgtmExpr ctx f)
   | `(lgtmExpr| findIndex $l $f) =>
@@ -1236,8 +1240,6 @@ meta partial def elabLgtmExprCore (ctx : Context) (stx : TSyntax `lgtmExpr) :
       return .listSortOn (← elabLgtmExpr ctx l) (← elabLgtmExpr ctx f)
   | `(lgtmExpr| sortBy $l $f) =>
       return .listSortBy (← elabLgtmExpr ctx l) (← elabLgtmExpr ctx f)
-  | `(lgtmExpr| map hashmap $m $f) =>
-      return .hashmapMap (← elabLgtmExpr ctx m) (← elabLgtmExpr ctx f)
   | `(lgtmExpr| toList $m) => return .hashmapToList (← elabLgtmExpr ctx m)
   | `(lgtmExpr| { $m with $bs:lgtmKeyBinding,* }) => do
       let mut acc ← elabLgtmExpr ctx m
@@ -1450,12 +1452,12 @@ type, and a provisional entry for the declaration itself, so that it may call it
 exactly what `FuncDecl.check` puts in front of it.
 
 One pass with two callers: the command, which reports and checks, and the `[lgtm_body| ...]` term it
-generates as the value of the Lean declaration.  They have to be the same pass, and the brackets of
-`m[k]` are why.  That is the one form whose `Expression` depends on a type (see the note on `map`'s
-tag), and the type it depends on is the one this context gives: a body elaborated as a fragment for
-the value would read `xs[i]` over a `list int` parameter as the lookup a fragment has no choice but
-to read it as, and the Lean declaration would then hold something other than what the command
-checked and reported on. -/
+generates as the value of the Lean declaration.  They have to be the same pass, and the two forms
+whose `Expression` depends on a type — the brackets of `m[k]` and `map` — are why.  The type either
+depends on is the one this context gives: a body elaborated as a fragment for the value would read
+`xs[i]` over a `list int` parameter as the lookup a fragment has no choice but to read it as, and
+`map m f` over a `hashmap string int` parameter as a list's mapping, and the Lean declaration would
+then hold something other than what the command checked and reported on. -/
 meta def elabFuncDecl (docstring : String) (irName : String) (leanName : Name) (xs : Array Ident)
     (ts : Array (TSyntax `lgtmTy)) (rt : TSyntax `lgtmTy) (body : TSyntax `lgtmExpr) :
     LgtmElabM (FuncDecl × TypeDecls) := do

@@ -681,34 +681,40 @@ example : bang.name = "bang" :=
 #guard (revCons.check {} []).isOk
 
 /-- Every element of `xs` with one added to it.  The function takes one parameter, at the list's
-element type, which is what the `list` tag on the `map` is standing in for. -/
+element type, which is what tells a mapping over a list from one over a hashmap where the function
+is written out. -/
 @[lgtm] def bumpAll as "bump-all" (xs : list int) : list int :=
-  map list xs (fun (x : int) => x + 1)
+  map xs (fun (x : int) => x + 1)
 
 #guard (bumpAll.check {} []).isOk
+
+example :
+    bumpAll.body = Expression.listMap (.varRef "xs") (.lam [("x", .int)]
+      (.plus (.varRef "x") (.intLit 1))) :=
+  rfl
 
 -- The element type is the one thing a mapping over a list does not carry through, so what the
 -- function returns is what the result is a list of and the declaration has to say so.
 #guard (({ bumpAll with
-  body := [lgtm| map list xs (fun (x : int) => "a")]
+  body := [lgtm| map xs (fun (x : int) => "a")]
   resultType := [lgtm_ty| list string] } : FuncDecl).check {} []).isOk
 
-#guard !(({ bumpAll with body := [lgtm| map list xs (fun (x : int) => "a")] } : FuncDecl).check {} []).isOk
+#guard !(({ bumpAll with body := [lgtm| map xs (fun (x : int) => "a")] } : FuncDecl).check {} []).isOk
 
--- The function is held to the element type, and to taking one parameter: a hashmap's two-parameter
--- function is what the other tag is for, and no `list` mapping accepts one.
-#guard !(({ bumpAll with body := [lgtm| map list xs (fun (x : string) => 1)] } : FuncDecl).check {} []).isOk
+-- The function is held to the element type, and to taking one parameter: a two-parameter function is
+-- a hashmap's mapping's, and no mapping over a list accepts one.
+#guard !(({ bumpAll with body := [lgtm| map xs (fun (x : string) => 1)] } : FuncDecl).check {} []).isOk
 
-#guard !(({ bumpAll with body := [lgtm| map list xs (fun (x : int) (y : int) => 1)] }
+#guard !(({ bumpAll with body := [lgtm| map xs (fun (x : int) (y : int) => 1)] }
   : FuncDecl).check {} []).isOk
 
--- And the tag decides nothing about the types: a `list` mapping over a hashmap is ill typed, as a
--- `hashmap` mapping over a list is.
-#guard !(({ bumpAll with body := [lgtm| map list hashmap(string, int) (fun (x : int) => 1)] }
-  : FuncDecl).check {} []).isOk
-
-#guard !(({ bumpAll with body := [lgtm| map hashmap xs (fun (x : int) (y : int) => 1)] }
-  : FuncDecl).check {} []).isOk
+-- An operand that is neither a list nor a hashmap is read as a list's mapping, since a hashmap is
+-- the one type the other reading is deduced from, and the message names both the forms could have
+-- been written over.
+/-- error: `map` needs a list or a hashmap, but its first operand has type int -/
+#guard_msgs (error) in
+@[lgtm] def chkMapInt(n : int) : list int :=
+  map n (fun (x : int) => x)
 
 /-- Whether `xs` is empty or is `ys`: the shortest declaration the two boolean operators are in,
 and the one place their being looser than `==` is what keeps a comparison on either side
@@ -1815,131 +1821,126 @@ example :
 example : [lgtm| var"toList"] = Expression.varRef "toList" :=
   rfl
 
--- A mapping is a prefix keyword with a tag and two operands, both of them binding as tightly as
--- `toList`'s one, so a name, a field read and a call are each read whole on either side.
-example : [lgtm| map hashmap m f] = Expression.hashmapMap (.varRef "m") (.varRef "f") :=
-  rfl
-
+-- A mapping over a hashmap is a prefix keyword with two operands, both of them binding as tightly
+-- as `toList`'s one, and it is the type of the first that says it is a hashmap's rather than a
+-- list's — so a fragment writes one over an operand carrying its own type, the way an index is
+-- written in one.
 example :
-    [lgtm| map hashmap p.m f] =
-      Expression.hashmapMap (.structGet (.varRef "p") "m") (.varRef "f") :=
-  rfl
-
-example :
-    [lgtm| map hashmap m g(1)] =
-      Expression.hashmapMap (.varRef "m") (.app (.varRef "g") [.intLit 1]) :=
-  rfl
-
-example :
-    [lgtm| map hashmap hashmap(string, int)f] =
+    [lgtm| map hashmap(string, int)f] =
       Expression.hashmapMap (.hashmapEmpty .string .int) (.varRef "f") :=
+  rfl
+
+example :
+    [lgtm| map ({hashmap(string, int) with ["a"] = 1})g(1)] =
+      Expression.hashmapMap (.hashmapPut (.hashmapEmpty .string .int) (.stringLit "a") (.intLit 1))
+        (.app (.varRef "g") [.intLit 1]) :=
   rfl
 
 -- A function written out is the loosest form there is, so it takes the parentheses an operand at
 -- that level needs — and the key comes before the value, which is the order the parameters go in.
-example : [lgtm| map hashmap m (fun (k : string) (v : int) => v + 1)]
-    = Expression.hashmapMap (.varRef "m")
+example : [lgtm| map hashmap(string, int) (fun (k : string) (v : int) => v + 1)]
+    = Expression.hashmapMap (.hashmapEmpty .string .int)
         (.lam [("k", .string), ("v", .int)] (.plus (.varRef "v") (.intLit 1))) := rfl
 
-example : [lgtm| map hashmap m (fun (k : string) (v : int) => k)]
-    = Expression.hashmapMap (.varRef "m") (.lam [("k", .string), ("v", .int)] (.varRef "k")) := rfl
+example : [lgtm| map hashmap(string, int) (fun (k : string) (v : int) => k)]
+    = Expression.hashmapMap (.hashmapEmpty .string .int)
+        (.lam [("k", .string), ("v", .int)] (.varRef "k")) := rfl
 
 -- What it produces is a map, so every form that reads one reads this: a lookup, an update, another
--- mapping, and a conversion.
+-- mapping, and a conversion.  The lookup and the second mapping are read by the type of what they
+-- are given, which is where the function has to be written out for the mapping to have one.
 example :
-    [lgtm| (map hashmap m f)[k]] =
-      Expression.hashmapGet (.hashmapMap (.varRef "m") (.varRef "f")) (.varRef "k") :=
+    [lgtm| (map hashmap(string, int)f)[k]] =
+      Expression.hashmapGet (.hashmapMap (.hashmapEmpty .string .int) (.varRef "f")) (.varRef "k") :=
   rfl
 
 example :
-    [lgtm| {map hashmap m f with [k] = 1}] =
-      Expression.hashmapPut (.hashmapMap (.varRef "m") (.varRef "f")) (.varRef "k") (.intLit 1) :=
+    [lgtm| {map hashmap(string, int)f with [k] = 1}] =
+      Expression.hashmapPut (.hashmapMap (.hashmapEmpty .string .int) (.varRef "f")) (.varRef "k")
+        (.intLit 1) :=
   rfl
 
 example :
-    [lgtm| map hashmap(map hashmap m f)g] =
-      Expression.hashmapMap (.hashmapMap (.varRef "m") (.varRef "f")) (.varRef "g") :=
+    [lgtm| map (map hashmap(string, int) (fun (k : string) (v : int) => v))g] =
+      Expression.hashmapMap
+        (.hashmapMap (.hashmapEmpty .string .int) (.lam [("k", .string), ("v", .int)] (.varRef "v")))
+        (.varRef "g") :=
   rfl
 
 example :
-    [lgtm| toList(map hashmap m f)] =
-      Expression.hashmapToList (.hashmapMap (.varRef "m") (.varRef "f")) :=
+    [lgtm| toList(map hashmap(string, int)f)] =
+      Expression.hashmapToList (.hashmapMap (.hashmapEmpty .string .int) (.varRef "f")) :=
   rfl
 
--- The `list` tag is the same keyword over the other thing there is to map over, and it reads its two
--- operands the same way.
-example : [lgtm| map list xs f] = Expression.listMap (.varRef "xs") (.varRef "f") :=
+-- The same keyword over the other thing there is to map over reads its two operands the same way,
+-- and is what everything a hashmap type is not deduced for reads as — a name, a field read and a
+-- call among them, since a fragment gives none of them a type.
+example : [lgtm| map xs f] = Expression.listMap (.varRef "xs") (.varRef "f") :=
   rfl
 
 example :
-    [lgtm| map list p.items f] =
+    [lgtm| map p.items f] =
       Expression.listMap (.structGet (.varRef "p") "items") (.varRef "f") :=
   rfl
 
 example :
-    [lgtm| map list g(1)f] = Expression.listMap (.app (.varRef "g") [.intLit 1]) (.varRef "f") :=
+    [lgtm| map g(1)f] = Expression.listMap (.app (.varRef "g") [.intLit 1]) (.varRef "f") :=
   rfl
 
 example :
-    [lgtm| map list[1, 2 : int]f] =
+    [lgtm| map[1, 2 : int]f] =
       Expression.listMap (.lcons (.intLit 1) (.lcons (.intLit 2) (.lnil .int))) (.varRef "f") :=
   rfl
 
-example : [lgtm| map list[ : int]f] = Expression.listMap (.lnil .int) (.varRef "f") :=
+example : [lgtm| map[ : int]f] = Expression.listMap (.lnil .int) (.varRef "f") :=
   rfl
 
--- Its function takes one parameter where a hashmap's takes two, which is what the tag is standing in
--- for: an element is one value where a binding is a key beside its value.
-example : [lgtm| map list xs (fun (x : int) => x + 1)]
+-- Its function takes one parameter where a hashmap's takes two, which is the one thing written out
+-- that says which mapping was meant: an element is one value where a binding is a key beside its
+-- value.
+example : [lgtm| map xs (fun (x : int) => x + 1)]
     = Expression.listMap (.varRef "xs") (.lam [("x", .int)] (.plus (.varRef "x") (.intLit 1)))
     := rfl
 
 -- What it produces is a list, so every form that reads one reads this: a reversal, a length, a cons,
 -- and another mapping.
 example :
-    [lgtm| reverse(map list xs f)] =
+    [lgtm| reverse(map xs f)] =
       Expression.listReverse (.listMap (.varRef "xs") (.varRef "f")) :=
   rfl
 
 example :
-    [lgtm| length(map list xs f)] = Expression.listLength (.listMap (.varRef "xs") (.varRef "f")) :=
+    [lgtm| length(map xs f)] = Expression.listLength (.listMap (.varRef "xs") (.varRef "f")) :=
   rfl
 
 example :
-    [lgtm| x :: map list xs f] =
+    [lgtm| x :: map xs f] =
       Expression.lcons (.varRef "x") (.listMap (.varRef "xs") (.varRef "f")) :=
   rfl
 
 example :
-    [lgtm| map list(map list xs f)g] =
+    [lgtm| map(map xs f)g] =
       Expression.listMap (.listMap (.varRef "xs") (.varRef "f")) (.varRef "g") :=
   rfl
 
--- The two tags are what tell the forms apart, and nothing else about a `map` does: the same operands
--- under the other tag are the other expression.
-example : [lgtm| map list m f] = Expression.listMap (.varRef "m") (.varRef "f") :=
-  rfl
-
-example : [lgtm| map hashmap xs f] = Expression.hashmapMap (.varRef "xs") (.varRef "f") :=
-  rfl
-
--- A conversion produces a list of tuples, which is a list like any other, so the two forms compose
--- the way the IR's types say they do rather than the way the keyword might suggest.
+-- A conversion produces a list of tuples, which is a list like any other, so a mapping over one is
+-- a list's whatever the map it came from was.
 example :
-    [lgtm| map list(toList m)f] = Expression.listMap (.hashmapToList (.varRef "m")) (.varRef "f") :=
+    [lgtm| map(toList hashmap(string, int))f] =
+      Expression.listMap (.hashmapToList (.hashmapEmpty .string .int)) (.varRef "f") :=
   rfl
 
 -- `map` is a keyword, so it is no variable name inside a DSL term; outside one it is an ordinary
--- Lean identifier, which declaring it with `&` is what preserves.  `list` is one too, now that it
--- tags a mapping, and takes the same escape hatch.
+-- Lean identifier, which declaring it with `&` is what preserves.  `list` is one as the keyword of a
+-- list type, and takes the same escape hatch.
 example : [lgtm| var"map"] = Expression.varRef "map" :=
   rfl
 
 example : [lgtm| var"list"] = Expression.varRef "list" :=
   rfl
 
--- `flatMap` reads its two operands the way `map list` reads its two, and takes no tag: a list is the
--- one thing there is to flat map over, where there are two to map over.
+-- `flatMap` reads its two operands the way `map` reads its two, and is read by nothing: a list is
+-- the one thing there is to flat map over, where there are two to map over.
 example : [lgtm| flatMap xs f] = Expression.listFlatMap (.varRef "xs") (.varRef "f") :=
   rfl
 
@@ -1989,12 +1990,12 @@ example :
   rfl
 
 example :
-    [lgtm| map list(flatMap xs f)g] =
+    [lgtm| map(flatMap xs f)g] =
       Expression.listMap (.listFlatMap (.varRef "xs") (.varRef "f")) (.varRef "g") :=
   rfl
 
 example :
-    [lgtm| flatMap(map list xs g)f] =
+    [lgtm| flatMap(map xs g)f] =
       Expression.listFlatMap (.listMap (.varRef "xs") (.varRef "g")) (.varRef "f") :=
   rfl
 
@@ -2013,8 +2014,8 @@ example :
 example : [lgtm| var"flatMap"] = Expression.varRef "flatMap" :=
   rfl
 
--- `findIndex` reads its two operands the way `flatMap` reads its two, and takes no tag either: a
--- list is the one thing there is to search.
+-- `findIndex` reads its two operands the way `flatMap` reads its two, and is read by nothing
+-- either: a list is the one thing there is to search.
 example : [lgtm| findIndex xs f] = Expression.listFindIndex (.varRef "xs") (.varRef "f") :=
   rfl
 
@@ -2074,7 +2075,7 @@ example :
 example : [lgtm| var"findIndex"] = Expression.varRef "findIndex" :=
   rfl
 
--- `sortOn` reads its two operands the way `map list` reads its two, and takes no tag: there is one
+-- `sortOn` reads its two operands the way `map` reads its two, and is read by nothing: there is one
 -- thing to sort, where there are two to map over.
 example : [lgtm| sortOn xs f] = Expression.listSortOn (.varRef "xs") (.varRef "f") :=
   rfl
@@ -2128,12 +2129,12 @@ example :
   rfl
 
 example :
-    [lgtm| map list(sortOn xs f)g] =
+    [lgtm| map(sortOn xs f)g] =
       Expression.listMap (.listSortOn (.varRef "xs") (.varRef "f")) (.varRef "g") :=
   rfl
 
 example :
-    [lgtm| sortOn(map list xs g)f] =
+    [lgtm| sortOn(map xs g)f] =
       Expression.listSortOn (.listMap (.varRef "xs") (.varRef "g")) (.varRef "f") :=
   rfl
 
@@ -2205,7 +2206,7 @@ example :
   rfl
 
 example :
-    [lgtm| map list(sortBy xs f)g] =
+    [lgtm| map(sortBy xs f)g] =
       Expression.listMap (.listSortBy (.varRef "xs") (.varRef "f")) (.varRef "g") :=
   rfl
 
@@ -2262,23 +2263,56 @@ which is what an option result is for. -/
         {} []).isOk
 
 /-- Every value of `m` with one added to it, the keys left as they were.  The function takes the key
-as well as the value, so its parameters are the map's two types in that order. -/
+as well as the value, so its parameters are the map's two types in that order.  This is the shape
+real code writes a hashmap's mapping in: the type declared for the parameter is what the keyword is
+read by, where a fragment needs an operand carrying its own type. -/
 @[lgtm] def bump (m : hashmap string int) : hashmap string int :=
-  map hashmap m (fun (k : string) (v : int) => v + 1)
+  map m (fun (k : string) (v : int) => v + 1)
 
 #guard (bump.check {} []).isOk
 
-#guard !(({ bump with body := [lgtm| map hashmap m (fun (v : int) (k : string) => v + 1)] }
-  : FuncDecl).check {} []).isOk
+example :
+    bump.body =
+      Expression.hashmapMap (.varRef "m")
+        (.lam [("k", .string), ("v", .int)] (.plus (.varRef "v") (.intLit 1))) :=
+  rfl
 
 #guard !(({ bump with resultType := [lgtm_ty| hashmap string string] } : FuncDecl).check {} []).isOk
+
+-- The parameters go in the map's two types' order, and the mapping being read as a hashmap's is
+-- what holds them to it: the swapped pair is reported against the types the map has.
+/-- error: a hashmap's mapping over a hashmap string int needs a function taking (string, int), but this one takes (int, string) -/
+#guard_msgs (error) in
+@[lgtm] def chkBumpSwapped(m : hashmap string int) : hashmap string int :=
+  map m (fun (v : int) (k : string) => v + 1)
 
 -- A mapping is what makes the value type the one thing about a map that can change, since the keys
 -- it hands back are the ones it was given: a map to `string` comes out of a map to `int` and the
 -- declaration says so.
-#guard (({ bump with
-  body := [lgtm| map hashmap m (fun (k : string) (v : int) => k)]
-  resultType := [lgtm_ty| hashmap string string] } : FuncDecl).check {} []).isOk
+@[lgtm] def keysOf as"keys-of"(m : hashmap string int) : hashmap string string :=
+  map m (fun (k : string) (v : int) => k)
+
+#guard (keysOf.check {} []).isOk
+
+example :
+    keysOf.body =
+      Expression.hashmapMap (.varRef "m") (.lam [("k", .string), ("v", .int)] (.varRef "k")) :=
+  rfl
+
+/-- A mapping over a `let`, which is the other place a declaration's operands get a type: the type
+the name is bound at is what the keyword is read by, exactly as a parameter's is. -/
+@[lgtm] def bumpNew as"bump-new"(k : string) : hashmap string int :=
+  let m := { hashmap(string, int) with [k] = 1 };
+  map m (fun (k : string) (v : int) => v + 1)
+
+#guard (bumpNew.check {} []).isOk
+
+example :
+    bumpNew.body =
+      Expression.let_ "m" (.hashmapPut (.hashmapEmpty .string .int) (.varRef "k") (.intLit 1))
+        (.hashmapMap (.varRef "m")
+          (.lam [("k", .string), ("v", .int)] (.plus (.varRef "v") (.intLit 1)))) :=
+  rfl
 
 -- The key type has to be one a comparison can reach the bottom of, which is the one condition every
 -- one of the forms shares and the one way an annotation alone makes a map ill typed.
