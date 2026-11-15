@@ -103,6 +103,63 @@ lgtm def CommentThreads.previousThread (threads : struct CommentThreads) (manage
         | last :: _rest => some(new SelectedComment { version = version, thread = last, comment = last.value })
   }
 
+lgtm forward def CommentThread.linearizeRecWithFuel (threads : struct CommentThreads) (manager : struct CommentManager) (fuel : int) (thread : struct CommentThread) : list (struct Comment)
+
+lgtm def CommentThread.linearizeRecWithFuel (threads : struct CommentThreads) (manager : struct CommentManager) (fuel : int) (thread : struct CommentThread) : list (struct Comment) :=
+  if fuel == 0 then {
+    [: struct Comment]
+  } else {
+    let expectComment = fun (ref : struct CommentRef) => match CommentManager.get(manager, ref) with
+      | none => unreachable "Comments are required to be present in the manager" : struct Comment
+      | some(c) => c in
+    let comparisonFunction = fun (a : struct CommentRef) (b : struct CommentRef) => expectComment(a).createdTimestamp <= expectComment(b).createdTimestamp in
+    let sortedChildren = sortBy thread.children comparisonFunction in
+    expectComment(thread.value) :: flatMap sortedChildren (fun (childRef : struct CommentRef) => match threads.commentTreeNodes[childRef] with
+      | none => unreachable "All comments must have an entry in commentTreeNodes" : list (struct Comment)
+      | some(childThread) => CommentThread.linearizeRecWithFuel(threads, manager, fuel - 1, childThread))
+  }
+
+lgtm def CommentThread.linearize (thread : struct CommentThread) (threads : struct CommentThreads) (manager : struct CommentManager) : list (struct Comment) :=
+  CommentThread.linearizeRecWithFuel(threads, manager, length (toList threads.commentTreeNodes), thread)
+
+/-- Given a SELECTION, select the next comment in the linear order.
+
+    This requires the comment MANAGER to sort comments and the THREADS
+    structure to find the other comments in the thread. -/
+lgtm def CommentThreads.nextCommentInThread (threads : struct CommentThreads) (manager : struct CommentManager) (selection : struct SelectedComment) : struct SelectedComment :=
+  let selectedThread = selection.thread in
+  let linearizedComments = CommentThread.linearize(selectedThread, threads, manager) in
+  let linearizedCommentRefs = map list linearizedComments (fun (c : struct Comment) => c.ref) in
+  let currentlySelectedRef = selection.comment in
+  let matchesSelectedRef = fun (ref : struct CommentRef) => ref == currentlySelectedRef in
+  let currentlySelectedIndex = match findIndex linearizedCommentRefs matchesSelectedRef with
+    | none => unreachable "The selected comment must exist in the linearized thread" : int
+    | some(idx) => idx in
+  let nextIndex = min (currentlySelectedIndex + 1) (length linearizedCommentRefs - 1) in
+  let nextCommentRef = match linearizedCommentRefs[nextIndex] with
+    | none => unreachable "The next comment index must exist in the linearized comment list" : struct CommentRef
+    | some(r) => r in
+  new SelectedComment { version = selection.version, thread = selection.thread, comment = nextCommentRef }
+
+/-- Given a SELECTION, select the previous comment in the linear order.
+
+    This requires the comment MANAGER to sort comments and the THREADS
+    structure to find the other comments in the thread. -/
+lgtm def CommentThreads.previousCommentInThread (threads : struct CommentThreads) (manager : struct CommentManager) (selection : struct SelectedComment) : struct SelectedComment :=
+  let selectedThread = selection.thread in
+  let linearizedComments = CommentThread.linearize(selectedThread, threads, manager) in
+  let linearizedCommentRefs = map list linearizedComments (fun (c : struct Comment) => c.ref) in
+  let currentlySelectedRef = selection.comment in
+  let matchesSelectedRef = fun (ref : struct CommentRef) => ref == currentlySelectedRef in
+  let currentlySelectedIndex = match findIndex linearizedCommentRefs matchesSelectedRef with
+    | none => unreachable "The selected comment must exist in the linearized thread" : int
+    | some(idx) => idx in
+  let nextIndex = max 0 (currentlySelectedIndex + 1) in
+  let nextCommentRef = match linearizedCommentRefs[nextIndex] with
+    | none => unreachable "The next comment index must exist in the linearized comment list" : struct CommentRef
+    | some(r) => r in
+  new SelectedComment { version = selection.version, thread = selection.thread, comment = nextCommentRef }
+
 def Model.CommentThreads.funcDecls : List FuncDecl :=
   [ CommentThreads.isEmpty
   , CommentThreads.commentCount
@@ -112,6 +169,10 @@ def Model.CommentThreads.funcDecls : List FuncDecl :=
   , CommentThreads.rootComments
   , CommentThreads.nextThread
   , CommentThreads.previousThread
+  , CommentThreads.nextCommentInThread
+  , CommentThreads.previousCommentInThread
+  , CommentThread.linearize
+  , CommentThread.linearizeRecWithFuel
   ]
 
 end
