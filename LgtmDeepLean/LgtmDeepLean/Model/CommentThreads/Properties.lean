@@ -445,4 +445,240 @@ theorem CommentThreads.toThreadsOrdered.groupsAreSorted_modelProgram {threads ma
   exact CommentThreads.toThreadsOrdered.groupsAreSorted rfl rfl rfl Model.declares_modelProgram
     hThreadsWF hManagerWF happly
 
+/-- `ref` names a comment of the thread rooted at `thread`, reached in `n` descents or fewer. -/
+inductive CommentThread.HasRefWithin (threads : Value) : Nat → Value → Value → Prop where
+  | root {n : Nat} {thread ref : Value} :
+    thread.field? "value" = some ref → CommentThread.HasRefWithin threads n thread ref
+  | child {n : Nat} {thread childRef childNode ref : Value} {childRefs : List Value} :
+    thread.field? "children" = some (.list childRefs) → childRef ∈ childRefs →
+    CommentThreads.node? threads childRef = some childNode →
+    CommentThread.HasRefWithin threads n childNode ref →
+    CommentThread.HasRefWithin threads (n + 1) thread ref
+
+def CommentThread.HasRef (threads thread ref : Value) : Prop :=
+  ∃ n, CommentThread.HasRefWithin threads n thread ref
+
+/-- One call to `linearizeRecWithFuel` taken apart: the list it returns holds the comment the
+manager has under the ref the node names, and one run per child, each the answer to a call on that
+child's node with one less fuel.
+
+The fuel hypothesis is what rules out the branch for the fuel having run out: the condition's own
+evaluation says `fuel` is `0` there, which is what this call's fuel is not.  The children are
+reached through the sort, which rearranges and nothing else — `Value.mem_sortWith` is the step — so
+nothing here is said about the order the runs come in. -/
+theorem CommentThread.linearizeRecWithFuel.apply_inv {td : TypeDecls} {gs : Globals}
+    {threads manager thread : Value} {fuel : Int} {comments : List Value}
+    (hLinearizeRec : gs.lookup "CommentThread.linearizeRecWithFuel" =
+      some CommentThread.linearizeRecWithFuel)
+    (hGet : gs.lookup "CommentManager.get" = some CommentManager.get)
+    (hfuel : fuel ≠ 0)
+    (h : CommentThread.linearizeRecWithFuel.Apply td gs
+      [threads, manager, .int fuel, thread] (.list comments)) :
+    ∃ root c childRefs, thread.field? "value" = some root ∧
+      CommentManager.get? manager root = some c ∧ c ∈ comments ∧
+      thread.field? "children" = some (.list childRefs) ∧
+      ∀ r ∈ childRefs, ∃ node cs, CommentThreads.node? threads r = some node ∧
+        CommentThread.linearizeRecWithFuel.Apply td gs
+          [threads, manager, .int (fuel - 1), node] (.list cs) ∧ ∀ x ∈ cs, x ∈ comments := by
+  obtain ⟨-, -, hbody⟩ := h
+  cases hbody with
+  | EIteTrue _ _ _ hc hthen =>
+    -- The branch for the fuel having run out, which this call's fuel has not.
+    refine absurd ?_ hfuel
+    cases hc with
+    | EEquals _ _ hl hr hbeq =>
+      have hlv := Eval.varRef_inv hl
+      simp [CommentThread.linearizeRecWithFuel, FuncDecl.callEnv, Env.extend, Globals.env,
+        Env.lookup, List.lookup] at hlv
+      cases hr
+      subst hlv
+      simpa [Value.beq?] using hbeq
+  | EIteFalse _ _ _ hc helse =>
+    obtain ⟨expectComment, hexpectLam, helse⟩ := Eval.let_inv helse
+    obtain ⟨comparisonFunction, hcmpLam, helse⟩ := Eval.let_inv helse
+    obtain ⟨sortedChildren, hsort, helse⟩ := Eval.let_inv helse
+    obtain rfl := Eval.lam_inv hexpectLam
+    obtain rfl := Eval.lam_inv hcmpLam
+    cases helse with
+    | ECons _ _ hhead htail =>
+      -- The head of the list is the thread's own comment, read out of the manager.
+      cases hhead with
+      | @EApp _env _cb _cg _ps _lbody argVals v _ _ hf hlen hargs _ hcbody =>
+        obtain ⟨rfl, rfl, rfl, rfl⟩ : _ ∧ _ ∧ _ ∧ _ := by
+          simpa [Env.lookup, Env.closure, Value.closure.injEq, List.lookup] using
+            Eval.varRef_inv hf
+        obtain ⟨root, rfl⟩ : ∃ root, argVals = [root] := by
+          rcases argVals with _ | ⟨a, _ | _⟩ <;> simp_all
+        obtain ⟨_tn, _tfvs, hthreadRef, hvalue⟩ :=
+          Eval.structGet_inv
+            (hargs ((Expression.varRef "thread").structGet "value", root) (by simp))
+        have hthreadEq := Eval.varRef_inv hthreadRef
+        simp [CommentThread.linearizeRecWithFuel, FuncDecl.callEnv, Env.extend, Globals.env,
+          Env.lookup, List.lookup] at hthreadEq
+        have hrootField : thread.field? "value" = some root := by
+          rw [hthreadEq]; simpa [Value.field?] using hvalue
+        -- The comment that ref names is the one the manager has under it.
+        obtain ⟨c, hcall, hbound⟩ := Eval.optionMatch_unreachable_inv hcbody
+        have hcv := Eval.varRef_inv hbound
+        simp [Env.lookup, List.lookup] at hcv
+        subst hcv
+        obtain ⟨vs, hvlen, hvev, hgetApply⟩ :=
+          FuncDecl.apply_of_eval_app
+            (by simpa [CommentThread.linearizeRecWithFuel, FuncDecl.callEnv, Env.extend,
+              Globals.env] using hGet)
+            (by simp [CommentThread.linearizeRecWithFuel, FuncDecl.callEnv, Env.extend,
+              Globals.env, List.lookup]) hcall
+        obtain ⟨m, r, rfl⟩ : ∃ m r, vs = [m, r] := by
+          rcases vs with _ | ⟨m, _ | ⟨r, _ | _⟩⟩ <;> simp_all
+        have hmv := Eval.varRef_inv (hvev (Expression.varRef "manager", m) (by simp))
+        have hrv := Eval.varRef_inv (hvev (Expression.varRef "ref", r) (by simp))
+        simp [CommentThread.linearizeRecWithFuel, FuncDecl.callEnv, Env.extend, Globals.env,
+          Env.lookup, List.lookup] at hmv hrv
+        subst hmv
+        subst hrv
+        -- The rest of the list is one run per child, each the list that child's own call returned.
+        obtain ⟨refs, lists, _fcb, _fcg, _fps, _fbody, hrefs, hfn, hflen, hfev, hlists⟩ :=
+          Eval.listFlatMap_inv htail
+        simp only [Value.list.injEq] at hlists
+        subst hlists
+        have hrefsv := Eval.varRef_inv hrefs
+        simp [Env.lookup, List.lookup] at hrefsv
+        obtain ⟨childRefs, cmp, hchildren, hsorted⟩ := Eval.listSortBy_inv hsort
+        subst hrefsv
+        obtain rfl : refs = Value.sortWith cmp childRefs := by simpa using hsorted
+        obtain ⟨_cn, _cfvs, hthreadRef', hchildField⟩ := Eval.structGet_inv hchildren
+        have hthreadEq' := Eval.varRef_inv hthreadRef'
+        simp [CommentThread.linearizeRecWithFuel, FuncDecl.callEnv, Env.extend, Globals.env,
+          Env.lookup, List.lookup] at hthreadEq'
+        obtain ⟨rfl, rfl, rfl, rfl⟩ : _ ∧ _ ∧ _ ∧ _ := by
+          simpa [Env.closure, Value.closure.injEq] using Eval.lam_inv hfn
+        refine ⟨root, c, childRefs, hrootField, CommentManager.get.eq_get? hgetApply, by simp,
+          by rw [hthreadEq']; simpa [Value.field?] using hchildField, fun r hr => ?_⟩
+        -- The child is one of the refs the flattening ran over, so one of the runs is its own.
+        obtain ⟨cs, hpair⟩ := exists_mem_zip_of_mem_left hflen (Value.mem_sortWith.mpr hr)
+        obtain ⟨node, hscrut, hreccall⟩ := Eval.optionMatch_unreachable_inv (hfev _ hpair)
+        obtain ⟨kvs, vk, hm, hk, hlookup⟩ := Eval.hashmapGet_inv hscrut
+        obtain ⟨_nn, _nfvs, hthreadsRef, hnodes⟩ := Eval.structGet_inv hm
+        have hthreadsEq := Eval.varRef_inv hthreadsRef
+        have hvk := Eval.varRef_inv hk
+        simp [CommentThread.linearizeRecWithFuel, FuncDecl.callEnv, Env.extend, Globals.env,
+          Env.lookup, List.lookup] at hthreadsEq hvk
+        subst hvk
+        have hnode : CommentThreads.node? threads r = some node := by
+          rw [hthreadsEq]
+          simp [CommentThreads.node?, Value.lookupField?, Value.field?, hnodes, hlookup]
+        -- And that run is what the recursive call on the child's node returned, one fuel down.
+        obtain ⟨rvs, hrvlen, hrvev, hrapply⟩ :=
+          FuncDecl.apply_of_eval_app
+            (by simpa [CommentThread.linearizeRecWithFuel, FuncDecl.callEnv, Env.extend,
+              Globals.env] using hLinearizeRec)
+            (by simp [CommentThread.linearizeRecWithFuel, FuncDecl.callEnv, Env.extend,
+              Globals.env, List.lookup]) hreccall
+        obtain ⟨a, b, f', t', rfl⟩ : ∃ a b f' t', rvs = [a, b, f', t'] := by
+          rcases rvs with _ | ⟨a, _ | ⟨b, _ | ⟨f', _ | ⟨t', _ | _⟩⟩⟩⟩ <;> simp_all
+        have hav := Eval.varRef_inv (hrvev (Expression.varRef "threads", a) (by simp))
+        have hbv := Eval.varRef_inv (hrvev (Expression.varRef "manager", b) (by simp))
+        have htv := Eval.varRef_inv (hrvev (Expression.varRef "childThread", t') (by simp))
+        have hfv := hrvev ((Expression.varRef "fuel").minus (Expression.intLit 1), f') (by simp)
+        simp [CommentThread.linearizeRecWithFuel, FuncDecl.callEnv, Env.extend, Globals.env,
+          Env.lookup, List.lookup] at hav hbv htv
+        subst hav
+        subst hbv
+        subst htv
+        have hfeq : f' = .int (fuel - 1) := by
+          cases hfv with
+          | EMinus _ _ hfl hfr =>
+            have hflv := Eval.varRef_inv hfl
+            simp [CommentThread.linearizeRecWithFuel, FuncDecl.callEnv, Env.extend, Globals.env,
+              Env.lookup, List.lookup] at hflv
+            cases hfr
+            simp [hflv]
+        subst hfeq
+        exact ⟨node, cs, hnode, hrapply, fun x hx =>
+          List.mem_cons_of_mem _ (List.mem_flatten.mpr ⟨cs, (List.of_mem_zip hpair).2, hx⟩)⟩
+
+theorem CommentThread.linearizeRecWithFuel_hasAllThreadComments {td : TypeDecls} {gs : Globals}
+    {threads manager thread : Value} {fuel : Int} {comments : List Value}
+    (hLinearizeRec : gs.lookup "CommentThread.linearizeRecWithFuel" =
+      some CommentThread.linearizeRecWithFuel)
+    (hGet : gs.lookup "CommentManager.get" = some CommentManager.get)
+    (h : CommentThread.linearizeRecWithFuel.Apply td gs
+      [threads, manager, .int fuel, thread] (.list comments)) :
+    ∀ (n : Nat) (ref : Value), (n : Int) < fuel →
+      CommentThread.HasRefWithin threads n thread ref →
+      ∃ c, CommentManager.get? manager ref = some c ∧ c ∈ comments := by
+  intro n
+  induction n generalizing fuel thread comments with
+  | zero =>
+    intro ref hfuel hhas
+    obtain ⟨root, c, -, hroot, hget, hmem, -, -⟩ :=
+      CommentThread.linearizeRecWithFuel.apply_inv hLinearizeRec hGet (by omega) h
+    cases hhas with
+    | root hvalue =>
+      obtain rfl : root = ref := by simpa [hroot] using hvalue
+      exact ⟨c, hget, hmem⟩
+  | succ n ih =>
+    intro ref hfuel hhas
+    obtain ⟨root, c, childRefs, hroot, hget, hmem, hchildren, hkids⟩ :=
+      CommentThread.linearizeRecWithFuel.apply_inv hLinearizeRec hGet (by omega) h
+    cases hhas with
+    | root hvalue =>
+      obtain rfl : root = ref := by simpa [hroot] using hvalue
+      exact ⟨c, hget, hmem⟩
+    | child hchildField hchildMem hchildNode hrest =>
+      obtain rfl : childRefs = _ := by simpa [hroot, hchildren] using hchildField
+      obtain ⟨node, cs, hnode, happly, hsub⟩ := hkids _ hchildMem
+      obtain rfl : node = _ := Option.some.inj (hnode.symm.trans hchildNode)
+      obtain ⟨c', hget', hmem'⟩ := ih happly ref (by omega) hrest
+      exact ⟨c', hget', hsub c' hmem'⟩
+
+theorem CommentThreads.linearize_hasAllThreadComments (thread : Value) (threads : Value) (manager : Value)
+  (kvs : List (Value × Value))
+  (comments : List Value)
+  (hNodes : threads.field? "commentTreeNodes" = some (.hashmap kvs))
+  (hSufficientFuel : ∀ n ref, CommentThread.HasRefWithin threads n thread ref → n < kvs.length)
+  (h : modelProgram.Apply "CommentThread.linearize" [thread, threads, manager] (.list comments)) :
+  ∀ ref, CommentThread.HasRef threads thread ref → ∃ c, CommentManager.get? manager ref = some c ∧ c ∈ comments := by
+  obtain ⟨d, hd, happly⟩ := h
+  obtain rfl : CommentThread.linearize = d := by
+    simpa using (show modelProgram.lookup "CommentThread.linearize" =
+      some CommentThread.linearize from rfl).symm.trans hd
+  obtain ⟨-, -, hbody⟩ := happly
+  have hLookupRec : modelProgram.globals.lookup "CommentThread.linearizeRecWithFuel" =
+      some CommentThread.linearizeRecWithFuel := rfl
+  obtain ⟨vs, hvlen, hvev, hrec⟩ :=
+    FuncDecl.apply_of_eval_app hLookupRec
+      (by simp [CommentThread.linearize, FuncDecl.callEnv, Env.extend, Globals.env, List.lookup])
+      hbody
+  obtain ⟨a, b, f, t, rfl⟩ : ∃ a b f t, vs = [a, b, f, t] := by
+    rcases vs with _ | ⟨a, _ | ⟨b, _ | ⟨f, _ | ⟨t, _ | _⟩⟩⟩⟩ <;> simp_all
+  have hav := Eval.varRef_inv (hvev (Expression.varRef "threads", a) (by simp))
+  have hbv := Eval.varRef_inv (hvev (Expression.varRef "manager", b) (by simp))
+  have htv := Eval.varRef_inv (hvev (Expression.varRef "thread", t) (by simp))
+  have hfv := hvev
+    (((Expression.varRef "threads").structGet "commentTreeNodes").hashmapToList.listLength, f)
+    (by simp)
+  simp [CommentThread.linearize, FuncDecl.callEnv, Env.extend, Globals.env, Env.lookup,
+    List.lookup] at hav hbv htv
+  subst hav
+  subst hbv
+  subst htv
+  -- The fuel is the number of nodes, which is what the hypothesis counts descents against.
+  obtain rfl : f = .int (kvs.length : Int) := by
+    cases hfv with
+    | EListLength _ hlist =>
+      obtain ⟨kvs', hm, rfl⟩ := Eval.hashmapToList_inv hlist
+      obtain ⟨_n, _fvs, hs, hf⟩ := Eval.structGet_inv hm
+      have hthreads := Eval.varRef_inv hs
+      simp [CommentThread.linearize, FuncDecl.callEnv, Env.extend, Globals.env, Env.lookup,
+        List.lookup] at hthreads
+      obtain rfl : kvs' = kvs := by
+        simpa [hthreads, Value.field?, hf] using hNodes
+      simp
+  simp only [FuncDecl.callEnv, Globals.env, Env.globals_extend] at hrec
+  intro ref href
+  obtain ⟨n, hn⟩ := href
+  exact CommentThread.linearizeRecWithFuel_hasAllThreadComments hLookupRec rfl hrec n ref
+    (by exact_mod_cast hSufficientFuel n ref hn) hn
+
 end
