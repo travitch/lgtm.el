@@ -69,7 +69,7 @@ never a `varRef`, and `var "true"` is how a variable of such a name is reached. 
 exception and *is* a reserved token: a command's leading keyword has to be reserved for the command
 parser to find it at all, so a file importing this module cannot also name something `lgtm`.
 
-`let`, `in`, `with`, `match`, `inductive`, `if`, `then` and `else` are written as plain symbols rather
+`let`, `with`, `match`, `inductive`, `if`, `then` and `else` are written as plain symbols rather
 than with `&`, because Lean reserves all of them already: declaring them here takes nothing away that
 was available before, and a reserved word is not an identifier, so `&` would not match it in the first
 place.
@@ -862,16 +862,17 @@ An alternative's expression extends as far right as it can, exactly as an `indMa
 `match` nested inside one needs parentheses — the same way a `let` does. -/
 syntax :10 "match " lgtmExpr " with" lgtmListAlt+ : lgtmExpr
 
-/-- `if b then { 1 } else { 2 }` chooses between its two branches.
+/-- `if b then ( 1 ) else ( 2 )` chooses between its two branches.
 
-The branches are braced, so the form ends where the last `}` does and needs no parentheses to be an
-operand: `if b then { 1 } else { 2 } + 1` adds to the conditional rather than to its second branch,
-which is the opposite of how a `let` or a `match` alternative reads.  The condition takes no braces
-because `then` is what ends it.
+The branches are parenthesized, and those parentheses are part of the form rather than optional, so
+it ends where the last `)` does and needs nothing further to be an operand: `if b then ( 1 ) else
+( 2 ) + 1` adds to the conditional rather than to its second branch, which is the opposite of how a
+`let` or a `match` alternative reads.  The condition takes no parentheses because `then` is what ends
+it.
 
 Both branches must have the same type and the condition must be a `bool`, which is the type checker's
 business rather than the parser's. -/
-syntax :max "if " lgtmExpr " then " "{" lgtmExpr "}" " else " "{" lgtmExpr "}" : lgtmExpr
+syntax :max "if " lgtmExpr " then " "(" lgtmExpr ")" " else " "(" lgtmExpr ")" : lgtmExpr
 
 syntax :65 lgtmExpr:65 " + " lgtmExpr:66 : lgtmExpr
 
@@ -924,10 +925,10 @@ syntax :35 lgtmExpr:35 " || " lgtmExpr:36 : lgtmExpr
 
 syntax :10 "fun" ("(" ident " : " lgtmTy ")")* " => " lgtmExpr:10 : lgtmExpr
 
-/-- `let x = e in body`.  The bound expression carries no annotation, because `let_` does not: the
-type checker infers it.  The body extends as far right as it can, so `let`s chain without
-parentheses. -/
-syntax :10 "let " ident " = " lgtmExpr " in " lgtmExpr:10 : lgtmExpr
+/-- `let x := e; body`, spelled the way Lean's own `let` is.  The bound expression carries no
+annotation, because `let_` does not: the type checker infers it.  The body extends as far right as
+it can, so `let`s chain without parentheses. -/
+syntax :10 "let " ident " := " lgtmExpr "; " lgtmExpr:10 : lgtmExpr
 
 /-- `[lgtm| e]` is the `Expression` that `e` denotes. -/
 syntax :max "[lgtm| " lgtmExpr "]" : term
@@ -1066,7 +1067,7 @@ private meta def checkCallArity (ref : Syntax) (f : Expression) (arity : Nat) : 
 /-- Record on the name that binds it the type a binder stands at.
 
 The expressions of a declaration are recorded by `addNodeTyInfo`, which has nothing to say about a
-binder: the name in `let x = ...` is a token of the form that binds it rather than an expression of
+binder: the name in `let x := ...` is a token of the form that binds it rather than an expression of
 its own, so the innermost expression written over it is the whole `let`, whose type is its body's.
 
 Silent for a fragment, which is not checked, and for a binder standing at `unknownTy`, which is what
@@ -1170,13 +1171,13 @@ meta partial def elabLgtmExprCore (ctx : Context) (stx : TSyntax `lgtmExpr) :
         addBinderTyInfo x t
         return (x.getId.toString, t)
       return .lam ps (← elabLgtmExpr (ps ++ ctx) b)
-  | `(lgtmExpr| let $x:ident = $e in $b) => do
+  | `(lgtmExpr| let $x:ident := $e; $b) => do
       let bnd ← elabLgtmExpr ctx e
       let t ← inferredTy ctx bnd
       addBinderTyInfo x t
       let name := x.getId.toString
       return .let_ name bnd (← elabLgtmExpr ((name, t) :: ctx) b)
-  | `(lgtmExpr| if $c then { $thn } else { $els }) =>
+  | `(lgtmExpr| if $c then ( $thn ) else ( $els )) =>
       return .ite (← elabLgtmExpr ctx c) (← elabLgtmExpr ctx thn) (← elabLgtmExpr ctx els)
   | `(lgtmExpr| new $n:ident { $[$fs:ident = $es:lgtmExpr],* }) => do
       let name := n.getId.toString

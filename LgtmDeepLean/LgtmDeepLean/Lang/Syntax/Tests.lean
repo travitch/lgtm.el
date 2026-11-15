@@ -80,7 +80,7 @@ example : [lgtm| f(true, 1)] = Expression.app (.varRef "f") [.boolLit true, .int
 example : [lgtm| true :: bs] = Expression.lcons (.boolLit true) (.varRef "bs") :=
   rfl
 
-example : [lgtm| let b = true in b] = Expression.let_ "b" (.boolLit true) (.varRef "b") :=
+example : [lgtm| let b := true; b] = Expression.let_ "b" (.boolLit true) (.varRef "b") :=
   rfl
 
 example : [lgtm| fun(b : bool) => true] = Expression.lam [("b", .bool)] (.boolLit true) :=
@@ -173,12 +173,12 @@ example :
   rfl
 
 example :
-    [lgtm| if x == y then {1} else {2}] =
+    [lgtm| if x == y then (1) else (2)] =
       Expression.ite (.equals (.varRef "x") (.varRef "y")) (.intLit 1) (.intLit 2) :=
   rfl
 
 example :
-    [lgtm| let e = x == y in e] =
+    [lgtm| let e := x == y; e] =
       Expression.let_ "e" (.equals (.varRef "x") (.varRef "y")) (.varRef "e") :=
   rfl
 
@@ -242,12 +242,12 @@ example :
   rfl
 
 example :
-    [lgtm| if x <= y then {1} else {2}] =
+    [lgtm| if x <= y then (1) else (2)] =
       Expression.ite (.le (.varRef "x") (.varRef "y")) (.intLit 1) (.intLit 2) :=
   rfl
 
 example :
-    [lgtm| let b = x < y in b] =
+    [lgtm| let b := x < y; b] =
       Expression.let_ "b" (.lt (.varRef "x") (.varRef "y")) (.varRef "b") :=
   rfl
 
@@ -320,7 +320,7 @@ example :
 -- What they produce is a `bool` like any other, so every form that reads one reads these: a
 -- condition, an operand of another one, a call's argument, a list of them.
 example :
-    [lgtm| if b && c then {1} else {2}] =
+    [lgtm| if b && c then (1) else (2)] =
       Expression.ite (.boolAnd (.varRef "b") (.varRef "c")) (.intLit 1) (.intLit 2) :=
   rfl
 
@@ -333,7 +333,7 @@ example :
   rfl
 
 example :
-    [lgtm| let e = b || c in e] =
+    [lgtm| let e := b || c; e] =
       Expression.let_ "e" (.boolOr (.varRef "b") (.varRef "c")) (.varRef "e") :=
   rfl
 
@@ -539,60 +539,60 @@ example :
   rfl
 
 -- A `let` names the expression it binds, which carries no annotation.
-example : [lgtm| let x = 1 in x] = Expression.let_ "x" (.intLit 1) (.varRef "x") :=
+example : [lgtm| let x := 1; x] = Expression.let_ "x" (.intLit 1) (.varRef "x") :=
   rfl
 
 example :
-    [lgtm| let x = y + 1 in x + x] =
+    [lgtm| let x := y + 1; x + x] =
       Expression.let_ "x" (.plus (.varRef "y") (.intLit 1)) (.plus (.varRef "x") (.varRef "x")) :=
   rfl
 
 -- The body extends as far right as it can, so `let`s chain without parentheses and a `let` inside a
 -- lambda swallows the rest of the body.
 example :
-    [lgtm| let x = 1 in let y = 2 in x + y] =
+    [lgtm| let x := 1; let y := 2; x + y] =
       Expression.let_ "x" (.intLit 1) (.let_ "y" (.intLit 2) (.plus (.varRef "x") (.varRef "y"))) :=
   rfl
 
 example :
-    [lgtm| fun(n : int) => let m = n + 1 in m + m] =
+    [lgtm| fun(n : int) => let m := n + 1; m + m] =
       Expression.lam [("n", .int)]
         (.let_ "m" (.plus (.varRef "n") (.intLit 1)) (.plus (.varRef "m") (.varRef "m"))) :=
   rfl
 
--- The bound expression stops at `in`, so a `fun` or a call on the right of the `=` needs no
+-- The bound expression stops at `;`, so a `fun` or a call on the right of the `:=` needs no
 -- parentheses either.
 example :
-    [lgtm| let f = fun(x : int) => x in f(1)] =
+    [lgtm| let f := fun(x : int) => x; f(1)] =
       Expression.let_ "f" (.lam [("x", .int)] (.varRef "x")) (.app (.varRef "f") [.intLit 1]) :=
   rfl
 
 example :
-    [lgtm| let xs = reverse ys in x :: xs] =
+    [lgtm| let xs := reverse ys; x :: xs] =
       Expression.let_ "xs" (.listReverse (.varRef "ys")) (.lcons (.varRef "x") (.varRef "xs")) :=
   rfl
 
 -- Parenthesizing the body is what puts something after the `let` rather than inside it.
 example :
-    [lgtm| (let x = 1 in x) + 2] =
+    [lgtm| (let x := 1; x) + 2] =
       Expression.plus (.let_ "x" (.intLit 1) (.varRef "x")) (.intLit 2) :=
   rfl
 
 -- A conditional is its condition and its two braced branches.
-example : [lgtm| if b then {1} else {2}] = Expression.ite (.varRef "b") (.intLit 1) (.intLit 2) :=
+example : [lgtm| if b then (1) else (2)] = Expression.ite (.varRef "b") (.intLit 1) (.intLit 2) :=
   rfl
 
 example :
-    [lgtm| if true then {1} else {2}] = Expression.ite (.boolLit true) (.intLit 1) (.intLit 2) :=
+    [lgtm| if true then (1) else (2)] = Expression.ite (.boolLit true) (.intLit 1) (.intLit 2) :=
   rfl
 
 example :
-    [lgtm| if b then {true} else {false}] =
+    [lgtm| if b then (true) else (false)] =
       Expression.ite (.varRef "b") (.boolLit true) (.boolLit false) :=
   rfl
 
 example :
-    [lgtm| if f(x) then {x + 1} else {x - 1}] =
+    [lgtm| if f(x) then (x + 1) else (x - 1)] =
       Expression.ite (.app (.varRef "f") [.varRef "x"]) (.plus (.varRef "x") (.intLit 1))
         (.minus (.varRef "x") (.intLit 1)) :=
   rfl
@@ -600,29 +600,29 @@ example :
 -- The braces end the branches, so a conditional is an ordinary operand: the `+ 1` below applies to
 -- the whole of it rather than to its second branch, and neither branch needs parentheses.
 example :
-    [lgtm| if b then {1} else {2} + 1] =
+    [lgtm| if b then (1) else (2) + 1] =
       Expression.plus (.ite (.varRef "b") (.intLit 1) (.intLit 2)) (.intLit 1) :=
   rfl
 
 example :
-    [lgtm| if b then {let x = 1 in x} else {match c with | Red => 0}] =
+    [lgtm| if b then (let x := 1; x) else (match c with | Red => 0)] =
       Expression.ite (.varRef "b") (.let_ "x" (.intLit 1) (.varRef "x"))
         (.indMatch (.varRef "c") [("Red", [], .intLit 0)]) :=
   rfl
 
 example :
-    [lgtm| f(if b then {1} else {2})] =
+    [lgtm| f(if b then (1) else (2))] =
       Expression.app (.varRef "f") [.ite (.varRef "b") (.intLit 1) (.intLit 2)] :=
   rfl
 
 -- And conditionals nest, in the branches and in the condition alike.
 example :
-    [lgtm| if b then {if c then {1} else {2}} else {3}] =
+    [lgtm| if b then (if c then (1) else (2)) else (3)] =
       Expression.ite (.varRef "b") (.ite (.varRef "c") (.intLit 1) (.intLit 2)) (.intLit 3) :=
   rfl
 
 example :
-    [lgtm| if if b then {c} else {d} then {1} else {2}] =
+    [lgtm| if if b then (c) else (d) then (1) else (2)] =
       Expression.ite (.ite (.varRef "b") (.varRef "c") (.varRef "d")) (.intLit 1) (.intLit 2) :=
   rfl
 
@@ -730,12 +730,12 @@ lgtm def emptyOrEqual as"empty-or-equal"(xs : list int)(ys : list int) : bool :=
 #guard !(({ emptyOrEqual with resultType := [lgtm_ty| int] } : FuncDecl).check {} []).isOk
 
 /-- Twice one more than `n`. -/
-lgtm def letDouble as"let-double"(n : int) : int := let m = n + 1 in m + m
+lgtm def letDouble as"let-double"(n : int) : int := let m := n + 1; m + m
 
 #guard (letDouble.check {} []).isOk
 
 /-- `x` when `b`, and `y` otherwise. -/
-lgtm def pick(b : bool)(x : int)(y : int) : int := if b then {x} else {y}
+lgtm def pick(b : bool)(x : int)(y : int) : int := if b then (x) else (y)
 
 #guard (pick.check {} []).isOk
 
@@ -760,11 +760,11 @@ lgtm def flags : list bool := [true, false, true : bool]
 
 #guard (flags.check {} []).isOk
 
-lgtm def pickFirst as"pick-first"(x : int)(y : int) : int := if true then {x} else {y}
+lgtm def pickFirst as"pick-first"(x : int)(y : int) : int := if true then (x) else (y)
 
 #guard (pickFirst.check {} []).isOk
 
-#guard !(({ pickFirst with body := [lgtm| if 1 then {x} else {y}] } : FuncDecl).check {} []).isOk
+#guard !(({ pickFirst with body := [lgtm| if 1 then (x) else (y)] } : FuncDecl).check {} []).isOk
 
 /-- Whether `x` and `y` are the same, which is the other way a declaration returns a `bool`. -/
 lgtm def same(x : int)(y : int) : bool := x == y
@@ -804,7 +804,7 @@ private def sameFnLists : FuncDecl :=
   (({ same with parameters := [("x", [lgtm_ty| bool]), ("y", [lgtm_ty| bool])] } : FuncDecl).check
       {} []).isOk
 
-#guard (({ pick with body := [lgtm| if x == y then {x} else {y}] } : FuncDecl).check {} []).isOk
+#guard (({ pick with body := [lgtm| if x == y then (x) else (y)] } : FuncDecl).check {} []).isOk
 
 -- A declaration with no parameters is fine, and so is one that returns a function.
 lgtm def three : int := 3
@@ -856,9 +856,9 @@ example : succ.docstring = "One more than `x`." :=
 
 #guard !(({ revCons with body := [lgtm| reverse x] } : FuncDecl).check {} []).isOk
 
-#guard !(({ pick with body := [lgtm| if x then {x} else {y}] } : FuncDecl).check {} []).isOk
+#guard !(({ pick with body := [lgtm| if x then (x) else (y)] } : FuncDecl).check {} []).isOk
 
-#guard !(({ pick with body := [lgtm| if b then {x} else {"a"}] } : FuncDecl).check {} []).isOk
+#guard !(({ pick with body := [lgtm| if b then (x) else ("a")] } : FuncDecl).check {} []).isOk
 
 /-! ### Structs -/
 
@@ -1079,7 +1079,7 @@ example :
 -- An alternative's expression extends as far right as it can, so it stops only at the next `|`, and
 -- a `match` inside one needs parentheses just as a `let` does.
 example :
-    [lgtm| match c with | Red => 1 + 2 | Green => let x = 1 in x + x] =
+    [lgtm| match c with | Red => 1 + 2 | Green => let x := 1; x + x] =
       Expression.indMatch (.varRef "c")
         [("Red", [], .plus (.intLit 1) (.intLit 2)),
           ("Green", [], .let_ "x" (.intLit 1) (.plus (.varRef "x") (.varRef "x")))] :=
@@ -1226,6 +1226,14 @@ example : [lgtm| none : ((int) -> int)] = Expression.optionNone (.fn [.int] .int
 example : [lgtm| some(none : int)] = Expression.optionSome (.optionNone .int) :=
   rfl
 
+-- The bare form above is what the grammar accepts, but Lean has no bare `e : T` term, so DSL code
+-- writes the parenthesized spelling instead; it is the existing `(e)` form, and elaborates the same.
+example : [lgtm| (none : int)] = Expression.optionNone .int :=
+  rfl
+
+example : [lgtm| (none : list (struct Point))] = Expression.optionNone (.list (.struct "Point")) :=
+  rfl
+
 -- `some` and `none` are keywords, so neither is a variable name inside a DSL term; outside one they
 -- are Lean's own, which declaring them with `&` is what preserves.
 example : [lgtm| var"some"] = Expression.varRef "some" :=
@@ -1256,11 +1264,11 @@ example : [lgtm| some(1) :: os] = Expression.lcons (.optionSome (.intLit 1)) (.v
   rfl
 
 example :
-    [lgtm| let o = some(1) in o] = Expression.let_ "o" (.optionSome (.intLit 1)) (.varRef "o") :=
+    [lgtm| let o := some(1); o] = Expression.let_ "o" (.optionSome (.intLit 1)) (.varRef "o") :=
   rfl
 
 example :
-    [lgtm| if b then {some(1)} else {none : int}] =
+    [lgtm| if b then (some(1)) else (none : int)] =
       Expression.ite (.varRef "b") (.optionSome (.intLit 1)) (.optionNone .int) :=
   rfl
 
@@ -1674,7 +1682,7 @@ example :
 /-- The same read over a `let`, which is the other place a declaration's operands come from: the
 type the name is bound at is what the brackets are read by, exactly as a parameter's is. -/
 lgtm def firstOrZero as"first-or-zero"(p : struct Point) : int :=
-  let ys = [p.x, p.y : int] in
+  let ys := [p.x, p.y : int];
   match ys[0] with | none => 0 | some(x) => x
 
 #guard (firstOrZero.check { ss := Structs.ofDecls [Point] } []).isOk
@@ -2268,7 +2276,7 @@ lgtm def bump (m : hashmap string int) : hashmap string int :=
 -- And a hashmap is itself not comparable, whatever it relates, where a list of the same things
 -- would be: an association list has no canonical form, so a structural comparison would answer
 -- something other than whether the two are the same map.
-#guard !(({ getOr with body := [lgtm| if m == m then {1} else {0}] } : FuncDecl).check {} []).isOk
+#guard !(({ getOr with body := [lgtm| if m == m then (1) else (0)] } : FuncDecl).check {} []).isOk
 
 #guard
   !(({ noneBound with
@@ -2389,12 +2397,12 @@ lgtm def fst(t : tuple(string, int)) : string := t.0
 -- A tuple is comparable exactly when everything in it is, so a pair of a map is not and a pair of
 -- its two types is: what `Ty.comparable` turns a hashmap down for is the order its bindings are
 -- carried in, which converting does not escape.
-#guard (({ fst with body := [lgtm| if t == t then {t.0} else {t.0}] } : FuncDecl).check {} []).isOk
+#guard (({ fst with body := [lgtm| if t == t then (t.0) else (t.0)] } : FuncDecl).check {} []).isOk
 
 #guard
   !(({ fst with
               parameters := [("t", [lgtm_ty| tuple(string, hashmap string int)])]
-              body := [lgtm| if t == t then {t.0} else {t.0}] } :
+              body := [lgtm| if t == t then (t.0) else (t.0)] } :
             FuncDecl).check
         {} []).isOk
 
@@ -2435,7 +2443,7 @@ example :
 -- It stands where a value of its annotation would, and `unreachable` is a keyword, so a variable of
 -- that name takes the escape hatch every other keyword leaves.
 example :
-    [lgtm| if b then {1} else {unreachable"why" : int}] =
+    [lgtm| if b then (1) else (unreachable"why" : int)] =
       Expression.ite (.varRef "b") (.intLit 1) (.unreachable .int "why") :=
   rfl
 
@@ -2450,10 +2458,15 @@ example :
 example : [lgtm| var"unreachable"] = Expression.varRef "unreachable" :=
   rfl
 
+-- As with `none : T`, DSL code parenthesizes the annotation so the text is shaped like a Lean
+-- ascription; the `Expression` is the same one the bare form builds.
+example : [lgtm| (unreachable"why" : int)] = Expression.unreachable .int "why" :=
+  rfl
+
 /-- One less than a positive `n`, with the branch that would have gone negative written as the
 unreachable it is: the annotation is the `int` the branch beside it has, and nothing else about the
 form is the type checker's business. -/
-lgtm def pred(n : int) : int := if 0 < n then {n - 1} else {unreachable"n is positive" : int}
+lgtm def pred(n : int) : int := if 0 < n then (n - 1) else (unreachable"n is positive" : int)
 
 #guard (pred.check {} []).isOk
 
@@ -2462,7 +2475,7 @@ lgtm def pred(n : int) : int := if 0 < n then {n - 1} else {unreachable"n is pos
 -- The annotation has to be the branch's type, which is the one thing it is checked against.
 #guard
   !(({ pred with
-              body := [lgtm| if 0 < n then {n - 1} else {unreachable"n is positive" : string}] } :
+              body := [lgtm| if 0 < n then (n - 1) else (unreachable"n is positive" : string)] } :
             FuncDecl).check
         {} []).isOk
 
@@ -2541,7 +2554,7 @@ lgtm def chkBadArity(p : struct ChkPt) : int := chkPtX(p, p)
 -- than ill typed, and is reported on the name.
 /-- error: no variable named 'm' is in scope; did you mean 'n'? -/
 #guard_msgs (error) in
-lgtm def chkLetEscapes(n : int) : int := (let m = n + 1 in m) + m
+lgtm def chkLetEscapes(n : int) : int := (let m := n + 1; m) + m
 
 /-! ### Types
 
@@ -2551,12 +2564,12 @@ part of it that does not check rather than on the whole body. -/
 /-- error: the left operand of `+` has type struct ChkPt where int was expected -/
 #guard_msgs (error) in
 lgtm def chkDeepTypeError(p : struct ChkPt)(n : int) : int :=
-  let a = n + 1 in
+  let a := n + 1;
   (a + (p + 1)) + 3
 
 /-- error: the `else` branch of an `if` has type string where int was expected -/
 #guard_msgs (error) in
-lgtm def chkBadBranch(b : bool)(n : int) : int := n + (if b then {1} else {"two"})
+lgtm def chkBadBranch(b : bool)(n : int) : int := n + (if b then (1) else ("two"))
 
 -- A body that checks but not at the type declared for it is a disagreement between the two rather
 -- than a mistake inside the body, and is reported on the body.

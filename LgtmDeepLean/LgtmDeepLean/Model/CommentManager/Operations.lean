@@ -8,7 +8,7 @@ meta import LgtmDeepLean.Lang.Syntax
 lgtm def CommentManager.empty : struct CommentManager :=
   new CommentManager { comments = hashmap(struct CommentRef, struct Comment),
                        topLevelThreads = CommentThreads.empty(),
-                       selectedComment = none : struct SelectedComment
+                       selectedComment = (none : struct SelectedComment)
                      }
 
 lgtm def CommentManager.get (manager : struct CommentManager) (ref : struct CommentRef) : option (struct Comment) :=

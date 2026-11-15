@@ -134,7 +134,7 @@ public inductive Expression where
   | boolLit : Bool → Expression
   /-- A polymorphic conditional.
 
-> if $expression1 then { $expression2 } else { $expression3 }
+> if $expression1 then ( $expression2 ) else ( $expression3 )
 
 The condition expression must be a boolean.  The two body expressions can be any type, as long
 as it is the same for both. -/

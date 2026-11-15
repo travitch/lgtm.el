@@ -14,13 +14,13 @@ lgtm def pathOfFileAtVersion (version : inductive FileVersion) (modifiedFile : s
 lgtm def ModifiedFileState.resetFileState (fileState : struct ModifiedFileState) : struct ModifiedFileState :=
   new ModifiedFileState { ref = fileState.ref
                         ,  fileRef = fileState.fileRef
-                        ,  selectedComment = none : struct SelectedComment
+                        ,  selectedComment = (none : struct SelectedComment)
                         ,  baseThreads = CommentThreads.empty()
                         ,  currentThreads = CommentThreads.empty()
                         }
 
 lgtm def ModifiedFileManager.resetCommentState (fileState : struct ModifiedFileManager) : struct ModifiedFileManager :=
-  let newState = map hashmap fileState.state (fun (_r : struct ModifiedFileRef) (s : struct ModifiedFileState) => ModifiedFileState.resetFileState(s)) in
+  let newState := map hashmap fileState.state (fun (_r : struct ModifiedFileRef) (s : struct ModifiedFileState) => ModifiedFileState.resetFileState(s));
   new ModifiedFileManager { modifiedFiles = fileState.modifiedFiles
                           , state = newState
                           }

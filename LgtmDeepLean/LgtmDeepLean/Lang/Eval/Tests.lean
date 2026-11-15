@@ -859,7 +859,7 @@ example : Eval {} ∅ [lgtm| findIndex [1 : int] (fun (x : int) => x == 2)] (.op
 example :
     Eval {} ∅
       [lgtm| findIndex [1, 2 : int]
-        (fun (x : int) => if x == 1 then { true } else { unreachable "never reached" : bool })]
+        (fun (x : int) => if x == 1 then ( true ) else ( unreachable "never reached" : bool ))]
       (.option (some (.int 0))) :=
   .EListFindIndexSome (pre := []) (w := .int 1) (post := [.int 2]) _ _
     (.ECons _ _ (.EIntLit 1) (.ECons _ _ (.EIntLit 2) (.ENil _))) (.ELam _ _) (by simp) (by simp)
@@ -1205,18 +1205,18 @@ it binds. -/
 
 -- A `let` binds the value its expression evaluated to, which `EVarRef` then reads out of the
 -- bindings like any other name.
-example : Eval {} ∅ [lgtm| let x = 1 + 2 in x + x] (.int 6) :=
+example : Eval {} ∅ [lgtm| let x := 1 + 2; x + x] (.int 6) :=
   .ELet _ _ _ (.EPlus (n₁ := 1) (n₂ := 2) _ _ (.EIntLit 1) (.EIntLit 2))
     (.EPlus (n₁ := 3) (n₂ := 3) _ _ (.EVarRef "x" rfl) (.EVarRef "x" rfl))
 
 -- Twice, so a later binding sees an earlier one.
-example : Eval {} ∅ [lgtm| let x = 1 in let y = x + 1 in x + y] (.int 3) :=
+example : Eval {} ∅ [lgtm| let x := 1; let y := x + 1; x + y] (.int 3) :=
   .ELet _ _ _ (.EIntLit 1)
     (.ELet _ _ _ (.EPlus (n₁ := 1) (n₂ := 1) _ _ (.EVarRef "x" rfl) (.EIntLit 1))
       (.EPlus (n₁ := 1) (n₂ := 2) _ _ (.EVarRef "x" rfl) (.EVarRef "y" rfl)))
 
 /-- Twice one more than `n`. -/
-lgtm private def letDouble as"let-double"(n : int) : int := let m = n + 1 in m + m
+lgtm private def letDouble as"let-double"(n : int) : int := let m := n + 1; m + m
 
 #guard (letDouble.check {} []).isOk
 
@@ -1259,18 +1259,18 @@ private theorem letDouble.eq_twice {n : Int} {res : Value}
 -- A `let` whose body is a lambda is how a closure captures something other than a parameter: the
 -- same closure `~(adderExpr)(10)` returns, reached without a call.
 example :
-    Eval {} ∅ [lgtm| let n = 10 in fun(x : int) => ~(adderInner)]
+    Eval {} ∅ [lgtm| let n := 10; fun(x : int) => ~(adderInner)]
       (.closure [("n", .int 10)] [] [("x", .int)] adderInner) :=
   .ELet _ _ _ (.EIntLit 10) (.ELam _ _)
 
 -- The bound expression runs in the environment the `let` was reached in, so a `let` is not
--- recursive: `x` on the right of the `=` is the outer `x`, and with no outer `x` it is stuck.
-example : Eval {} ∅ [lgtm| let x = 1 in let x = x + 1 in x] (.int 2) :=
+-- recursive: `x` on the right of the `:=` is the outer `x`, and with no outer `x` it is stuck.
+example : Eval {} ∅ [lgtm| let x := 1; let x := x + 1; x] (.int 2) :=
   .ELet _ _ _ (.EIntLit 1)
     (.ELet _ _ _ (.EPlus (n₁ := 1) (n₂ := 1) _ _ (.EVarRef "x" rfl) (.EIntLit 1))
       (.EVarRef "x" rfl))
 
-example (v : Value) : ¬Eval {} ∅ [lgtm| let x = x + 1 in x] v := by
+example (v : Value) : ¬Eval {} ∅ [lgtm| let x := x + 1; x] v := by
   intro h
   cases h with
   | ELet _ _ _ hx _ =>
@@ -1312,7 +1312,7 @@ example : ¬Eval {} ∅ [lgtm| true] (.int 1) := by
   intro h; cases h
 
 /-- `x` when `b`, and `y` otherwise. -/
-lgtm private def pick(b : bool)(x : int)(y : int) : int := if b then {x} else {y}
+lgtm private def pick(b : bool)(x : int)(y : int) : int := if b then (x) else (y)
 
 #guard (pick.check {} []).isOk
 
@@ -1367,10 +1367,10 @@ private theorem pick.eq_ite {b : Bool} {x y : Int} {res : Value}
 
 -- The branch not taken is never evaluated, which is the whole of what a conditional does that a
 -- two-argument function could not: the `else` below has no value at all, and the call still has one.
-#guard !(({ pick with body := [lgtm| if b then {x} else {missing()}] } : FuncDecl).check {} []).isOk
+#guard !(({ pick with body := [lgtm| if b then (x) else (missing())] } : FuncDecl).check {} []).isOk
 
 example :
-    FuncDecl.Apply { pick with body := [lgtm| if b then {x} else {missing()}] } {} []
+    FuncDecl.Apply { pick with body := [lgtm| if b then (x) else (missing())] } {} []
       [.bool true, .int 1, .int 2] (.int 1) :=
   .EApply _ (.cons "b" (.bool true) (.cons "x" (.int 1) (.cons "y" (.int 2) .nil)))
     (.EIteTrue _ _ _ (.EVarRef "b" rfl) (.EVarRef "x" rfl))
@@ -1378,7 +1378,7 @@ example :
 /-- `xs` reversed when `b`, and as it came otherwise.  The branches are `list`s rather than `int`s,
 which is what the form being polymorphic comes to: a conditional produces whatever they produce. -/
 lgtm private def maybeReverse as"maybe-reverse"(b : bool)(xs : list int) : list int :=
-  if b then {reverse xs} else {xs}
+  if b then (reverse xs) else (xs)
 
 #guard (maybeReverse.check {} []).isOk
 
@@ -1401,7 +1401,7 @@ example (v : Value) (b : Bool) (vs : List Value)
 
 /-- `x` when the condition is spelled out, which is `pick` with its own condition: a declaration of no
 `bool` parameter that still runs a conditional. -/
-lgtm private def pickFirst as"pick-first"(x : int)(y : int) : int := if true then {x} else {y}
+lgtm private def pickFirst as"pick-first"(x : int)(y : int) : int := if true then (x) else (y)
 
 #guard (pickFirst.check {} []).isOk
 
@@ -1677,14 +1677,14 @@ private def arith : Globals :=
 
 -- A `let` shadows a global the same way a parameter does, so the name becomes a value rather than
 -- something to call.
-#guard (({ quad with body := [lgtm| let double = n in double] } : FuncDecl).check {} arith).isOk
+#guard (({ quad with body := [lgtm| let double := n; double] } : FuncDecl).check {} arith).isOk
 
-#guard !(({ quad with body := [lgtm| let double = n in double(1)] } : FuncDecl).check {} arith).isOk
+#guard !(({ quad with body := [lgtm| let double := n; double(1)] } : FuncDecl).check {} arith).isOk
 
 -- And `Env.lookup` reads it the same way round: the binding is found before the globals are
 -- consulted, so the closure `double` would have resolved to is never built.
 example :
-    FuncDecl.Apply { quad with body := [lgtm| let double = n in double] } {} arith [.int 3]
+    FuncDecl.Apply { quad with body := [lgtm| let double := n; double] } {} arith [.int 3]
       (.int 3) :=
   .EApply _ (.cons "n" (.int 3) .nil) (.ELet _ _ _ (.EVarRef "n" rfl) (.EVarRef "double" rfl))
 
@@ -3806,7 +3806,7 @@ rules out rather than something the type checker already did. -/
 /-- One less than a positive `n`.  The `else` is the branch the guard rules out, so it is written as
 the unreachable it is: annotated `int` because the branch beside it is, and evaluated by nothing. -/
 lgtm private def pred(n : int) : int :=
-  if 0 < n then {n - 1} else {unreachable"n is positive" : int}
+  if 0 < n then (n - 1) else (unreachable"n is positive" : int)
 
 #guard (pred.check {} []).isOk
 
