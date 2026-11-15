@@ -59,14 +59,15 @@ The linear order is as established in the ordering defined by THREADS.
 The MANAGER is required to get information about comments. -/
 lgtm def CommentThreads.nextThread (threads : struct CommentThreads) (manager : struct CommentManager) (version : inductive FileVersion) (selection : struct SelectedComment) : option (struct SelectedComment) :=
   let orderedThreads = CommentThreads.toThreadsOrdered(threads, manager) in
+  let expectThreadAt = fun (idx : int) => match orderedThreads[idx] with
+    | none => unreachable "Thread indexing is required to be total" : struct CommentThread
+    | some(thread) => thread in
   if version == selection.version then {
     match findIndex orderedThreads (fun (thread : struct CommentThread) => thread.value == selection.thread.value) with
       | none => none : struct SelectedComment
       | some(currentIndex) =>
         let nextIndex = min (currentIndex + 1) (length orderedThreads - 1) in
-        let nextThread = match orderedThreads[nextIndex] with
-            | none => unreachable "Thread indexing is required to be total" : struct CommentThread
-            | some(thread) => thread in
+        let nextThread = expectThreadAt(nextIndex) in
         some (new SelectedComment { version = version, thread = nextThread, comment = nextThread.value })
   } else {
     match orderedThreads with
@@ -84,14 +85,15 @@ The linear order is as established in the ordering defined by THREADS.
 The MANAGER is required to get information about comments. -/
 lgtm def CommentThreads.previousThread (threads : struct CommentThreads) (manager : struct CommentManager) (version : inductive FileVersion) (selection : struct SelectedComment) : option (struct SelectedComment) :=
   let orderedThreads = CommentThreads.toThreadsOrdered(threads, manager) in
+  let expectThreadAt = fun (idx : int) => match orderedThreads[idx] with
+    | none => unreachable "Thread indexing is required to be total" : struct CommentThread
+    | some(thread) => thread in
   if version == selection.version then {
     match findIndex orderedThreads (fun (thread : struct CommentThread) => thread.value == selection.thread.value) with
       | none => none : struct SelectedComment
       | some(currentIndex) =>
         let previousIndex = if currentIndex == 0 then { 0 } else { currentIndex - 1 } in
-        let previousThread = match orderedThreads[previousIndex] with
-            | none => unreachable "Thread indexing was proved to be total" : struct CommentThread
-            | some(pt) => pt in
+        let previousThread = expectThreadAt(previousIndex) in
         some (new SelectedComment { version = version, thread = previousThread, comment = previousThread.value })
   } else {
     match orderedThreads with
