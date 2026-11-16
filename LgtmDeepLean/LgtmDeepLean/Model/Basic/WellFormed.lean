@@ -36,6 +36,10 @@ structure Model.Declares (td : TypeDecls) : Prop where
   commentManager : td.ss.lookup "CommentManager" = some CommentManager
   comment : td.ss.lookup "Comment" = some Comment
   commentThreads : td.ss.lookup "CommentThreads" = some CommentThreads
+  /-- Added for `CommentThread.linearize.apply_exists`: that proof reads `thread`'s own `value`
+  and `children` fields at their declared types, where every theorem before it only ever read a
+  `CommentThread` back out of a `CommentThreads` or `CommentManager` value without opening it up. -/
+  commentThread : td.ss.lookup "CommentThread" = some CommentThread
 
 /-- The comment `manager` binds `ref` to: what a call to `CommentManager.get` answers with, read off
 the value. -/
@@ -69,6 +73,13 @@ is one `CommentManager.rootTimestamp?` has no answer about. -/
 def CommentManager.ContainsComments (manager : Value) (cs : List Value) : Prop :=
   ∀ c ∈ cs, ∃ ref, CommentManager.get? manager ref = some c
 
+/-- Every registered node names a comment the manager has: what `expectComment`'s `unreachable`
+branch assumes, and what a sort over the children needs in order to have a comparison for every
+pair it asks about. -/
+def CommentThreads.NodesCovered (manager threads : Value) : Prop :=
+  ∀ ref node, CommentThreads.node? threads ref = some node →
+    ∃ c, CommentManager.get? manager ref = some c
+
 /-- What a `CommentManager` value has to be: well typed, and well formed besides.
 
 A `structure ... : Prop` rather than a conjunction, so each clause keeps its name and a proof reads
@@ -84,6 +95,16 @@ structure CommentManager.WellFormed (td : TypeDecls) (manager : Value) : Prop wh
   This is what lets a thread node's `value` be turned back into the comment it names. -/
   refMatchesKey : ∀ ref c, CommentManager.get? manager ref = some c → c.field? "ref" = some ref
 
+/-- One descent of `linearize`: `child` is the node a child ref of the registered node `parent`
+resolves to.  Stated node-to-node, because a node is what the recursive call takes, and with the
+parent required to be registered so that a rank function witnessing well-foundedness only has to
+rank the nodes the pool actually holds. -/
+def CommentThreads.ChildEdge (threads child parent : Value) : Prop :=
+  ∃ parentRef childRefs childRef,
+    CommentThreads.node? threads parentRef = some parent ∧
+    parent.field? "children" = some (.list childRefs) ∧ childRef ∈ childRefs ∧
+    CommentThreads.node? threads childRef = some child
+
 /-- What a `CommentThreads` value has to be: well typed, and a node bound to the ref of the comment
 it is the thread of. -/
 structure CommentThreads.WellFormed (td : TypeDecls) (threads : Value) : Prop where
@@ -91,6 +112,23 @@ structure CommentThreads.WellFormed (td : TypeDecls) (threads : Value) : Prop wh
   hasType : threads.HasType td (.struct "CommentThreads")
   rootMatchesKey : ∀ ref node,
     CommentThreads.node? threads ref = some node → node.field? "value" = some ref
+  /-- No dangling child ref: a child of a registered node is itself registered.  Without this the
+  `none` branch of `threads.commentTreeNodes[childRef]` is reached, and `unreachable` has no value,
+  so the call has no derivation. -/
+  childrenRegistered : ∀ ref node childRefs child,
+    CommentThreads.node? threads ref = some node →
+    node.field? "children" = some (.list childRefs) → child ∈ childRefs →
+    ∃ childNode, CommentThreads.node? threads child = some childNode
+  /-- No cycle of child links.  This is what the fuel parameter stood in for: it is the measure the
+  recursion descends on, and so the reason a call to `linearize` has a derivation at all. -/
+  childEdgeWf : WellFounded (CommentThreads.ChildEdge threads)
+
+/-- A rank function decreasing across every descent is enough to witness `childEdgeWf`: every future
+construction proof will have a rank in hand rather than a `WellFounded` already assembled. -/
+theorem CommentThreads.wellFounded_childEdge_of_rank {threads : Value} (rank : Value → Nat)
+    (h : ∀ child parent, CommentThreads.ChildEdge threads child parent → rank child < rank parent) :
+    WellFounded (CommentThreads.ChildEdge threads) :=
+  Subrelation.wf (fun {_ _} hxy => h _ _ hxy) (InvImage.wf rank Nat.lt_wfRel.wf)
 
 /-! ## What typing gives about what is read out
 

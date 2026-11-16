@@ -56,6 +56,6 @@ What `Model.Declares` is a hypothesis about, discharged for the one table it is 
 Every step from `modelProgram` to a struct declaration is a projection or a `List.lookup` over a
 literal list, all of them exposed, so each clause holds by `rfl` — the table is not computed, it is
 the declarations written down. -/
-theorem Model.declares_modelProgram : Model.Declares modelProgram.typeDecls := ⟨rfl, rfl, rfl⟩
+theorem Model.declares_modelProgram : Model.Declares modelProgram.typeDecls := ⟨rfl, rfl, rfl, rfl⟩
 
 end

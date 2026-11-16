@@ -1023,6 +1023,26 @@ public theorem FuncDecl.apply_of_eval_app {td : TypeDecls} {env : Env} {x : Stri
     obtain ⟨rfl, rfl, rfl, rfl⟩ := hx
     exact ⟨_, hlen, hargs, .EApply _ hat (by simpa [FuncDecl.callEnv, Globals.env] using hbody)⟩
 
+/-- The converse of `FuncDecl.apply_of_eval_app`: a `FuncDecl.Apply` of `d` is an `Eval` of a call
+to whatever name the globals table holds `d` under, provided that name is not shadowed locally.
+
+Where that lemma takes a derivation about a call apart, this builds one: a proof that calls another
+declaration — stated as an `Apply` of it, which is what every theorem about a declaration concludes
+— is turned into the `Eval` of the `app` that invokes it, which is what a *caller's* body actually
+contains.  This is the step that makes a forward proof about a declaration calling another into a
+forward proof about the caller, the way `FuncDecl.apply_of_eval_app` makes a backward one. -/
+public theorem FuncDecl.eval_app_of_apply {td : TypeDecls} {env : Env} {x : String} {d : FuncDecl}
+    {args : List Expression} {vs : List Value} {v : Value} (hd : env.globals.lookup x = some d)
+    (hb : env.bindings.lookup x = none) (hlen : args.length = vs.length)
+    (hargs : ∀ p ∈ args.zip vs, Eval td env p.1 p.2) (h : d.Apply td env.globals vs v) :
+    Eval td env (.app (.varRef x) args) v := by
+  cases h with
+  | EApply _ hat hbody =>
+    refine Eval.EApp _ _ (Eval.EVarRef _ ?_) hlen hargs hat
+      (by simpa [FuncDecl.callEnv, Globals.env] using hbody)
+    rw [Env.lookup_of_globals hb, hd, Option.map_some]
+    simp [Globals.value, Globals.env, Env.closure]
+
 /-- Every declaration in a well-typed globals table is well typed, so a call to any of them returns
 a value of the type it declares. -/
 public theorem Globals.apply_hasType {td : TypeDecls} {gs : Globals} {x : String} {d : FuncDecl}

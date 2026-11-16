@@ -103,24 +103,17 @@ The MANAGER is required to get information about comments. -/
         | last :: _rest => some(new SelectedComment { version = version, thread = last, comment = last.value })
   )
 
-@[lgtm, forward] def CommentThread.linearizeRecWithFuel (threads : struct CommentThreads) (manager : struct CommentManager) (fuel : int) (thread : struct CommentThread) : list (struct Comment)
+@[lgtm, forward] def CommentThread.linearize (threads : struct CommentThreads) (manager : struct CommentManager) (thread : struct CommentThread) : list (struct Comment)
 
-@[lgtm] def CommentThread.linearizeRecWithFuel (threads : struct CommentThreads) (manager : struct CommentManager) (fuel : int) (thread : struct CommentThread) : list (struct Comment) :=
-  if fuel == 0 then (
-    [: struct Comment]
-  ) else (
-    let expectComment := fun (ref : struct CommentRef) => match CommentManager.get(manager, ref) with
-      | none => (unreachable "Comments are required to be present in the manager" : struct Comment)
-      | some(c) => c;
-    let comparisonFunction := fun (a : struct CommentRef) (b : struct CommentRef) => expectComment(a).createdTimestamp <= expectComment(b).createdTimestamp;
-    let sortedChildren := sortBy thread.children comparisonFunction;
-    expectComment(thread.value) :: flatMap sortedChildren (fun (childRef : struct CommentRef) => match threads.commentTreeNodes[childRef] with
-      | none => (unreachable "All comments must have an entry in commentTreeNodes" : list (struct Comment))
-      | some(childThread) => CommentThread.linearizeRecWithFuel(threads, manager, fuel - 1, childThread))
-  )
-
-@[lgtm] def CommentThread.linearize (thread : struct CommentThread) (threads : struct CommentThreads) (manager : struct CommentManager) : list (struct Comment) :=
-  CommentThread.linearizeRecWithFuel(threads, manager, length (toList threads.commentTreeNodes), thread)
+@[lgtm] def CommentThread.linearize (threads : struct CommentThreads) (manager : struct CommentManager) (thread : struct CommentThread) : list (struct Comment) :=
+  let expectComment := fun (ref : struct CommentRef) => match CommentManager.get(manager, ref) with
+    | none => (unreachable "Comments are required to be present in the manager" : struct Comment)
+    | some(c) => c;
+  let comparisonFunction := fun (a : struct CommentRef) (b : struct CommentRef) => expectComment(a).createdTimestamp <= expectComment(b).createdTimestamp;
+  let sortedChildren := sortBy thread.children comparisonFunction;
+  expectComment(thread.value) :: flatMap sortedChildren (fun (childRef : struct CommentRef) => match threads.commentTreeNodes[childRef] with
+    | none => (unreachable "All comments must have an entry in commentTreeNodes" : list (struct Comment))
+    | some(childThread) => CommentThread.linearize(threads, manager, childThread))
 
 /-- Given a SELECTION, select the next comment in the linear order.
 
@@ -128,7 +121,7 @@ The MANAGER is required to get information about comments. -/
     structure to find the other comments in the thread. -/
 @[lgtm] def CommentThreads.nextCommentInThread (threads : struct CommentThreads) (manager : struct CommentManager) (selection : struct SelectedComment) : struct SelectedComment :=
   let selectedThread := selection.thread;
-  let linearizedComments := CommentThread.linearize(selectedThread, threads, manager);
+  let linearizedComments := CommentThread.linearize(threads, manager, selectedThread);
   let linearizedCommentRefs := map linearizedComments (fun (c : struct Comment) => c.ref);
   let currentlySelectedRef := selection.comment;
   let matchesSelectedRef := fun (ref : struct CommentRef) => ref == currentlySelectedRef;
@@ -147,7 +140,7 @@ The MANAGER is required to get information about comments. -/
     structure to find the other comments in the thread. -/
 @[lgtm] def CommentThreads.previousCommentInThread (threads : struct CommentThreads) (manager : struct CommentManager) (selection : struct SelectedComment) : struct SelectedComment :=
   let selectedThread := selection.thread;
-  let linearizedComments := CommentThread.linearize(selectedThread, threads, manager);
+  let linearizedComments := CommentThread.linearize(threads, manager, selectedThread);
   let linearizedCommentRefs := map linearizedComments (fun (c : struct Comment) => c.ref);
   let currentlySelectedRef := selection.comment;
   let matchesSelectedRef := fun (ref : struct CommentRef) => ref == currentlySelectedRef;
@@ -172,7 +165,6 @@ def Model.CommentThreads.funcDecls : List FuncDecl :=
   , CommentThreads.nextCommentInThread
   , CommentThreads.previousCommentInThread
   , CommentThread.linearize
-  , CommentThread.linearizeRecWithFuel
   ]
 
 end
