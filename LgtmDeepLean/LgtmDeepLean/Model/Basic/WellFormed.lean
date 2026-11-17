@@ -12,7 +12,7 @@ other and that every declaration reading a comment out of a manager depends on.
 
 Having typing as a clause is what makes the field types of the model's structs available to the
 theorems below rather than something they would each have to assume: a type table these predicates
-can be read against is one that declares those structs, which is `Model.Declares`.
+can be read against is one that declares those structs, which is `Model.DeclaresTypes`.
 
 Extrinsic, in the style of `Value.HasType`: a predicate over the value rather than a field of it.  A
 `Value` is what `Eval` builds, and it carries no proofs, so an invariant about one is a hypothesis a
@@ -31,8 +31,14 @@ model's own declarations, under the model's own names.
 A hypothesis on the table rather than `modelProgram.typeDecls` spelled out, which this module cannot
 mention — the model is assembled from modules including this one.  It is also the weaker statement:
 a theorem here reads the field types of `Comment` and friends, and any table agreeing with the model
-at those names serves.  `Model.declares_modelProgram` is where the model's own table meets it. -/
-structure Model.Declares (td : TypeDecls) : Prop where
+at those names serves.
+
+The types half of `Model.Declares`, which extends this with the declarations a *globals* table has
+to hold and is what a theorem about a call takes.  The two are separate because a clause naming a
+`FuncDecl` cannot be written here — the modules declaring them import this one — and because the
+lemmas below read struct declarations and call nothing, so this is all they can be asked for.
+`Model.declares_modelProgram` is where the model's own tables meet both. -/
+structure Model.DeclaresTypes (td : TypeDecls) : Prop where
   commentManager : td.ss.lookup "CommentManager" = some CommentManager
   comment : td.ss.lookup "Comment" = some Comment
   commentThreads : td.ss.lookup "CommentThreads" = some CommentThreads
@@ -40,6 +46,16 @@ structure Model.Declares (td : TypeDecls) : Prop where
   and `children` fields at their declared types, where every theorem before it only ever read a
   `CommentThread` back out of a `CommentThreads` or `CommentManager` value without opening it up. -/
   commentThread : td.ss.lookup "CommentThread" = some CommentThread
+  /-- Added for `CommentThreads.nextCommentInThread.progress`: a selection is the argument that
+  declaration opens up, and its `thread` and `comment` fields are what the body reads. -/
+  selectedComment : td.ss.lookup "SelectedComment" = some SelectedComment
+  /-- Added for `CommentThreads.nextCommentInThread.progress`: the `==` the search in that body
+  runs compares two `CommentRef`s, and nothing about a value typed `struct CommentRef` says what
+  `Value.beq?` makes of two of them until the declaration is read — one field holding a `string`,
+  which is what `CommentRef.beq?_eq_some` turns into an answer.  Every clause above is read to find a
+  *field's* type; this one is read to the bottom, which is what a comparison needs and a field read
+  never does. -/
+  commentRef : td.ss.lookup "CommentRef" = some CommentRef
 
 /-- The comment `manager` binds `ref` to: what a call to `CommentManager.get` answers with, read off
 the value. -/
@@ -139,13 +155,15 @@ lookup in one of them answers with is of that map's value type, which is all the
 read out of a manager or a thread pool can be known to be. -/
 
 /-- A comment read out of a well-formed manager is a `Comment`. -/
-theorem CommentManager.hasType_get? {td : TypeDecls} {manager : Value} (hd : Model.Declares td)
+theorem CommentManager.hasType_get? {td : TypeDecls} {manager : Value}
+    (hd : Model.DeclaresTypes td)
     (hwf : CommentManager.WellFormed td manager) {ref c : Value}
     (h : CommentManager.get? manager ref = some c) : c.HasType td (.struct "Comment") :=
   Value.hasType_lookupField hwf.hasType hd.commentManager rfl h
 
 /-- A thread node read out of a well-formed thread pool is a `CommentThread`. -/
-theorem CommentThreads.hasType_node? {td : TypeDecls} {threads : Value} (hd : Model.Declares td)
+theorem CommentThreads.hasType_node? {td : TypeDecls} {threads : Value}
+    (hd : Model.DeclaresTypes td)
     (hwf : CommentThreads.WellFormed td threads) {ref node : Value}
     (h : CommentThreads.node? threads ref = some node) :
     node.HasType td (.struct "CommentThread") :=
@@ -157,7 +175,8 @@ Was a clause of `CommentManager.WellFormed`, so that a theorem about the order c
 needed no type table and no typing hypothesis; now that typing is a clause it is a consequence, and
 one a caller of `CommentThreads.asAlist` no longer has to be handed separately.  `createdTimestamp`
 is an `int` field of `Comment`, and `CommentManager.hasType_get?` says the comment is one. -/
-theorem CommentManager.timestampIsInt {td : TypeDecls} {manager : Value} (hd : Model.Declares td)
+theorem CommentManager.timestampIsInt {td : TypeDecls} {manager : Value}
+    (hd : Model.DeclaresTypes td)
     (hwf : CommentManager.WellFormed td manager) {ref c : Value}
     (h : CommentManager.get? manager ref = some c) :
     ∃ i : Int, c.field? "createdTimestamp" = some (.int i) := by

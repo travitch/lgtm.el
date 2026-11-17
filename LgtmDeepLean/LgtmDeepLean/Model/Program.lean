@@ -29,8 +29,9 @@ A new `LgtmDeepLean/Model/Foo.lean` joins the model in two steps:
 
 Nothing in `Model.Tests`, which checks `modelProgram`, and nothing in `Model.WellTyped`, whose
 theorem runs that same check: both are about whatever this is, and neither names a declaration.  A
-new struct that a well-formedness predicate is stated about does belong in `Model.Declares`, which
-is the one place a name is written down twice.
+new struct that a well-formedness predicate is stated about does belong in `Model.DeclaresTypes`,
+and a new declaration that a theorem about a call names belongs in `Model.Declares` below — those
+are the one place a name is written down twice.
 
 Appending rather than keying by name is deliberate.  `Program` is a list per kind and the tables are
 derived from it by `Program.globals` and friends; whether two modules declared the same name twice
@@ -50,12 +51,42 @@ def modelProgram : Program where
   inductiveDecls := Model.Basic.inductiveDecls
   funcDecls := Model.Basic.funcDecls ++ Model.CommentThreads.funcDecls ++ Model.CommentManager.funcDecls ++ Model.Location.funcDecls ++ Model.Files.funcDecls
 
-/-- The model's table declares the model's structs.
+/-- The tables a theorem about a call into the model is read against: the model's structs under the
+model's names, and the model's declarations under theirs.
 
-What `Model.Declares` is a hypothesis about, discharged for the one table it is really wanted of.
-Every step from `modelProgram` to a struct declaration is a projection or a `List.lookup` over a
-literal list, all of them exposed, so each clause holds by `rfl` — the table is not computed, it is
-the declarations written down. -/
-theorem Model.declares_modelProgram : Model.Declares modelProgram.typeDecls := ⟨rfl, rfl, rfl, rfl⟩
+`Model.DeclaresTypes` is the first half, extended here rather than restated because the two are
+wanted in different places.  A lemma reading a field type calls nothing and takes the parent
+(`CommentManager.hasType_get?` and the two beside it); a theorem about a call needs both, since a
+body calls another declaration by *mentioning its name* and a `varRef` resolves through the globals
+table the body is run under (`FuncDecl.apply_of_eval_app`) — nothing ties the name a body writes to
+the `FuncDecl` this module collected, and a table holding something else under
+`"CommentManager.get"` runs a different program.  So the clauses below are the other half of what it
+means for a table to be the model's, and this is the one hypothesis that says it.
+
+Bundled because unbundled it is a line per name in every signature, which is what it was.  The cost
+is that a theorem taking this asks for every name in it, including those its own proof never calls;
+it comes to nothing where the tables are the model's, which is where they are really wanted, and
+`Model.declares_modelProgram` discharges every clause at once.  A theorem that wants to be read
+against an arbitrary table can still take the single lookup it needs — the clauses are projections,
+so `hDeclares.get` is what it is passed, and `hDeclares.toDeclaresTypes` is what a lemma asking for
+the parent gets.
+
+Clauses arrive as the theorems that read a struct or call a name arrive. -/
+structure Model.Declares (td : TypeDecls) (gs : Globals) : Prop extends Model.DeclaresTypes td where
+  get : gs.lookup "CommentManager.get" = some CommentManager.get
+  asAlist : gs.lookup "CommentThreads.asAlist" = some CommentThreads.asAlist
+  sortThreadLists : gs.lookup "CommentThreads.asAlist.sortThreadLists" =
+    some CommentThreads.asAlist.sortThreadLists
+  linearize : gs.lookup "CommentThread.linearize" = some CommentThread.linearize
+
+/-- The model's tables are the model's: what `Model.Declares` is a hypothesis about, discharged for
+the one pair of tables it is really wanted of.
+
+Every step from `modelProgram` to a declaration is a projection, a `List.map` or a `List.lookup`
+over a literal list, all of them exposed, so each clause holds by `rfl` — the tables are not
+computed, they are the declarations written down. -/
+theorem Model.declares_modelProgram :
+    Model.Declares modelProgram.typeDecls modelProgram.globals :=
+  ⟨⟨rfl, rfl, rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, rfl⟩
 
 end

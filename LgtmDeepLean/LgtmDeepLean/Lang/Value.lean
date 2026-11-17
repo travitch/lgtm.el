@@ -156,6 +156,35 @@ otherwise, and introduces nothing. -/
         simp
       · simpa [h] using ih
 
+/-- And what it does to *which* fields there are: nothing.  Rebinding happens in place, so the names
+come out in the order they went in, which is what carries `Value.HasType`'s names clause across an
+update. -/
+@[simp] public theorem FieldValues.map_fst_update {fvs us : FieldValues} :
+    (FieldValues.update fvs us).map Prod.fst = fvs.map Prod.fst := by
+  induction fvs with
+  | nil => simp [FieldValues.update]
+  | cons p fvs ih =>
+      obtain ⟨g, v⟩ := p
+      cases hu : us.lookup g <;> simpa [FieldValues.update, hu] using ih
+
+/-- Two association lists whose names are a permutation of each other resolve the same names.
+
+`List.lookup_isSome_congr` for a permutation rather than for equal name lists, which is what
+`Value.HasType`'s names clause now gives: what a lookup can answer depends on which names are there
+and not on their order. -/
+public theorem List.lookup_isSome_of_perm_keys {α β γ : Type} [BEq α] [LawfulBEq α]
+    {as : List (α × β)} {bs : List (α × γ)}
+    (h : (as.map Prod.fst).Perm (bs.map Prod.fst)) (k : α) :
+    (as.lookup k).isSome = (bs.lookup k).isSome := by
+  have hmem := h.mem_iff (a := k)
+  simp only [List.mem_map] at hmem
+  have ha : (as.lookup k).isSome = true ↔ ∃ p, p ∈ as ∧ (k == p.fst) = true :=
+    List.lookup_isSome_iff
+  have hb : (bs.lookup k).isSome = true ↔ ∃ p, p ∈ bs ∧ (k == p.fst) = true :=
+    List.lookup_isSome_iff
+  rw [Bool.eq_iff_iff, ha, hb]
+  grind
+
 /-- The value `f` is bound to in `fvs` beside the fields that are left, or `none` where `fvs` does
 not bind `f`.
 
@@ -1101,14 +1130,26 @@ on `Expression.optionNone` settles. -/
 /-- The name is declared, the value is bound at exactly the fields the declaration lists, and each
 one holds a value of the type declared for it.
 
-The two domains have to match for the same reason a closure's do: a field the declaration has not
+The names have to match for the same reason a closure's domains do: a field the declaration has not
 heard of would make `structGet` on it ill typed while the value carried something anyway, and a
-declared field the value lacks would make `structGet` well typed with nothing to hand back.  One
-`Bool` equality says both, since neither side mentions `HasType` and so neither needs splitting the
-way the closure case does. -/
+declared field the value lacks would make `structGet` well typed with nothing to hand back.
+
+A permutation of the declaration's names rather than agreement about which names a `lookup`
+answers for, which is the weaker statement it used to be and the reason `Progress` was false.
+`List.lookup` stops at the first binding, so agreement about what it answers says nothing about a
+*second* binding of a declared field: it may hold anything, a hashmap or a closure among them, and
+then `Value.beq?` has no answer for two such values — a well-typed pair a comparison gives up on,
+which is `Stuck.equalsIncomparable` at an expression that checks.  Counting the names rules that
+out, since a repeated name makes the value's list one longer than the declaration's.
+
+It costs nothing to establish.  `Expression.fieldsComplete` already asks for this very permutation
+of a `structNew` — a field given twice is one of the three things it turns down — and
+`FieldValues.update` rebinds in place (`FieldValues.map_fst_update`), so neither way of building a
+struct value can produce a repeat.  `List.lookup_isSome_of_perm_keys` recovers the old clause where
+a proof wants it. -/
 | struct {name : String} {sd : StructDecl} {fvs : FieldValues} :
     td.ss.lookup name = some sd →
-    (∀ f, (sd.fields.lookup f).isSome = (fvs.lookup f).isSome) →
+    (fvs.map Prod.fst).Perm (sd.fields.map Prod.fst) →
     (∀ f t v, sd.fields.lookup f = some t → fvs.lookup f = some v → HasType td v t) →
     HasType td (.struct name fvs) (.struct name)
 /-- The type's name is declared, that declaration has the constructor the value was built by, and
@@ -1357,15 +1398,15 @@ alike, so a struct value has at most one type, and it is the declaration — the
     {t : Ty} :
     Value.HasType td (.struct name fvs) t ↔
       ∃ sd, td.ss.lookup name = some sd
-        ∧ (∀ f, (sd.fields.lookup f).isSome = (fvs.lookup f).isSome)
+        ∧ (fvs.map Prod.fst).Perm (sd.fields.map Prod.fst)
         ∧ (∀ f t' v, sd.fields.lookup f = some t' → fvs.lookup f = some v → Value.HasType td v t')
         ∧ t = .struct name := by
   constructor
   · intro h
     cases h with
-    | struct hsd hdom htys => exact ⟨_, hsd, hdom, htys, rfl⟩
-  · rintro ⟨sd, hsd, hdom, htys, rfl⟩
-    exact .struct hsd hdom htys
+    | struct hsd hnames htys => exact ⟨_, hsd, hnames, htys, rfl⟩
+  · rintro ⟨sd, hsd, hnames, htys, rfl⟩
+    exact .struct hsd hnames htys
 
 /-- What it takes for a value of an inductive type to have a type, as one existential over the
 declaration its type's name resolves to and the data types its constructor takes.
@@ -1424,6 +1465,19 @@ since a base type is carried by exactly one constructor. -/
   · rintro ⟨b, rfl⟩
     exact .bool b
 
+/-- And a value of a hashmap type is a `.hashmap`.
+
+The same direction as the three above — the type is given and the value's shape is the unknown — for
+the one compound type whose bindings a reader of the value need not be told anything about: what a
+proof building an `Eval.EHashmapGet` needs of the map is the `KeyValues` the rule matches on, and
+the types its keys and values stand at are `Value.hasType_hashmap_iff`'s business rather than this
+read's.  An `∃` rather than an `iff` for that reason: the converse would have to produce those
+types, which is the clause this deliberately drops. -/
+public theorem Value.eq_hashmap_of_hasType {td : TypeDecls} {v : Value} {kt vt : Ty}
+    (hv : v.HasType td (.hashmap kt vt)) : ∃ kvs, v = .hashmap kvs := by
+  cases hv with
+  | hashmap _ _ => exact ⟨_, rfl⟩
+
 /-! ### Reading a struct value's fields
 
 What `Eval`'s `EStructGet` and `hashmapGet` read off a value, with the shapes neither of them can
@@ -1463,9 +1517,10 @@ public theorem Value.hasType_field {td : TypeDecls} {v : Value} {name : String} 
     (hsd : td.ss.lookup name = some sd) (hf : sd.fields.lookup f = some t) :
     ∃ w, v.field? f = some w ∧ w.HasType td t := by
   cases hv with
-  | @struct _ sd' fvs hsd' hdom htys =>
+  | @struct _ sd' fvs hsd' hnames htys =>
       obtain rfl : sd' = sd := by grind
-      have hdomf : (fvs.lookup f).isSome := by rw [← hdom f, hf]; rfl
+      have hdomf : (fvs.lookup f).isSome := by
+        rw [List.lookup_isSome_of_perm_keys hnames f, hf]; rfl
       obtain ⟨w, hw⟩ := Option.isSome_iff_exists.mp hdomf
       exact ⟨w, by simpa [Value.field?] using hw, htys f t w hf hw⟩
 
@@ -1575,7 +1630,7 @@ public theorem Value.hasType_struct_of_fields {td : TypeDecls} {name : String} {
     (hnames : fvs.map Prod.fst = sd.fields.map Prod.fst)
     (hall : ∀ p ∈ fvs.zip sd.fields, Value.HasType td p.1.2 p.2.2) :
     Value.HasType td (.struct name fvs) (.struct name) :=
-  .struct hsd (List.lookup_isSome_congr hnames.symm)
+  .struct hsd (hnames ▸ List.Perm.refl _)
     fun _ _ _ hft hfv => hall _ (List.mem_zip_of_lookup hnames hfv hft)
 
 /-- Updating preserves the types the fields are held to.
@@ -1709,3 +1764,106 @@ public theorem Env.hasType_callEnv {td : TypeDecls} {d : FuncDecl} {gs : Globals
     {args : List Value} (hgs : Globals.WellTyped td gs) (h : ArgsHaveType td d.parameters args) :
     Env.HasType td (d.callEnv gs args) d.parameters := by
   simpa [FuncDecl.callEnv] using Env.hasType_extend h (Globals.hasType_env hgs)
+
+/-! ## The shapes a rule asks of a value
+
+One predicate per `Value` constructor that a rule of `Eval` pattern matches on.  A mismatch rule
+negates one of these: `¬v.IsBool` is what leaves a conditional stuck on a condition neither
+`EIteTrue` nor `EIteFalse` accepts. -/
+
+/-- `v` is a `bool`: what a conditional asks of its condition, `boolAnd` and `boolOr` of their
+operands, `listSortBy` of what its comparison answered, and `listFindIndex` of what its predicate
+answered. -/
+@[expose] public def Value.IsBool (v : Value) : Prop := ∃ b, v = .bool b
+
+/-- `v` is an `int`: what `plus`, `minus`, `min` and `max` ask of their operands, and `listIndex` of
+its index. -/
+@[expose] public def Value.IsInt (v : Value) : Prop := ∃ i, v = .int i
+
+/-- `v` is an option: what `optionMatch` asks of its scrutinee. -/
+@[expose] public def Value.IsOption (v : Value) : Prop := ∃ o, v = .option o
+
+/-- `v` is a list: what the list forms ask of their first operand, and `listFlatMap` of what each of
+its calls produced. -/
+@[expose] public def Value.IsList (v : Value) : Prop := ∃ vs, v = .list vs
+
+/-- `v` is a hashmap: what the hashmap forms ask of their first operand. -/
+@[expose] public def Value.IsHashmap (v : Value) : Prop := ∃ kvs, v = .hashmap kvs
+
+/-- `v` is a tuple: what `tupleGet` asks of its operand. -/
+@[expose] public def Value.IsTuple (v : Value) : Prop := ∃ vs, v = .tuple vs
+
+/-- `v` is a closure: what a call asks of its function, and every form that calls one per element or
+per binding asks of its second operand. -/
+@[expose] public def Value.IsClosure (v : Value) : Prop :=
+  ∃ cbindings cglobals ps body, v = .closure cbindings cglobals ps body
+
+/-- `v` is a struct value: what `structGet` and `structUpdate` ask of their operand. -/
+@[expose] public def Value.IsStruct (v : Value) : Prop := ∃ name fvs, v = .struct name fvs
+
+/-- `v` is a value of an inductive type: what `indMatch` asks of its scrutinee. -/
+@[expose] public def Value.IsInd (v : Value) : Prop := ∃ name c vs, v = .ind name c vs
+
+/-! ### The shapes typing gives
+
+A value of a type is of the shape that type's values have.  This is what refutes a mismatch rule
+where the value in hand is known only by its type — a call's result, read off the declaration's
+`resultType` through `FuncDecl.Apply.hasType`, is the case that keeps arising — and it is the
+`Value.hasType_*_iff` lemmas read at the shape rather than at the payload.
+
+Only the four shapes carried by one constructor need stating.  `Value.IsStruct` and
+`Value.IsHashmap` are already what `Value.eq_struct_of_hasType` and `Value.eq_hashmap_of_hasType`
+produce, and nothing here asks a type for a closure or a tuple. -/
+
+public theorem Value.isBool_of_hasType {td : TypeDecls} {v : Value} (h : v.HasType td .bool) :
+    v.IsBool := by
+  cases h with
+  | bool b => exact ⟨b, rfl⟩
+
+public theorem Value.isInt_of_hasType {td : TypeDecls} {v : Value} (h : v.HasType td .int) :
+    v.IsInt := by
+  cases h with
+  | int i => exact ⟨i, rfl⟩
+
+public theorem Value.isList_of_hasType {td : TypeDecls} {v : Value} {t : Ty}
+    (h : v.HasType td (.list t)) : v.IsList := by
+  cases h with
+  | list _ => exact ⟨_, rfl⟩
+
+/-- Both shapes an option type's values have, which is why this says nothing about what is inside:
+an empty option and one holding a value are equally what `Stuck.optionMatchNotOption` is refuted
+by. -/
+public theorem Value.isOption_of_hasType {td : TypeDecls} {v : Value} {t : Ty}
+    (h : v.HasType td (.option t)) : v.IsOption := by
+  cases h with
+  | optionNone => exact ⟨_, rfl⟩
+  | optionSome _ => exact ⟨_, rfl⟩
+
+/-- A value a field can be read off is a struct value: `Value.field?` answers for nothing else.
+What `Stuck.structGetNotStruct` is refuted by, stated over `field?` so that a caller holding a field
+read of its own spends it directly. -/
+public theorem Value.isStruct_of_field? {v : Value} {f : FieldName} {w : Value}
+    (h : v.field? f = some w) : v.IsStruct := by
+  cases v <;> first
+    | exact ⟨_, _, rfl⟩
+    | simp [Value.field?] at h
+
+/-! ## Helpers over values
+
+A value typed as a struct or as a list is, in fact, one: canonical forms over `Value.HasType`, read
+as existentials rather than as the `Value.hasType_*_iff` lemmas' equations, so a forward proof that
+only has an abstract `v : Value` and a `v.HasType ...` in hand can replace `v` by the literal shape
+`Eval`'s rules need to pattern-match on — `Eval.EStructGet` and friends ask for `Eval td env e
+(.struct name fvs)`, not for `v.HasType td (.struct name)`, and no inversion principle here has had
+to bridge the two before: every one of them is handed a value already known to be shaped like this,
+by the `Eval` it inverts. -/
+
+public theorem Value.eq_struct_of_hasType {td : TypeDecls} {v : Value} {name : String}
+    (hv : v.HasType td (.struct name)) : ∃ fvs, v = .struct name fvs := by
+  cases hv with
+  | struct _ _ _ => exact ⟨_, rfl⟩
+
+public theorem Value.eq_list_of_hasType {td : TypeDecls} {v : Value} {t : Ty}
+    (hv : v.HasType td (.list t)) : ∃ vs, v = .list vs ∧ ∀ w ∈ vs, w.HasType td t := by
+  cases hv with
+  | list hall => exact ⟨_, rfl, hall⟩

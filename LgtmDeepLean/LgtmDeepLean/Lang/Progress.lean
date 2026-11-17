@@ -59,45 +59,6 @@ rebuilt from the argument types, and the totality of the two comparisons on the 
 insist on.  `Value.cmp?` on a `Ty.orderable` type is in reach; `Value.beq?` on a `Ty.comparable` one
 rests on `TypeDecls.budget` being enough fuel to walk the declarations, which nothing has proved. -/
 
-/-! ## The shapes a rule asks of a value
-
-One predicate per `Value` constructor that a rule of `Eval` pattern matches on.  A mismatch rule
-negates one of these: `¬v.IsBool` is what leaves a conditional stuck on a condition neither
-`EIteTrue` nor `EIteFalse` accepts. -/
-
-/-- `v` is a `bool`: what a conditional asks of its condition, `boolAnd` and `boolOr` of their
-operands, `listSortBy` of what its comparison answered, and `listFindIndex` of what its predicate
-answered. -/
-@[expose] public def Value.IsBool (v : Value) : Prop := ∃ b, v = .bool b
-
-/-- `v` is an `int`: what `plus`, `minus`, `min` and `max` ask of their operands, and `listIndex` of
-its index. -/
-@[expose] public def Value.IsInt (v : Value) : Prop := ∃ i, v = .int i
-
-/-- `v` is an option: what `optionMatch` asks of its scrutinee. -/
-@[expose] public def Value.IsOption (v : Value) : Prop := ∃ o, v = .option o
-
-/-- `v` is a list: what the list forms ask of their first operand, and `listFlatMap` of what each of
-its calls produced. -/
-@[expose] public def Value.IsList (v : Value) : Prop := ∃ vs, v = .list vs
-
-/-- `v` is a hashmap: what the hashmap forms ask of their first operand. -/
-@[expose] public def Value.IsHashmap (v : Value) : Prop := ∃ kvs, v = .hashmap kvs
-
-/-- `v` is a tuple: what `tupleGet` asks of its operand. -/
-@[expose] public def Value.IsTuple (v : Value) : Prop := ∃ vs, v = .tuple vs
-
-/-- `v` is a closure: what a call asks of its function, and every form that calls one per element or
-per binding asks of its second operand. -/
-@[expose] public def Value.IsClosure (v : Value) : Prop :=
-  ∃ cbindings cglobals ps body, v = .closure cbindings cglobals ps body
-
-/-- `v` is a struct value: what `structGet` and `structUpdate` ask of their operand. -/
-@[expose] public def Value.IsStruct (v : Value) : Prop := ∃ name fvs, v = .struct name fvs
-
-/-- `v` is a value of an inductive type: what `indMatch` asks of its scrutinee. -/
-@[expose] public def Value.IsInd (v : Value) : Prop := ∃ name c vs, v = .ind name c vs
-
 /-- `Stuck td env e`: evaluating `e` under `env` reaches a form no rule of `Eval` can fire on.
 
 This is the relation progress is stated over, and it is `Eval` read for failure: see the module
@@ -532,6 +493,377 @@ public theorem Stuck.not_unreachable {td : TypeDecls} {env : Env} {t : Ty} {why 
     ¬Stuck td env (.unreachable t why) := by
   rintro h
   cases h
+
+/-! ## Refuting a derivation, form by form
+
+`¬Stuck` read along a body is what a progress proof about one declaration does, and it is the same
+work at every form: take the relation apart, and refute each of that form's rules in turn.  A
+propagation rule is refuted by `¬Stuck` of the subexpression it propagates from, and a mismatch rule
+by *reading* the value a subexpression produced — every one of them carries an `Eval` premise, which
+is why the lemmas below ask for hypotheses about what the subexpressions can evaluate to rather than
+for evaluations of them.
+
+Those hypotheses are stated over *every* value a subexpression can produce, not over one.  Nothing
+here proves `Eval` deterministic, so the value a `Stuck` derivation's premise produced need not be
+the one a separate derivation produced, and a lemma handed a single evaluation would have nothing to
+say to the mismatch rules.  Where a subexpression is determined — a `varRef`, a `lam` — the
+quantifier costs its caller nothing: `Eval.varRef_inv` and `Eval.lam_inv` answer for every value.
+
+A form whose calls are the thing that can go wrong gets one hypothesis per element or pair rather
+than one over the list, matching the rules: `Eval`'s premises run over a zip because a mapping
+evaluates every call, where `Stuck` names the one element whose call went wrong.  The
+`ArgsHaveType` clause and the `¬Stuck` clause are bundled into that one hypothesis, since a caller
+proves both from the same facts about the element.
+
+One lemma per form the model's bodies use, each asking for the premises of its own rules and
+nothing else. -/
+
+public theorem Stuck.not_varRef {td : TypeDecls} {env : Env} {x : String} {v : Value}
+    (h : env.lookup x = some v) : ¬Stuck td env (.varRef x) := by
+  rintro hs
+  cases hs with
+  | varRefUnbound hnone => simp [h] at hnone
+
+public theorem Stuck.not_lam {td : TypeDecls} {env : Env} {ps : List (String × Ty)}
+    {body : Expression} : ¬Stuck td env (.lam ps body) := by
+  rintro hs
+  cases hs
+
+public theorem Stuck.not_intLit {td : TypeDecls} {env : Env} {i : Int} :
+    ¬Stuck td env (.intLit i) := by
+  rintro hs
+  cases hs
+
+/-- A `let` is not stuck where what it binds is not stuck and its body is not stuck under any
+binding that expression can produce.  The two rules of `Stuck` it has, one apiece. -/
+public theorem Stuck.not_let {td : TypeDecls} {env : Env} {x : String} {e body : Expression}
+    (he : ¬Stuck td env e)
+    (hbody : ∀ v, Eval td env e v → ¬Stuck td ⟨(x, v) :: env.bindings, env.globals⟩ body) :
+    ¬Stuck td env (.let_ x e body) := by
+  rintro hs
+  cases hs with
+  | letBound h => exact he h
+  | letBody hev h => exact hbody _ hev h
+
+/-- Reading a field is not stuck where its operand is not stuck and every value that operand can
+produce carries the field.  One hypothesis refutes both mismatch rules: a value `Value.field?`
+answers for is a struct value, and the answer is what `structGetMissing` says there is none of. -/
+public theorem Stuck.not_structGet {td : TypeDecls} {env : Env} {e : Expression} {f : FieldName}
+    (he : ¬Stuck td env e) (hf : ∀ v, Eval td env e v → ∃ w, v.field? f = some w) :
+    ¬Stuck td env (.structGet e f) := by
+  rintro hs
+  cases hs with
+  | structGetOperand h => exact he h
+  | structGetNotStruct hev hns =>
+    obtain ⟨w, hw⟩ := hf _ hev
+    exact hns (Value.isStruct_of_field? hw)
+  | structGetMissing hev hnone =>
+    obtain ⟨w, hw⟩ := hf _ hev
+    simp only [Value.field?] at hw
+    simp [hw] at hnone
+
+/-- The same at an operand that is a name the environment binds, which is where most field reads in
+a body are: the operand is determined, so what it produces is that value and the field hypothesis
+collapses to one read. -/
+public theorem Stuck.not_structGet_varRef {td : TypeDecls} {env : Env} {x : String}
+    {v : Value} {f : FieldName} {w : Value}
+    (hx : env.lookup x = some v) (hf : v.field? f = some w) :
+    ¬Stuck td env (.structGet (.varRef x) f) :=
+  Stuck.not_structGet (Stuck.not_varRef hx) fun u hu => by
+    rw [Option.some.inj ((Eval.varRef_inv hu).symm.trans hx)]
+    exact ⟨w, hf⟩
+
+/-- Building a struct is not stuck where none of its fields is: it has the one rule, and no mismatch
+rule for a caller to refute. -/
+public theorem Stuck.not_structNew {td : TypeDecls} {env : Env} {name : String}
+    {fes : List (FieldName × Expression)} (hfes : ∀ p ∈ fes, ¬Stuck td env p.2) :
+    ¬Stuck td env (.structNew name fes) := by
+  rintro hs
+  cases hs with
+  | structNewField hmem h => exact hfes _ hmem h
+
+/-- A call to a name the environment binds to a closure is not stuck where no argument is stuck, the
+values the arguments can produce fit the closure's parameters, and the body is not stuck under them.
+
+The closure is given by the binding rather than existential, which is what lets the last two
+hypotheses speak of *this* closure's parameters and body: a `varRef` is determined, so the closure
+`appArgs` and `appBody` entered is the one the environment holds.  It is given as an `Env.closure`
+rather than as a `Value.closure` of two halves, because that is the form a `lam` evaluates to
+(`Eval.lam_inv`) and the form `Globals.value` builds — and it is what makes the body's environment
+an `Env.extend` of the environment the closure captured. -/
+public theorem Stuck.not_app_varRef {td : TypeDecls} {env cenv : Env} {x : String} {ps : Context}
+    {fbody : Expression} {args : List Expression}
+    (hx : env.lookup x = some (cenv.closure ps fbody))
+    (hargs : ∀ a ∈ args, ¬Stuck td env a)
+    (hat : ∀ vs, args.length = vs.length → (∀ p ∈ args.zip vs, Eval td env p.1 p.2) →
+      ArgsHaveType td ps vs)
+    (hbody : ∀ vs, args.length = vs.length → (∀ p ∈ args.zip vs, Eval td env p.1 p.2) →
+      ¬Stuck td (Env.extend cenv ps vs) fbody) :
+    ¬Stuck td env (.app (.varRef x) args) := by
+  rintro hs
+  cases hs with
+  | appFn h => exact Stuck.not_varRef hx h
+  | appFnNotClosure hev hnc =>
+    obtain rfl := Option.some.inj ((Eval.varRef_inv hev).symm.trans hx)
+    exact hnc ⟨_, _, _, _, rfl⟩
+  | appArgs hev hlen hvs hnat =>
+    obtain ⟨rfl, rfl, rfl, rfl⟩ : _ ∧ _ ∧ _ ∧ _ := by
+      simpa [Env.closure, Value.closure.injEq] using
+        Option.some.inj ((Eval.varRef_inv hev).symm.trans hx)
+    exact hnat (hat _ hlen hvs)
+  | appArg hmem h => exact hargs _ hmem h
+  | appBody hev hlen hvs _ h =>
+    obtain ⟨rfl, rfl, rfl, rfl⟩ : _ ∧ _ ∧ _ ∧ _ := by
+      simpa [Env.closure, Value.closure.injEq] using
+        Option.some.inj ((Eval.varRef_inv hev).symm.trans hx)
+    exact hbody _ hlen hvs h
+
+/-- And a call to a name the *globals* declare, which is how a body calls another declaration.
+
+`Stuck.not_app_varRef` at the closure `Env.lookup` builds out of the table, so that the body's
+environment is the one a call really evaluates it in — `FuncDecl.callEnv`, which is what every
+theorem about a declaration is stated over.  The two hypotheses are what `Env.lookup` consults, in
+the order it consults them, exactly as in `FuncDecl.apply_of_eval_app`. -/
+public theorem Stuck.not_app_global {td : TypeDecls} {env : Env} {x : String} {d : FuncDecl}
+    {args : List Expression} (hd : env.globals.lookup x = some d)
+    (hb : env.bindings.lookup x = none)
+    (hargs : ∀ a ∈ args, ¬Stuck td env a)
+    (hat : ∀ vs, args.length = vs.length → (∀ p ∈ args.zip vs, Eval td env p.1 p.2) →
+      ArgsHaveType td d.parameters vs)
+    (hbody : ∀ vs, args.length = vs.length → (∀ p ∈ args.zip vs, Eval td env p.1 p.2) →
+      ¬Stuck td (d.callEnv env.globals vs) d.body) :
+    ¬Stuck td env (.app (.varRef x) args) :=
+  Stuck.not_app_varRef (cenv := Globals.env env.globals) (ps := d.parameters) (fbody := d.body)
+    (by rw [Env.lookup_of_globals hb, hd, Option.map_some]; rfl) hargs hat hbody
+
+/-- A comparison is not stuck where neither operand is and every pair of values they can produce has
+an answer.  `Ty.comparable` is the type checker's side of that third hypothesis; nothing here
+derives one from the other, so a caller supplies it about the values it has. -/
+public theorem Stuck.not_equals {td : TypeDecls} {env : Env} {l r : Expression}
+    (hl : ¬Stuck td env l) (hr : ¬Stuck td env r)
+    (hcmp : ∀ v₁ v₂, Eval td env l v₁ → Eval td env r v₂ → (Value.beq? v₁ v₂).isSome) :
+    ¬Stuck td env (.equals l r) := by
+  rintro hs
+  cases hs with
+  | equalsLeft h => exact hl h
+  | equalsRight h => exact hr h
+  | equalsIncomparable h₁ h₂ hnone =>
+    have := hcmp _ _ h₁ h₂
+    simp [hnone] at this
+
+/-- An ordering is the same three rules with `Value.le?` in place of `Value.beq?`. -/
+public theorem Stuck.not_le {td : TypeDecls} {env : Env} {l r : Expression}
+    (hl : ¬Stuck td env l) (hr : ¬Stuck td env r)
+    (hcmp : ∀ v₁ v₂, Eval td env l v₁ → Eval td env r v₂ → (Value.le? v₁ v₂).isSome) :
+    ¬Stuck td env (.le l r) := by
+  rintro hs
+  cases hs with
+  | leLeft h => exact hl h
+  | leRight h => exact hr h
+  | leIncomparable h₁ h₂ hnone =>
+    have := hcmp _ _ h₁ h₂
+    simp [hnone] at this
+
+/-- Arithmetic is not stuck where neither operand is and both produce `int`s.  Four rules, two per
+operand, because both operands are always evaluated. -/
+public theorem Stuck.not_plus {td : TypeDecls} {env : Env} {e₁ e₂ : Expression}
+    (h₁ : ¬Stuck td env e₁) (h₂ : ¬Stuck td env e₂)
+    (hi₁ : ∀ v, Eval td env e₁ v → v.IsInt) (hi₂ : ∀ v, Eval td env e₂ v → v.IsInt) :
+    ¬Stuck td env (.plus e₁ e₂) := by
+  rintro hs
+  cases hs with
+  | plusLeft h => exact h₁ h
+  | plusLeftNotInt hev hn => exact hn (hi₁ _ hev)
+  | plusRight h => exact h₂ h
+  | plusRightNotInt hev hn => exact hn (hi₂ _ hev)
+
+public theorem Stuck.not_minus {td : TypeDecls} {env : Env} {e₁ e₂ : Expression}
+    (h₁ : ¬Stuck td env e₁) (h₂ : ¬Stuck td env e₂)
+    (hi₁ : ∀ v, Eval td env e₁ v → v.IsInt) (hi₂ : ∀ v, Eval td env e₂ v → v.IsInt) :
+    ¬Stuck td env (.minus e₁ e₂) := by
+  rintro hs
+  cases hs with
+  | minusLeft h => exact h₁ h
+  | minusLeftNotInt hev hn => exact hn (hi₁ _ hev)
+  | minusRight h => exact h₂ h
+  | minusRightNotInt hev hn => exact hn (hi₂ _ hev)
+
+public theorem Stuck.not_min {td : TypeDecls} {env : Env} {e₁ e₂ : Expression}
+    (h₁ : ¬Stuck td env e₁) (h₂ : ¬Stuck td env e₂)
+    (hi₁ : ∀ v, Eval td env e₁ v → v.IsInt) (hi₂ : ∀ v, Eval td env e₂ v → v.IsInt) :
+    ¬Stuck td env (.min e₁ e₂) := by
+  rintro hs
+  cases hs with
+  | minLeft h => exact h₁ h
+  | minLeftNotInt hev hn => exact hn (hi₁ _ hev)
+  | minRight h => exact h₂ h
+  | minRightNotInt hev hn => exact hn (hi₂ _ hev)
+
+/-- A match on an option whose empty case is an `unreachable` is not stuck where its scrutinee is not
+stuck, produces options, and leaves the other case not stuck under whatever it bound.
+
+The empty case needs nothing: `Stuck.not_unreachable` refutes `optionMatchNone` whatever the
+scrutinee did, which is the same omission `Eval.optionMatch_unreachable_inv` reads the other way. -/
+public theorem Stuck.not_optionMatch_unreachable {td : TypeDecls} {env : Env} {scrut : Expression}
+    {t : Ty} {why x : String} {sbody : Expression} (hscrut : ¬Stuck td env scrut)
+    (hopt : ∀ v, Eval td env scrut v → v.IsOption)
+    (hbody : ∀ w, Eval td env scrut (.option (some w)) →
+      ¬Stuck td ⟨(x, w) :: env.bindings, env.globals⟩ sbody) :
+    ¬Stuck td env (.optionMatch scrut (.unreachable t why) x sbody) := by
+  rintro hs
+  cases hs with
+  | optionMatchScrut h => exact hscrut h
+  | optionMatchNotOption hev hn => exact hn (hopt _ hev)
+  | optionMatchNone _ h => exact Stuck.not_unreachable h
+  | optionMatchSome hev h => exact hbody _ hev h
+
+/-- A cons is not stuck where neither operand is and the tail produces lists.  Nothing is asked of
+the head: a list's element type is whatever the head turned out to be. -/
+public theorem Stuck.not_lcons {td : TypeDecls} {env : Env} {e₁ e₂ : Expression}
+    (h₁ : ¬Stuck td env e₁) (h₂ : ¬Stuck td env e₂)
+    (hl : ∀ v, Eval td env e₂ v → v.IsList) : ¬Stuck td env (.lcons e₁ e₂) := by
+  rintro hs
+  cases hs with
+  | lconsHead h => exact h₁ h
+  | lconsTail h => exact h₂ h
+  | lconsTailNotList hev hn => exact hn (hl _ hev)
+
+/-- A length is not stuck where its operand is not stuck and produces lists, and that is all either
+of its two rules can be. -/
+public theorem Stuck.not_listLength {td : TypeDecls} {env : Env} {e : Expression}
+    (he : ¬Stuck td env e) (hl : ∀ v, Eval td env e v → v.IsList) :
+    ¬Stuck td env (.listLength e) := by
+  rintro hs
+  cases hs with
+  | listLengthOperand h => exact he h
+  | listLengthNotList hev hn => exact hn (hl _ hev)
+
+/-- An index is not stuck where neither operand is, the first produces lists and the second `int`s.
+An index the list has no element at is not among its rules — that is the empty option, which is a
+value like any other — so nothing is asked about the position. -/
+public theorem Stuck.not_listIndex {td : TypeDecls} {env : Env} {l i : Expression}
+    (hl : ¬Stuck td env l) (hi : ¬Stuck td env i)
+    (hlist : ∀ v, Eval td env l v → v.IsList) (hint : ∀ v, Eval td env i v → v.IsInt) :
+    ¬Stuck td env (.listIndex l i) := by
+  rintro hs
+  cases hs with
+  | listIndexOperand h => exact hl h
+  | listIndexNotList hev hn => exact hn (hlist _ hev)
+  | listIndexIndex h => exact hi h
+  | listIndexIndexNotInt hev hn => exact hn (hint _ hev)
+
+/-- A get on a hashmap is not stuck where neither operand is, the first produces hashmaps, and every
+key the second can produce has an answer in them.  A key the map does not bind is not among its
+rules: that is the empty option, so what the last hypothesis rules out is a key that cannot be
+*compared*. -/
+public theorem Stuck.not_hashmapGet {td : TypeDecls} {env : Env} {m k : Expression}
+    (hm : ¬Stuck td env m) (hk : ¬Stuck td env k)
+    (hmap : ∀ v, Eval td env m v → v.IsHashmap)
+    (hlookup : ∀ kvs vk, Eval td env m (.hashmap kvs) → Eval td env k vk →
+      (KeyValues.lookup? kvs vk).isSome) :
+    ¬Stuck td env (.hashmapGet m k) := by
+  rintro hs
+  cases hs with
+  | hashmapGetMap h => exact hm h
+  | hashmapGetMapNotHashmap hev hn => exact hn (hmap _ hev)
+  | hashmapGetKey h => exact hk h
+  | hashmapGetIncomparable hev hkev hnone =>
+    have := hlookup _ _ hev hkev
+    simp [hnone] at this
+
+/-- A mapping is not stuck where neither operand is, the first produces lists, the second closures,
+and every call it makes fits the closure and is not stuck.
+
+`hcall` is the one hypothesis the last two rules share, and it is stated per element: a mapping is
+stuck as soon as one call is, so which element that was is the whole of what those rules say. -/
+public theorem Stuck.not_listMap {td : TypeDecls} {env : Env} {e f : Expression}
+    (he : ¬Stuck td env e) (hf : ¬Stuck td env f)
+    (hlist : ∀ v, Eval td env e v → v.IsList)
+    (hclosure : ∀ v, Eval td env f v → v.IsClosure)
+    (hcall : ∀ (vs : List Value) (cb : Bindings) (cg : Globals) (ps : Context) (body : Expression),
+      Eval td env e (.list vs) → Eval td env f (.closure cb cg ps body) → ∀ w ∈ vs,
+        ArgsHaveType td ps [w] ∧ ¬Stuck td (Env.extend ⟨cb, cg⟩ ps [w]) body) :
+    ¬Stuck td env (.listMap e f) := by
+  rintro hs
+  cases hs with
+  | listMapOperand h => exact he h
+  | listMapNotList hev hn => exact hn (hlist _ hev)
+  | listMapFn h => exact hf h
+  | listMapFnNotClosure hev hn => exact hn (hclosure _ hev)
+  | listMapArg hel hfl hmem hnat => exact hnat (hcall _ _ _ _ _ hel hfl _ hmem).1
+  | listMapCall hel hfl hmem _ h => exact (hcall _ _ _ _ _ hel hfl _ hmem).2 h
+
+/-- A flat mapping is a mapping's hypotheses with one more clause on each call: what it produced is
+a list, which is the one thing this form asks of a call's result. -/
+public theorem Stuck.not_listFlatMap {td : TypeDecls} {env : Env} {e f : Expression}
+    (he : ¬Stuck td env e) (hf : ¬Stuck td env f)
+    (hlist : ∀ v, Eval td env e v → v.IsList)
+    (hclosure : ∀ v, Eval td env f v → v.IsClosure)
+    (hcall : ∀ (vs : List Value) (cb : Bindings) (cg : Globals) (ps : Context) (body : Expression),
+      Eval td env e (.list vs) → Eval td env f (.closure cb cg ps body) → ∀ w ∈ vs,
+        ArgsHaveType td ps [w] ∧ ¬Stuck td (Env.extend ⟨cb, cg⟩ ps [w]) body ∧
+          ∀ u, Eval td (Env.extend ⟨cb, cg⟩ ps [w]) body u → u.IsList) :
+    ¬Stuck td env (.listFlatMap e f) := by
+  rintro hs
+  cases hs with
+  | listFlatMapOperand h => exact he h
+  | listFlatMapNotList hev hn => exact hn (hlist _ hev)
+  | listFlatMapFn h => exact hf h
+  | listFlatMapFnNotClosure hev hn => exact hn (hclosure _ hev)
+  | listFlatMapArg hel hfl hmem hnat => exact hnat (hcall _ _ _ _ _ hel hfl _ hmem).1
+  | listFlatMapCall hel hfl hmem _ h => exact (hcall _ _ _ _ _ hel hfl _ hmem).2.1 h
+  | listFlatMapCallNotList hel hfl hmem _ hev hn =>
+    exact hn ((hcall _ _ _ _ _ hel hfl _ hmem).2.2 _ hev)
+
+/-- A search is a flat mapping's hypotheses with a `bool` asked of each call in place of a list, and
+with the calls spoken for over the whole list rather than over the elements the search reaches.
+
+That is weaker than the rules allow — an element after the first match is never handed to the
+predicate — and it is what a caller can supply: which elements were reached depends on what the
+calls answered, so a hypothesis about all of them is the one that does not have to know. -/
+public theorem Stuck.not_listFindIndex {td : TypeDecls} {env : Env} {e f : Expression}
+    (he : ¬Stuck td env e) (hf : ¬Stuck td env f)
+    (hlist : ∀ v, Eval td env e v → v.IsList)
+    (hclosure : ∀ v, Eval td env f v → v.IsClosure)
+    (hcall : ∀ (vs : List Value) (cb : Bindings) (cg : Globals) (ps : Context) (body : Expression),
+      Eval td env e (.list vs) → Eval td env f (.closure cb cg ps body) → ∀ w ∈ vs,
+        ArgsHaveType td ps [w] ∧ ¬Stuck td (Env.extend ⟨cb, cg⟩ ps [w]) body ∧
+          ∀ u, Eval td (Env.extend ⟨cb, cg⟩ ps [w]) body u → u.IsBool) :
+    ¬Stuck td env (.listFindIndex e f) := by
+  rintro hs
+  cases hs with
+  | listFindIndexOperand h => exact he h
+  | listFindIndexNotList hev hn => exact hn (hlist _ hev)
+  | listFindIndexFn h => exact hf h
+  | listFindIndexFnNotClosure hev hn => exact hn (hclosure _ hev)
+  | listFindIndexArg hel hfl _ _ hnat =>
+    exact hnat (hcall _ _ _ _ _ hel hfl _ (by simp)).1
+  | listFindIndexCall hel hfl _ _ _ h =>
+    exact (hcall _ _ _ _ _ hel hfl _ (by simp)).2.1 h
+  | listFindIndexCallNotBool hel hfl _ _ _ hev hn =>
+    exact hn ((hcall _ _ _ _ _ hel hfl _ (by simp)).2.2 _ hev)
+
+/-- A sort by a comparison is a search's hypotheses with the calls taking two elements rather than
+one: the comparison is asked about a pair, so `hcall` is over two elements of the list. -/
+public theorem Stuck.not_listSortBy {td : TypeDecls} {env : Env} {e f : Expression}
+    (he : ¬Stuck td env e) (hf : ¬Stuck td env f)
+    (hlist : ∀ v, Eval td env e v → v.IsList)
+    (hclosure : ∀ v, Eval td env f v → v.IsClosure)
+    (hcall : ∀ (vs : List Value) (cb : Bindings) (cg : Globals) (ps : Context) (body : Expression),
+      Eval td env e (.list vs) → Eval td env f (.closure cb cg ps body) → ∀ a ∈ vs, ∀ b ∈ vs,
+        ArgsHaveType td ps [a, b] ∧ ¬Stuck td (Env.extend ⟨cb, cg⟩ ps [a, b]) body ∧
+          ∀ u, Eval td (Env.extend ⟨cb, cg⟩ ps [a, b]) body u → u.IsBool) :
+    ¬Stuck td env (.listSortBy e f) := by
+  rintro hs
+  cases hs with
+  | listSortByOperand h => exact he h
+  | listSortByNotList hev hn => exact hn (hlist _ hev)
+  | listSortByFn h => exact hf h
+  | listSortByFnNotClosure hev hn => exact hn (hclosure _ hev)
+  | listSortByArgs hel hfl ha hb hnat => exact hnat (hcall _ _ _ _ _ hel hfl _ ha _ hb).1
+  | listSortByCall hel hfl ha hb _ h => exact (hcall _ _ _ _ _ hel hfl _ ha _ hb).2.1 h
+  | listSortByCallNotBool hel hfl ha hb _ hev hn =>
+    exact hn ((hcall _ _ _ _ _ hel hfl _ ha _ hb).2.2 _ hev)
 
 /-- Progress: no expression that checks goes wrong, under any environment the context it checks in
 describes.

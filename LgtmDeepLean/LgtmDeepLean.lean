@@ -19,6 +19,7 @@ public import LgtmDeepLean.Lang.Value
 public import LgtmDeepLean.Model.Basic
 public import LgtmDeepLean.Model.Basic.WellFormed
 public import LgtmDeepLean.Model.CommentManager.Operations
+public import LgtmDeepLean.Model.CommentManager.Properties
 public import LgtmDeepLean.Model.CommentThreads.Operations
 public import LgtmDeepLean.Model.CommentThreads.Properties
 public import LgtmDeepLean.Model.Files.Operations

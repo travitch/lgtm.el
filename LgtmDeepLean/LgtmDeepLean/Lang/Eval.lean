@@ -557,11 +557,65 @@ public theorem Eval.let_inv {td : TypeDecls} {env : Env} {x : String} {e body : 
   cases h with
   | ELet _ _ _ he hbody => exact ⟨_, he, hbody⟩
 
+/-! The literals and the arithmetic, where a rule reads the value off the operands with no premise
+beyond evaluating them.  A literal's inversion is an equation rather than an existential — there is
+nothing in it to be found — and the three arithmetic forms hand back the two `Int`s their operands
+produced beside what the operation made of them. -/
+
+public theorem Eval.intLit_inv {td : TypeDecls} {env : Env} {i : Int} {v : Value}
+    (h : Eval td env (.intLit i) v) : v = .int i := by
+  cases h with
+  | EIntLit _ => rfl
+
+public theorem Eval.plus_inv {td : TypeDecls} {env : Env} {e₁ e₂ : Expression} {v : Value}
+    (h : Eval td env (.plus e₁ e₂) v) :
+    ∃ n₁ n₂ : Int, Eval td env e₁ (.int n₁) ∧ Eval td env e₂ (.int n₂) ∧ v = .int (n₁ + n₂) := by
+  cases h with
+  | EPlus _ _ h₁ h₂ => exact ⟨_, _, h₁, h₂, rfl⟩
+
+public theorem Eval.minus_inv {td : TypeDecls} {env : Env} {e₁ e₂ : Expression} {v : Value}
+    (h : Eval td env (.minus e₁ e₂) v) :
+    ∃ n₁ n₂ : Int, Eval td env e₁ (.int n₁) ∧ Eval td env e₂ (.int n₂) ∧ v = .int (n₁ - n₂) := by
+  cases h with
+  | EMinus _ _ h₁ h₂ => exact ⟨_, _, h₁, h₂, rfl⟩
+
+public theorem Eval.min_inv {td : TypeDecls} {env : Env} {e₁ e₂ : Expression} {v : Value}
+    (h : Eval td env (.min e₁ e₂) v) :
+    ∃ n₁ n₂ : Int, Eval td env e₁ (.int n₁) ∧ Eval td env e₂ (.int n₂) ∧
+      v = .int (min n₁ n₂) := by
+  cases h with
+  | EMin _ _ h₁ h₂ => exact ⟨_, _, h₁, h₂, rfl⟩
+
 public theorem Eval.structGet_inv {td : TypeDecls} {env : Env} {e : Expression} {f : FieldName}
     {v : Value} (h : Eval td env (.structGet e f) v) :
     ∃ name fvs, Eval td env e (.struct name fvs) ∧ fvs.lookup f = some v := by
   cases h with
   | EStructGet _ _ he hf => exact ⟨_, _, he, hf⟩
+
+/-- Reading a field off an operand that carries that field answers with the field and nothing is
+left existential: the rule's premise is an evaluation of the operand, so an operand every value of
+which binds `f` to `w` is one this form can only produce `w` from.
+
+`Eval.structGet_inv` with both of its existentials spent, which is the form every mismatch rule of
+`Stuck` one form further out asks for — those rules speak of the value a subexpression produced, so
+refuting one means reading that value rather than evaluating it again.  The hypothesis is over every
+value the operand can produce because nothing here makes `Eval` deterministic. -/
+public theorem Eval.structGet_eq {td : TypeDecls} {env : Env} {e : Expression} {f : FieldName}
+    {w u : Value} (hop : ∀ v, Eval td env e v → v.field? f = some w)
+    (h : Eval td env (.structGet e f) u) : u = w := by
+  obtain ⟨name', fvs', hev, hf'⟩ := Eval.structGet_inv h
+  have hf := hop _ hev
+  simp only [Value.field?] at hf
+  exact Option.some.inj (hf'.symm.trans hf)
+
+/-- The same at an operand that is a name the environment binds, where the quantifier collapses: a
+`varRef` produces the one value the environment holds. -/
+public theorem Eval.structGet_varRef_eq {td : TypeDecls} {env : Env} {x : String}
+    {v : Value} {f : FieldName} {w u : Value}
+    (hx : env.lookup x = some v) (hf : v.field? f = some w)
+    (h : Eval td env (.structGet (.varRef x) f) u) : u = w :=
+  Eval.structGet_eq (fun _ hu => by
+    rw [Option.some.inj ((Eval.varRef_inv hu).symm.trans hx)]; exact hf) h
 
 public theorem Eval.tupleGet_inv {td : TypeDecls} {env : Env} {e : Expression} {i : Nat}
     {v : Value} (h : Eval td env (.tupleGet e i) v) :
@@ -611,6 +665,15 @@ public theorem Eval.listIndex_inv {td : TypeDecls} {env : Env} {l i : Expression
       v = .option (Value.index? vs n) := by
   cases h with
   | EListIndex _ _ hl hi => exact ⟨_, _, hl, hi, rfl⟩
+
+/-- A length inverted: the list its operand produced, and how many elements it had.  The cast to the
+`Int` a `Value.int` holds is the rule's own, so what this hands back is the `Nat` the list has and
+the equation it stands in. -/
+public theorem Eval.listLength_inv {td : TypeDecls} {env : Env} {e : Expression} {v : Value}
+    (h : Eval td env (.listLength e) v) :
+    ∃ vs, Eval td env e (.list vs) ∧ v = .int (vs.length : Int) := by
+  cases h with
+  | EListLength _ he => exact ⟨_, he, rfl⟩
 
 public theorem Eval.listMap_inv {td : TypeDecls} {env : Env} {e f : Expression} {v : Value}
     (h : Eval td env (.listMap e f) v) :
@@ -682,6 +745,44 @@ public theorem Eval.listFindIndex_inv {td : TypeDecls} {env : Env} {e f : Expres
   | EListFindIndexSome _ _ he hf _ hpre _ hw =>
     exact ⟨_, _, _, _, _, he, hf, .inl ⟨_, _, _, rfl, hpre, hw, rfl⟩⟩
   | EListFindIndexNone _ _ he hf _ hall => exact ⟨_, _, _, _, _, he, hf, .inr ⟨hall, rfl⟩⟩
+
+/-! ### The shapes a form gives
+
+And where no type is to hand: a form whose every rule builds a value of one shape produces one,
+whatever its operands did.  These are the two such forms a mismatch rule one step out asks about —
+a get, whose option is what `optionMatch` matches on, and an ordering, whose `bool` is what a sort
+holds its comparison to — read off the rule rather than off a declaration's result type. -/
+
+public theorem Eval.isOption_hashmapGet {td : TypeDecls} {env : Env} {m k : Expression} {v : Value}
+    (h : Eval td env (.hashmapGet m k) v) : v.IsOption := by
+  cases h with
+  | EHashmapGet _ _ _ _ _ => exact ⟨_, rfl⟩
+
+public theorem Eval.isBool_le {td : TypeDecls} {env : Env} {l r : Expression} {v : Value}
+    (h : Eval td env (.le l r) v) : v.IsBool := by
+  cases h with
+  | ELe _ _ _ _ _ => exact ⟨_, rfl⟩
+
+public theorem Eval.isBool_equals {td : TypeDecls} {env : Env} {l r : Expression} {v : Value}
+    (h : Eval td env (.equals l r) v) : v.IsBool := by
+  cases h with
+  | EEquals _ _ _ _ _ => exact ⟨_, rfl⟩
+
+/-- An index and a search both produce options, the one because a position the list has nothing at
+is an answer like any other and the other because a list the predicate accepts nothing in is: in
+both cases the `none` is a value rather than a failure, which is why both rules build an option
+whatever happened underneath. -/
+public theorem Eval.isOption_listIndex {td : TypeDecls} {env : Env} {l i : Expression} {v : Value}
+    (h : Eval td env (.listIndex l i) v) : v.IsOption := by
+  cases h with
+  | EListIndex _ _ _ _ => exact ⟨_, rfl⟩
+
+public theorem Eval.isOption_listFindIndex {td : TypeDecls} {env : Env} {e f : Expression}
+    {v : Value} (h : Eval td env (.listFindIndex e f) v) : v.IsOption := by
+  cases h with
+  | EListFindIndexSome _ _ _ _ _ _ _ _ => exact ⟨_, rfl⟩
+  | EListFindIndexNone _ _ _ _ _ _ => exact ⟨_, rfl⟩
+
 
 /-- Evaluating a well-typed expression produces a value of its inferred type.
 
@@ -757,8 +858,13 @@ public theorem Eval.hasType {td : TypeDecls} {env : Env} {ctx : Context} {e : Ex
     have hdom : ∀ f, (sd.fields.lookup f).isSome = (fes.lookup f).isSome := fun f =>
       (Expression.lookup_isSome_of_fieldsComplete hcomplete f).trans
         (List.lookup_isSome_congr hkeys f)
+    -- The names clause is `fieldsComplete`'s own permutation, carried along the two equalities: a
+    -- field written twice is what it turns down, and that is what the clause now asks of the value.
     refine
-      .struct hsd (fun f => (hdom f).trans (List.lookup_isSome_congr hnames f))
+      .struct hsd
+        (by
+          rw [← hnames, ← hkeys]
+          exact (Expression.fieldsComplete_eq_true.mp hcomplete).1)
         fun f t' v' hft hfv => ?_
     obtain ⟨e, he⟩ : ∃ e, fes.lookup f = some e :=
       Option.isSome_iff_exists.mp
@@ -781,12 +887,14 @@ public theorem Eval.hasType {td : TypeDecls} {env : Env} {ctx : Context} {e : Ex
     ihev =>
     obtain ⟨name', sd, fts, he, hsd, hfts, -, hfields, rfl⟩ :=
       Expression.infer_structUpdate_eq_some.mp ht
-    obtain ⟨sd', hsd', hdom, htys, hname⟩ := Value.hasType_struct_iff.mp (ihe henv he)
+    obtain ⟨sd', hsd', hperm, htys, hname⟩ := Value.hasType_struct_iff.mp (ihe henv he)
     simp only [Ty.struct.injEq] at hname
     subst hname
     obtain rfl : sd' = sd := by grind
+    -- An update rebinds in place, so the names it hands back are the ones the operand's own clause
+    -- already placed against the declaration's.
     refine
-      .struct hsd (fun f => by simpa using hdom f) fun f t' v' hft hfv =>
+      .struct hsd (by simpa using hperm) fun f t' v' hft hfv =>
         FieldValues.hasType_update htys ?_ hft hfv
     -- What is left is the *new* values: each one is a field's expression evaluated, and the type
     -- checker has already said that expression has the type the declaration gives that field.
