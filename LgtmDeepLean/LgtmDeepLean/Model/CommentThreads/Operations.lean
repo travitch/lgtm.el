@@ -147,7 +147,7 @@ The MANAGER is required to get information about comments. -/
   let currentlySelectedIndex := match findIndex linearizedCommentRefs matchesSelectedRef with
     | none => (unreachable "The selected comment must exist in the linearized thread" : int)
     | some(idx) => idx;
-  let nextIndex := max 0 (currentlySelectedIndex + 1);
+  let nextIndex := max 0 (currentlySelectedIndex - 1);
   let nextCommentRef := match linearizedCommentRefs[nextIndex] with
     | none => (unreachable "The next comment index must exist in the linearized comment list" : struct CommentRef)
     | some(r) => r;

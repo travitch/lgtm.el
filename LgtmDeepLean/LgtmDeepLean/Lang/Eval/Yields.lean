@@ -199,6 +199,10 @@ public theorem min {td : TypeDecls} {env : Env} {e₁ e₂ : Expression} {n₁ n
     (h₁ : Yields td env e₁ (.int n₁)) (h₂ : Yields td env e₂ (.int n₂)) :
     Yields td env (.min e₁ e₂) (.int (Min.min n₁ n₂)) := Eval.EMin _ _ h₁ h₂
 
+public theorem max {td : TypeDecls} {env : Env} {e₁ e₂ : Expression} {n₁ n₂ : Int}
+    (h₁ : Yields td env e₁ (.int n₁)) (h₂ : Yields td env e₂ (.int n₂)) :
+    Yields td env (.max e₁ e₂) (.int (Max.max n₁ n₂)) := Eval.EMax _ _ h₁ h₂
+
 /-- A comparison, with the answer `Value.beq?` gave as the hypothesis: that is the premise that
 makes a pair it has no answer for stuck, and the one thing a caller has to bring. -/
 public theorem equals {td : TypeDecls} {env : Env} {l r : Expression} {v₁ v₂ : Value} {b : Bool}
@@ -468,6 +472,7 @@ macro_rules
       | apply Eval.Yields.plus
       | apply Eval.Yields.minus
       | apply Eval.Yields.min
+      | apply Eval.Yields.max
       | apply Eval.Yields.listLength
       | apply Eval.Yields.listIndex
       | apply Eval.Yields.hashmapGet
