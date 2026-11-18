@@ -432,9 +432,9 @@ macro_rules
   | `(tactic| yields_lookup [$ts,*]) =>
     `(tactic| first
       | rfl
-      | (lgtm_env [$ts,*] <;> try rfl))
+      | (simp [lgtm_env, $ts,*] <;> try rfl))
   | `(tactic| yields_lookup using $h) => `(tactic| yields_lookup [] using $h)
-  | `(tactic| yields_lookup [$ts,*] using $h) => `(tactic| lgtm_env [$ts,*] using $h)
+  | `(tactic| yields_lookup [$ts,*] using $h) => `(tactic| simpa [lgtm_env, $ts,*] using $h)
 
 /-- One form of the body, built by the lemma its head constructor calls for.
 

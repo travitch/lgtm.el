@@ -1,6 +1,7 @@
 module
 
 public import LgtmDeepLean.Lang.IR
+public import LgtmDeepLean.Lang.SimpAttrs
 public import LgtmDeepLean.Lang.TypeCheck
 meta import LgtmDeepLean.Lang.IR
 meta import LgtmDeepLean.Lang.TypeCheck
@@ -1150,21 +1151,24 @@ put `Env.extend` and `FuncDecl.callEnv` into this shape. -/
 
 /-- No bindings left: the globals are what answers, which is where `Globals.value` builds the
 closure a global's name denotes. -/
-public theorem Env.lookup_nil_bindings {gs : Globals} {x : String} :
+@[lgtm_env] public theorem Env.lookup_nil_bindings {gs : Globals} {x : String} :
     (Env.mk [] gs).lookup x = (gs.lookup x).map (Globals.value gs) := rfl
 
+@[lgtm_env]
 public theorem Env.lookup_cons_self {bs : Bindings} {gs : Globals} {x : String} {v : Value} :
     (Env.mk ((x, v) :: bs) gs).lookup x = some v := by
   simp [Env.lookup]
 
 /-- And a binding of another name is stepped over, which is the one step with a side condition: two
 string literals are `decide`d, and a name that is not a literal is where a caller has to say. -/
+@[lgtm_env]
 public theorem Env.lookup_cons_of_ne {bs : Bindings} {gs : Globals} {x y : String} {v : Value}
     (h : ¬y = x) : (Env.mk ((x, v) :: bs) gs).lookup y = (Env.mk bs gs).lookup y := by
   simp [Env.lookup, List.lookup_cons, show (y == x) = false by simpa using h]
 
 /-- Rebuilding an environment out of its own halves, which is what the step above leaves behind when
 the bindings it walks into are a hypothesis's rather than a literal list. -/
+@[lgtm_env]
 public theorem Env.mk_bindings_globals {env : Env} : Env.mk env.bindings env.globals = env := rfl
 
 /-- `Env.Describes env gs binds free`: everything a lemma about a body needs to know about the
@@ -1806,12 +1810,15 @@ same length; `ArgsHaveType` is what supplies that. -/
 about the lengths: the zip stops at the shorter list, so a parameter list that runs out is an
 extension by nothing, which is what `Env.extend_nil` covers from either side. -/
 
+@[lgtm_env]
 public theorem Env.extend_nil {env : Env} {vs : List Value} : env.extend [] vs = env := by
   simp [Env.extend]
 
+@[lgtm_env]
 public theorem Env.extend_nil_args {env : Env} {ps : Context} : env.extend ps [] = env := by
   simp [Env.extend]
 
+@[lgtm_env]
 public theorem Env.extend_cons {env : Env} {x : String} {t : Ty} {ps : Context} {v : Value}
     {vs : List Value} :
     env.extend ((x, t) :: ps) (v :: vs) =
@@ -1909,46 +1916,18 @@ the argument of its leftmost occurrence, and a parameter named like a global sha
 /-- `FuncDecl.callEnv` with `Globals.env` already taken apart, which is where the walk of
 `Env.lookup_cons_self` and its neighbours starts for a call: the parameters in front of no bindings
 at all. -/
-public theorem FuncDecl.callEnv_eq {d : FuncDecl} {gs : Globals} {args : List Value} :
+@[lgtm_env] public theorem FuncDecl.callEnv_eq {d : FuncDecl} {gs : Globals} {args : List Value} :
     d.callEnv gs args = (Env.mk [] gs).extend d.parameters args := rfl
 
 section
 open Lean.Parser.Tactic
 
-/-- `lgtm_env`: the lemmas above as one name.
+/-! `Env.closure` is unfolded rather than rewritten — it is a definition, and what a proof needs of
+it is the `Value.closure` it builds — and `List.lookup`'s own two equations are for the places a
+proof reads `env.bindings` directly.  Neither is declared here, so both are added to the set rather
+than tagged. -/
 
-The rewrites that reduce a lookup — the three steps of `Env.lookup`'s walk, the two that put an
-extension and a call environment into the shape that walk takes, and `List.lookup`'s own two for
-the places a proof reads `env.bindings` directly.  A lookup therefore *rewrites* rather than
-unfolding into an `if`-chain, which is what makes the symbolic cases — an extension by arguments
-that are not literals, a binding that comes from a hypothesis — take the same steps as the ones
-written out.
-
-A tactic rather than a `register_simp_attr` set: the attribute lives in `Lean`, which this layer
-does not import, and the only thing it would add is the ability to tag a lemma from another module.
-The three forms are the three a `simp` is written in in these proofs — at the goal, at a hypothesis,
-and `using` a fact to be transported — and the bracket takes whatever else the goal needs, which is
-in practice the declaration whose parameter list the environment was built from.
-
-`yields_lookup` (Eval/Yields.lean) is the one place a progress proof reaches this through. -/
-syntax "lgtm_env" ("[" simpLemma,* "]")? (location)? (" using " term)? : tactic
-
-macro_rules
-  | `(tactic| lgtm_env) => `(tactic| lgtm_env [])
-  | `(tactic| lgtm_env $loc:location) => `(tactic| lgtm_env [] $loc)
-  | `(tactic| lgtm_env using $h) => `(tactic| lgtm_env [] using $h)
-  | `(tactic| lgtm_env [$ts,*]) =>
-    `(tactic| simp [FuncDecl.callEnv_eq, Env.extend_cons, Env.extend_nil, Env.extend_nil_args,
-      Env.lookup_cons_self, Env.lookup_cons_of_ne, Env.lookup_nil_bindings,
-      Env.mk_bindings_globals, Env.closure, List.lookup_cons, List.lookup_nil, $ts,*])
-  | `(tactic| lgtm_env [$ts,*] $loc:location) =>
-    `(tactic| simp [FuncDecl.callEnv_eq, Env.extend_cons, Env.extend_nil, Env.extend_nil_args,
-      Env.lookup_cons_self, Env.lookup_cons_of_ne, Env.lookup_nil_bindings,
-      Env.mk_bindings_globals, Env.closure, List.lookup_cons, List.lookup_nil, $ts,*] $loc)
-  | `(tactic| lgtm_env [$ts,*] using $h) =>
-    `(tactic| simpa [FuncDecl.callEnv_eq, Env.extend_cons, Env.extend_nil, Env.extend_nil_args,
-      Env.lookup_cons_self, Env.lookup_cons_of_ne, Env.lookup_nil_bindings,
-      Env.mk_bindings_globals, Env.closure, List.lookup_cons, List.lookup_nil, $ts,*] using $h)
+attribute [lgtm_env] Env.closure List.lookup_cons List.lookup_nil
 
 end
 

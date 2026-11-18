@@ -21,7 +21,7 @@ theorem CommentLocation.asThreadLocation.topLevel {td : TypeDecls} {gs : Globals
   | EIndMatch _ _ hs halt hb =>
     cases hs with
     | EVarRef _ hls =>
-      lgtm_env [CommentLocation.asThreadLocation, CommentLocation.topLevelValue] at hls
+      simp [lgtm_env, CommentLocation.asThreadLocation, CommentLocation.topLevelValue] at hls
       obtain ⟨rfl, rfl, rfl⟩ := hls
       simp [List.lookup] at halt
       obtain ⟨rfl, rfl⟩ := halt
@@ -37,7 +37,7 @@ theorem ThreadLocation.isTopLevel.topLevel {td : TypeDecls} {gs : Globals} {res 
   | EIndMatch _ _ hs halt hb =>
     cases hs with
     | EVarRef _ hls =>
-      lgtm_env [ThreadLocation.isTopLevel, ThreadLocation.topLevelValue] at hls
+      simp [lgtm_env, ThreadLocation.isTopLevel, ThreadLocation.topLevelValue] at hls
       obtain ⟨rfl, rfl, rfl⟩ := hls
       simp [List.lookup] at halt
       obtain ⟨rfl, rfl⟩ := halt

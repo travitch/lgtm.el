@@ -21,7 +21,7 @@ theorem CommentManager.get.eq_get? {td : TypeDecls} {gs : Globals} {manager ref 
   obtain ⟨_n, _fvs, hs, hf⟩ := Eval.structGet_inv hm
   have hlm := Eval.varRef_inv hs
   have hlk := Eval.varRef_inv hk
-  lgtm_env [CommentManager.get] at hlm hlk
+  simp [lgtm_env, CommentManager.get] at hlm hlk
   subst hlm
   subst hlk
   simp [CommentManager.get?, Value.lookupField?, Value.field?, hf, hlookup]
@@ -54,10 +54,10 @@ theorem CommentManager.get.apply_of_get? {td : TypeDecls} {gs : Globals} {manage
   refine .EApply _ (.cons "manager" hmanager (.cons "ref" href .nil)) ?_
   have hm : Eval td ((CommentManager.get).callEnv gs [.struct "CommentManager" fvs, ref])
       (.varRef "manager") (.struct "CommentManager" fvs) :=
-    Eval.EVarRef _ (by lgtm_env [CommentManager.get])
+    Eval.EVarRef _ (by simp [lgtm_env, CommentManager.get])
   have hk : Eval td ((CommentManager.get).callEnv gs [.struct "CommentManager" fvs, ref])
       (.varRef "ref") ref :=
-    Eval.EVarRef _ (by lgtm_env [CommentManager.get])
+    Eval.EVarRef _ (by simp [lgtm_env, CommentManager.get])
   exact Eval.EHashmapGet _ _ (Eval.EStructGet _ _ hm hkvs) hk hlookup
 
 end

@@ -217,7 +217,7 @@ theorem CommentThreads.asAlist.sortThreadLists_apply_of_mem {td : TypeDecls} {gs
   -- The sort by location rearranges and nothing else, so a group is one of the calls' answers.
   obtain ⟨lts, cmp, hlts, hgroups⟩ := Eval.listSortBy_inv hbody
   have hltsv := Eval.varRef_inv hlts
-  lgtm_env at hltsv
+  simp [lgtm_env] at hltsv
   subst hltsv
   obtain rfl : groups = Value.sortWith cmp lts := by simpa using hgroups
   -- The threads at each location are what the call to `sortThreadLists` returned.
@@ -226,7 +226,7 @@ theorem CommentThreads.asAlist.sortThreadLists_apply_of_mem {td : TypeDecls} {gs
   obtain rfl : lts = lts' := by simpa using hlts'
   have hlrcvv := Eval.varRef_inv hlrcv
   have hsortFnv := Eval.varRef_inv hsortFn
-  lgtm_env at hlrcvv hsortFnv
+  simp [lgtm_env] at hlrcvv hsortFnv
   obtain ⟨rfl, rfl, rfl, rfl⟩ := hsortFnv
   subst hlrcvv
   -- Each of those lists of root comments was read out of the manager.
@@ -234,7 +234,7 @@ theorem CommentThreads.asAlist.sortThreadLists_apply_of_mem {td : TypeDecls} {gs
     Eval.listMap_inv hlrc
   obtain rfl : lrc = lrc' := by simpa using hlrc'
   have hlookupFnv := Eval.varRef_inv hlookupFn
-  lgtm_env at hlookupFnv
+  simp [lgtm_env] at hlookupFnv
   obtain ⟨rfl, rfl, rfl, rfl⟩ := hlookupFnv
   have hcomments : ∀ p ∈ entries.zip lrc, ∃ loc roots, p.2 = .tuple [loc, .list roots] ∧
       CommentManager.ContainsComments manager roots := by
@@ -246,27 +246,27 @@ theorem CommentThreads.asAlist.sortThreadLists_apply_of_mem {td : TypeDecls} {gs
     obtain ⟨refs, cs, _cb, _cg, _ps, _body, hrefs, hcFn, hclen, hcev, rfl⟩ :=
       Eval.listMap_inv hmapComments
     have hcFnv := Eval.varRef_inv hcFn
-    lgtm_env at hcFnv
+    simp [lgtm_env] at hcFnv
     obtain ⟨rfl, rfl, rfl, rfl⟩ := hcFnv
     have hmanagerComments : CommentManager.ContainsComments manager cs := by
       intro c hc
       obtain ⟨ref, hpair⟩ := exists_mem_zip_of_mem_right hclen hc
       obtain ⟨w, hcall, hbound⟩ := Eval.optionMatch_unreachable_inv (hcev _ hpair)
       have hw := Eval.varRef_inv hbound
-      lgtm_env at hw
+      simp [lgtm_env] at hw
       subst hw
       obtain ⟨vs, hvlen, hvev, happly⟩ :=
         FuncDecl.apply_of_eval_app
-          (by lgtm_env [CommentThreads.asAlist] using hDeclares.get)
-          (by lgtm_env [CommentThreads.asAlist]) hcall
+          (by simpa [lgtm_env, CommentThreads.asAlist] using hDeclares.get)
+          (by simp [lgtm_env, CommentThreads.asAlist]) hcall
       obtain rfl : vs = [manager, ref] := Eval.Yields.eq_of_args hvev hvlen
-        (.cons (.varRef (by lgtm_env [CommentThreads.asAlist]))
-          (.cons (.varRef (by lgtm_env [CommentThreads.asAlist])) .nil))
+        (.cons (.varRef (by simp [lgtm_env, CommentThreads.asAlist]))
+          (.cons (.varRef (by simp [lgtm_env, CommentThreads.asAlist])) .nil))
       exact ⟨ref, CommentManager.get.eq_get? happly⟩
     -- and the pair this location contributes is that location beside them
     obtain ⟨tvs, htvs, htlen, htev⟩ := Eval.tupleNew_inv hentry
     obtain rfl : tvs = [locv, .list cs] := Eval.Yields.eq_of_args htev htlen
-      (.cons (.varRef (by lgtm_env)) (.cons (.varRef (by lgtm_env)) .nil))
+      (.cons (.varRef (by simp [lgtm_env])) (.cons (.varRef (by simp [lgtm_env])) .nil))
     exact ⟨locv, cs, htvs, hmanagerComments⟩
   -- Putting the two together: the group, the location it is at, and the comments it came from.
   intro group hgroup
@@ -276,14 +276,14 @@ theorem CommentThreads.asAlist.sortThreadLists_apply_of_mem {td : TypeDecls} {gs
   obtain ⟨loc, roots, rfl, hroots⟩ := hcomments _ hlpair
   obtain ⟨vs, hvlen, hvev, happly⟩ :=
     FuncDecl.apply_of_eval_app
-      (by lgtm_env [CommentThreads.asAlist] using hDeclares.sortThreadLists)
-      (by lgtm_env [CommentThreads.asAlist]) (hsev _ hpair)
+      (by simpa [lgtm_env, CommentThreads.asAlist] using hDeclares.sortThreadLists)
+      (by simp [lgtm_env, CommentThreads.asAlist]) (hsev _ hpair)
   obtain rfl : vs = [threads, manager, .tuple [loc, .list roots]] :=
     Eval.Yields.eq_of_args hvev hvlen
-      (.cons (.varRef (by lgtm_env [CommentThreads.asAlist]))
-        (.cons (.varRef (by lgtm_env [CommentThreads.asAlist]))
-          (.cons (.varRef (by lgtm_env [CommentThreads.asAlist])) .nil)))
-  exact ⟨loc, roots, hroots, by lgtm_env [CommentThreads.asAlist] using happly⟩
+      (.cons (.varRef (by simp [lgtm_env, CommentThreads.asAlist]))
+        (.cons (.varRef (by simp [lgtm_env, CommentThreads.asAlist]))
+          (.cons (.varRef (by simp [lgtm_env, CommentThreads.asAlist])) .nil)))
+  exact ⟨loc, roots, hroots, by simpa [lgtm_env, CommentThreads.asAlist] using happly⟩
 
 
 /-! ## One location's threads
@@ -315,17 +315,17 @@ theorem CommentThreads.asAlist.sortThreadLists.isSortedByTimestamp {td : TypeDec
     Eval.listSortOn_inv hsort
   obtain ⟨tvs, hscrut, hget⟩ := Eval.tupleGet_inv hlist
   have htvs := Eval.varRef_inv hscrut
-  lgtm_env [CommentThreads.asAlist.sortThreadLists] at htvs
+  simp [lgtm_env, CommentThreads.asAlist.sortThreadLists] at htvs
   subst htvs
   obtain rfl : roots = vs := by simpa using hget
   -- Each key is the timestamp its comment records, so each key is an `int`.
   obtain ⟨rfl, rfl, rfl, rfl⟩ : _ ∧ _ ∧ _ ∧ _ := by
-    lgtm_env [Value.closure.injEq] using Eval.lam_inv hfun
+    simpa [lgtm_env, Value.closure.injEq] using Eval.lam_inv hfun
   have hkeyField : ∀ p ∈ roots.zip ks, p.1.field? "createdTimestamp" = some p.2 := by
     intro p hp
     obtain ⟨_n, _fvs, hc, hf⟩ := Eval.structGet_inv (hkeys p hp)
     have hlc := Eval.varRef_inv hc
-    lgtm_env at hlc
+    simp [lgtm_env] at hlc
     rw [hlc]
     simpa [Value.field?] using hf
   have hkeyInt : ∀ p ∈ roots.zip ks, ∃ i : Int, p.2 = .int i := by
@@ -338,7 +338,7 @@ theorem CommentThreads.asAlist.sortThreadLists.isSortedByTimestamp {td : TypeDec
   obtain rfl := Eval.lam_inv hlookupFn
   have hsrv := Eval.varRef_inv hsr
   have hfnv := Eval.varRef_inv hfn
-  lgtm_env [CommentThreads.asAlist.sortThreadLists] at hsrv hfnv
+  simp [lgtm_env, CommentThreads.asAlist.sortThreadLists] at hsrv hfnv
   obtain ⟨rfl, rfl, rfl, rfl⟩ := hfnv
   subst hsrv
   have hnode : ∀ p ∈ ((Value.sortByKey (roots.zip ks)).map Prod.fst).zip ts,
@@ -351,7 +351,7 @@ theorem CommentThreads.asAlist.sortThreadLists.isSortedByTimestamp {td : TypeDec
     have hlt := Eval.varRef_inv ht
     have hlc := Eval.varRef_inv hc
     have hlth := Eval.varRef_inv hthread
-    lgtm_env at hlt hlc hlth
+    simp [lgtm_env] at hlt hlc hlth
     subst hlt
     subst hlth
     exact ⟨ref, by rw [hlc]; simpa [Value.field?] using hcr,
@@ -363,7 +363,7 @@ theorem CommentThreads.asAlist.sortThreadLists.isSortedByTimestamp {td : TypeDec
     Eval.tupleGet_inv (hrev ((Expression.varRef "commentThreadRoots").tupleGet 0, a) (by simp))
   have hlocv := Eval.varRef_inv hloc
   have hthreadsv := Eval.varRef_inv (hrev (Expression.varRef "sortedThreads", b) (by simp))
-  lgtm_env [CommentThreads.asAlist.sortThreadLists] at hlocv hthreadsv
+  simp [lgtm_env, CommentThreads.asAlist.sortThreadLists] at hlocv hthreadsv
   subst hlocv
   subst hthreadsv
   obtain rfl : a = loc := by simpa using hloci.symm
@@ -432,17 +432,17 @@ theorem CommentThreads.toThreadsOrdered.groupsAreSorted {td : TypeDecls} {gs : G
   obtain ⟨groups, tss, _cb, _cg, _ps, _body, hcall, hfn, hflen, hfev, hres⟩ :=
     Eval.listFlatMap_inv hbody
   obtain ⟨rfl, rfl, rfl, rfl⟩ : _ ∧ _ ∧ _ ∧ _ := by
-    lgtm_env [Value.closure.injEq] using Eval.lam_inv hfn
+    simpa [lgtm_env, Value.closure.injEq] using Eval.lam_inv hfn
   obtain rfl : ordered = tss.flatten := by simpa using hres
   -- The groups are what the call to `asAlist` returned.
   obtain ⟨vs, hvlen, hvev, happly⟩ :=
     FuncDecl.apply_of_eval_app
-      (by lgtm_env [CommentThreads.toThreadsOrdered] using hDeclares.asAlist)
-      (by lgtm_env [CommentThreads.toThreadsOrdered]) hcall
+      (by simpa [lgtm_env, CommentThreads.toThreadsOrdered] using hDeclares.asAlist)
+      (by simp [lgtm_env, CommentThreads.toThreadsOrdered]) hcall
   obtain rfl : vs = [threads, manager] := Eval.Yields.eq_of_args hvev hvlen
-    (.cons (.varRef (by lgtm_env [CommentThreads.toThreadsOrdered]))
-      (.cons (.varRef (by lgtm_env [CommentThreads.toThreadsOrdered])) .nil))
-  lgtm_env at happly
+    (.cons (.varRef (by simp [lgtm_env, CommentThreads.toThreadsOrdered]))
+      (.cons (.varRef (by simp [lgtm_env, CommentThreads.toThreadsOrdered])) .nil))
+  simp [lgtm_env] at happly
   refine ⟨groups, happly, fun group hgroup => ?_⟩
   obtain ⟨loc, ts, stamps, rfl, hlen, hstamps, hsorted⟩ :=
     CommentThreads.asAlist.threadLocationsSortedByTimestamp hDeclares
@@ -451,7 +451,7 @@ theorem CommentThreads.toThreadsOrdered.groupsAreSorted {td : TypeDecls} {gs : G
   obtain ⟨l, hpair⟩ := exists_mem_zip_of_mem_left hflen hgroup
   obtain ⟨tvs, hscrut, hidx⟩ := Eval.tupleGet_inv (hfev _ hpair)
   have htvs := Eval.varRef_inv hscrut
-  lgtm_env at htvs
+  simp [lgtm_env] at htvs
   subst htvs
   obtain rfl : ts = l := by simpa using hidx
   exact ⟨loc, ts, stamps, rfl, infix_flatten_of_mem (List.of_mem_zip hpair).2, hlen, hstamps,
@@ -522,42 +522,42 @@ theorem CommentThread.linearize.apply_inv {td : TypeDecls} {gs : Globals}
     cases hhead with
     | @EApp _env _cb _cg _ps _lbody argVals v _ _ hf hlen hargs _ hcbody =>
       obtain ⟨rfl, rfl, rfl, rfl⟩ : _ ∧ _ ∧ _ ∧ _ := by
-        lgtm_env [Value.closure.injEq] using Eval.varRef_inv hf
+        simpa [lgtm_env, Value.closure.injEq] using Eval.varRef_inv hf
       obtain ⟨root, rfl⟩ := List.length_eq_one_iff.mp (by simpa using hlen.symm)
       obtain ⟨_tn, _tfvs, hthreadRef, hvalue⟩ :=
         Eval.structGet_inv
           (hargs ((Expression.varRef "thread").structGet "value", root) (by simp))
       have hthreadEq := Eval.varRef_inv hthreadRef
-      lgtm_env [CommentThread.linearize] at hthreadEq
+      simp [lgtm_env, CommentThread.linearize] at hthreadEq
       have hrootField : thread.field? "value" = some root := by
         rw [hthreadEq]; simpa [Value.field?] using hvalue
       -- The comment that ref names is the one the manager has under it.
       obtain ⟨c, hcall, hbound⟩ := Eval.optionMatch_unreachable_inv hcbody
       have hcv := Eval.varRef_inv hbound
-      lgtm_env at hcv
+      simp [lgtm_env] at hcv
       subst hcv
       obtain ⟨vs, hvlen, hvev, hgetApply⟩ :=
         FuncDecl.apply_of_eval_app
-          (by lgtm_env [CommentThread.linearize] using hDeclares.get)
-          (by lgtm_env [CommentThread.linearize]) hcall
+          (by simpa [lgtm_env, CommentThread.linearize] using hDeclares.get)
+          (by simp [lgtm_env, CommentThread.linearize]) hcall
       obtain rfl : vs = [manager, root] := Eval.Yields.eq_of_args hvev hvlen
-        (.cons (.varRef (by lgtm_env [CommentThread.linearize]))
-          (.cons (.varRef (by lgtm_env [CommentThread.linearize])) .nil))
+        (.cons (.varRef (by simp [lgtm_env, CommentThread.linearize]))
+          (.cons (.varRef (by simp [lgtm_env, CommentThread.linearize])) .nil))
       -- The rest of the list is one run per child, each the list that child's own call returned.
       obtain ⟨refs, lists, _fcb, _fcg, _fps, _fbody, hrefs, hfn, hflen, hfev, hlists⟩ :=
         Eval.listFlatMap_inv htail
       simp only [Value.list.injEq] at hlists
       subst hlists
       have hrefsv := Eval.varRef_inv hrefs
-      lgtm_env at hrefsv
+      simp [lgtm_env] at hrefsv
       obtain ⟨childRefs, cmp, hchildren, hsorted⟩ := Eval.listSortBy_inv hsort
       subst hrefsv
       obtain rfl : refs = Value.sortWith cmp childRefs := by simpa using hsorted
       obtain ⟨_cn, _cfvs, hthreadRef', hchildField⟩ := Eval.structGet_inv hchildren
       have hthreadEq' := Eval.varRef_inv hthreadRef'
-      lgtm_env [CommentThread.linearize] at hthreadEq'
+      simp [lgtm_env, CommentThread.linearize] at hthreadEq'
       obtain ⟨rfl, rfl, rfl, rfl⟩ : _ ∧ _ ∧ _ ∧ _ := by
-        lgtm_env [Value.closure.injEq] using Eval.lam_inv hfn
+        simpa [lgtm_env, Value.closure.injEq] using Eval.lam_inv hfn
       refine ⟨root, c, childRefs, hrootField, CommentManager.get.eq_get? hgetApply, by simp,
         by rw [hthreadEq']; simpa [Value.field?] using hchildField, fun r hr => ?_⟩
       -- The child is one of the refs the flattening ran over, so one of the runs is its own.
@@ -567,7 +567,7 @@ theorem CommentThread.linearize.apply_inv {td : TypeDecls} {gs : Globals}
       obtain ⟨_nn, _nfvs, hthreadsRef, hnodes⟩ := Eval.structGet_inv hm
       have hthreadsEq := Eval.varRef_inv hthreadsRef
       have hvk := Eval.varRef_inv hk
-      lgtm_env [CommentThread.linearize] at hthreadsEq hvk
+      simp [lgtm_env, CommentThread.linearize] at hthreadsEq hvk
       subst hvk
       have hnode : CommentThreads.node? threads r = some node := by
         rw [hthreadsEq]
@@ -575,12 +575,12 @@ theorem CommentThread.linearize.apply_inv {td : TypeDecls} {gs : Globals}
       -- And that run is what the recursive call on the child's node returned.
       obtain ⟨rvs, hrvlen, hrvev, hrapply⟩ :=
         FuncDecl.apply_of_eval_app
-          (by lgtm_env [CommentThread.linearize] using hDeclares.linearize)
-          (by lgtm_env [CommentThread.linearize]) hreccall
+          (by simpa [lgtm_env, CommentThread.linearize] using hDeclares.linearize)
+          (by simp [lgtm_env, CommentThread.linearize]) hreccall
       obtain rfl : rvs = [threads, manager, node] := Eval.Yields.eq_of_args hrvev hrvlen
-        (.cons (.varRef (by lgtm_env [CommentThread.linearize]))
-          (.cons (.varRef (by lgtm_env [CommentThread.linearize]))
-            (.cons (.varRef (by lgtm_env [CommentThread.linearize])) .nil)))
+        (.cons (.varRef (by simp [lgtm_env, CommentThread.linearize]))
+          (.cons (.varRef (by simp [lgtm_env, CommentThread.linearize]))
+            (.cons (.varRef (by simp [lgtm_env, CommentThread.linearize])) .nil)))
       exact ⟨node, cs, hnode, hrapply, fun x hx =>
         List.mem_cons_of_mem _ (List.mem_flatten.mpr ⟨cs, (List.of_mem_zip hpair).2, hx⟩)⟩
 
