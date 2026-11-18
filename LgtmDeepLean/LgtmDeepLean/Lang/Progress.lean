@@ -1,6 +1,7 @@
 module
 
 public import LgtmDeepLean.Lang.Eval
+public import LgtmDeepLean.Lang.Eval.Unique
 
 /-! # Going wrong
 
@@ -494,6 +495,488 @@ public theorem Stuck.not_unreachable {td : TypeDecls} {env : Env} {t : Ty} {why 
   rintro h
   cases h
 
+/-- The element a stuck search reached is one a successful search already answered for, or the match
+it stopped at.
+
+`Stuck`'s three `listFindIndex` rules reach their element only once every element before it answered
+`false`, and `EListFindIndexSome` says the same of its own prefix and match.  Two such
+decompositions of one list therefore either agree on where the match is, or the successful search's
+match sits inside the stuck one's prefix — and that is the case `Eval.unique` rules out, since that
+element would have to answer both `true` and `false`. -/
+private theorem Stuck.mem_pre_or_eq_of_findIndex {td : TypeDecls} {cenv : Env} {ps : Context}
+    {body : Expression} {pre post pre' post' : List Value} {w w' : Value}
+    (hlists : pre ++ w :: post = pre' ++ w' :: post')
+    (hpre' : ∀ u ∈ pre', Eval td (Env.extend cenv ps [u]) body (.bool false))
+    (hw : Eval td (Env.extend cenv ps [w]) body (.bool true)) : w' ∈ pre ∨ w' = w := by
+  rcases Nat.lt_trichotomy pre'.length pre.length with hlt | heq | hgt
+  · exact .inl (List.mem_of_append_cons_eq hlists.symm hlt)
+  · obtain ⟨-, hcons⟩ := List.append_inj hlists heq.symm
+    exact .inr (List.cons.inj hcons).1.symm
+  · exact absurd (Eval.unique hw (hpre' _ (List.mem_of_append_cons_eq hlists hgt))) (by simp)
+
+/-- Having a value excludes being stuck: an expression that evaluates to something does not reach a
+form no rule of `Eval` can fire on.
+
+This is the theorem that makes a progress proof about one declaration a *corollary* of the proof
+that the declaration returns something, rather than the same induction written a second time for
+failure.  A theorem of the shape `∃ v, d.Apply ... v` now gives `¬Stuck td (d.callEnv ...) d.body`
+for nothing, and it needs no more hypotheses than the construction proof did — see
+`CommentThread.linearize.not_stuck_body`, which is one line over
+`CommentThread.linearize.apply_exists`.
+
+The proof is an induction on the `Eval` derivation, and the two kinds of rule `Stuck` has are
+refuted two different ways:
+
+* a *propagation* rule speaks of a subexpression that must be evaluated, so there is a
+  subderivation, and the induction hypothesis is exactly its refutation.  Where `Eval`'s premise
+  runs over a `List.zip` — one evaluation per element — the induction hypothesis does too, and
+  `List.exists_mem_zip_left` is what reads it back at the one element `Stuck` names.  Where it runs
+  over a prefix, as `EListFindIndexSome`'s does, the induction hypothesis is prefixed the same way,
+  which is exactly what `Stuck.listFindIndexCall` asks for.
+* a *mismatch* rule carries an `Eval` premise of its own for the value it then objects to, and
+  `Eval.unique` identifies that value with the one the derivation at hand produced.  That is the
+  whole of what determinism buys here, and it is why these cases are one line apiece.
+
+The `listFindIndex` rules are the one place more is needed: the element `Stuck` names is reached
+only when every element before it answered `false`, so it either falls inside the prefix this
+derivation already answered for or it is the match itself — `Stuck.mem_pre_or_eq_of_findIndex` is
+that case split, and the remaining case is a derivation that reached *past* the match, which
+`Eval.unique` refutes. -/
+public theorem Eval.not_stuck {td : TypeDecls} {env : Env} {e : Expression} {v : Value}
+    (h : Eval td env e v) : ¬Stuck td env e := by
+  induction h with
+  | ELam ps body => rintro hs; cases hs
+  | EApp f args hf hlen hargs hat hbody ihf ihargs ihbody =>
+    rintro hs
+    cases hs with
+    | appFn h => exact ihf h
+    | appFnNotClosure hev hn => obtain rfl := Eval.unique hf hev; exact hn ⟨_, _, _, _, rfl⟩
+    | appArg hmem h =>
+      obtain ⟨_, hb⟩ := List.exists_mem_zip_left hlen hmem
+      exact ihargs _ hb h
+    | appArgs hev hlen' hargs' hnat =>
+      obtain ⟨rfl, rfl, rfl, rfl⟩ := Value.closure.inj (Eval.unique hf hev)
+      obtain rfl := List.eq_of_zip_unique hlen' hlen
+        fun p hp q hq hpq => Eval.unique (hargs' p hp) (by rw [hpq]; exact hargs q hq)
+      exact hnat hat
+    | appBody hev hlen' hargs' _ h =>
+      obtain ⟨rfl, rfl, rfl, rfl⟩ := Value.closure.inj (Eval.unique hf hev)
+      obtain rfl := List.eq_of_zip_unique hlen' hlen
+        fun p hp q hq hpq => Eval.unique (hargs' p hp) (by rw [hpq]; exact hargs q hq)
+      exact ihbody h
+  | EBoolLit b => rintro hs; cases hs
+  | EIteTrue c thn els hc hthn ihc ihthn =>
+    rintro hs
+    cases hs with
+    | iteCond h => exact ihc h
+    | iteNotBool hev hn => obtain rfl := Eval.unique hc hev; exact hn ⟨_, rfl⟩
+    | iteThen _ h => exact ihthn h
+    | iteElse hev _ => exact absurd (Eval.unique hc hev) (by simp)
+  | EIteFalse c thn els hc hels ihc ihels =>
+    rintro hs
+    cases hs with
+    | iteCond h => exact ihc h
+    | iteNotBool hev hn => obtain rfl := Eval.unique hc hev; exact hn ⟨_, rfl⟩
+    | iteThen hev _ => exact absurd (Eval.unique hc hev) (by simp)
+    | iteElse _ h => exact ihels h
+  | EBoolAndFalse l r hl ihl =>
+    rintro hs
+    cases hs with
+    | boolAndLeft h => exact ihl h
+    | boolAndLeftNotBool hev hn => obtain rfl := Eval.unique hl hev; exact hn ⟨_, rfl⟩
+    | boolAndRight hev _ => exact absurd (Eval.unique hl hev) (by simp)
+    | boolAndRightNotBool hev _ _ => exact absurd (Eval.unique hl hev) (by simp)
+  | EBoolAndTrue l r hl hr ihl ihr =>
+    rintro hs
+    cases hs with
+    | boolAndLeft h => exact ihl h
+    | boolAndLeftNotBool hev hn => obtain rfl := Eval.unique hl hev; exact hn ⟨_, rfl⟩
+    | boolAndRight _ h => exact ihr h
+    | boolAndRightNotBool _ hev hn => obtain rfl := Eval.unique hr hev; exact hn ⟨_, rfl⟩
+  | EBoolOrTrue l r hl ihl =>
+    rintro hs
+    cases hs with
+    | boolOrLeft h => exact ihl h
+    | boolOrLeftNotBool hev hn => obtain rfl := Eval.unique hl hev; exact hn ⟨_, rfl⟩
+    | boolOrRight hev _ => exact absurd (Eval.unique hl hev) (by simp)
+    | boolOrRightNotBool hev _ _ => exact absurd (Eval.unique hl hev) (by simp)
+  | EBoolOrFalse l r hl hr ihl ihr =>
+    rintro hs
+    cases hs with
+    | boolOrLeft h => exact ihl h
+    | boolOrLeftNotBool hev hn => obtain rfl := Eval.unique hl hev; exact hn ⟨_, rfl⟩
+    | boolOrRight _ h => exact ihr h
+    | boolOrRightNotBool _ hev hn => obtain rfl := Eval.unique hr hev; exact hn ⟨_, rfl⟩
+  | EEquals l r hl hr hbeq ihl ihr =>
+    rintro hs
+    cases hs with
+    | equalsLeft h => exact ihl h
+    | equalsRight h => exact ihr h
+    | equalsIncomparable hev₁ hev₂ hnone =>
+      obtain rfl := Eval.unique hl hev₁
+      obtain rfl := Eval.unique hr hev₂
+      simp [hbeq] at hnone
+  | ELt l r hl hr hlt ihl ihr =>
+    rintro hs
+    cases hs with
+    | ltLeft h => exact ihl h
+    | ltRight h => exact ihr h
+    | ltIncomparable hev₁ hev₂ hnone =>
+      obtain rfl := Eval.unique hl hev₁
+      obtain rfl := Eval.unique hr hev₂
+      simp [hlt] at hnone
+  | ELe l r hl hr hle ihl ihr =>
+    rintro hs
+    cases hs with
+    | leLeft h => exact ihl h
+    | leRight h => exact ihr h
+    | leIncomparable hev₁ hev₂ hnone =>
+      obtain rfl := Eval.unique hl hev₁
+      obtain rfl := Eval.unique hr hev₂
+      simp [hle] at hnone
+  | ELet x e body he hbody ihe ihbody =>
+    rintro hs
+    cases hs with
+    | letBound h => exact ihe h
+    | letBody hev h => obtain rfl := Eval.unique he hev; exact ihbody h
+  | EVarRef x hx =>
+    rintro hs
+    cases hs with
+    | varRefUnbound hnone => simp [hx] at hnone
+  | EStructNew name fes hnames hev ihev =>
+    rintro hs
+    cases hs with
+    | structNewField hmem h =>
+      obtain ⟨_, hb⟩ :=
+        List.exists_mem_zip_left (by simpa using congrArg List.length hnames) hmem
+      exact ihev _ hb h
+  | EStructGet e f he hf ihe =>
+    rintro hs
+    cases hs with
+    | structGetOperand h => exact ihe h
+    | structGetNotStruct hev hn => obtain rfl := Eval.unique he hev; exact hn ⟨_, _, rfl⟩
+    | structGetMissing hev hnone =>
+      obtain ⟨rfl, rfl⟩ := Value.struct.inj (Eval.unique he hev)
+      simp [hf] at hnone
+  | EStructUpdate e fes he hnames hev ihe ihev =>
+    rintro hs
+    cases hs with
+    | structUpdateOperand h => exact ihe h
+    | structUpdateNotStruct hev' hn => obtain rfl := Eval.unique he hev'; exact hn ⟨_, _, rfl⟩
+    | structUpdateField hmem h =>
+      obtain ⟨_, hb⟩ :=
+        List.exists_mem_zip_left (by simpa using congrArg List.length hnames) hmem
+      exact ihev _ hb h
+  | EIndNew name c args hlen hev ihev =>
+    rintro hs
+    cases hs with
+    | indNewArg hmem h =>
+      obtain ⟨_, hb⟩ := List.exists_mem_zip_left hlen hmem
+      exact ihev _ hb h
+  | EIndMatch scrut alts hscrut hlookup hbody ihscrut ihbody =>
+    rintro hs
+    cases hs with
+    | indMatchScrut h => exact ihscrut h
+    | indMatchNotInd hev hn => obtain rfl := Eval.unique hscrut hev; exact hn ⟨_, _, _, rfl⟩
+    | indMatchNoAlt hev hnone =>
+      obtain ⟨rfl, rfl, rfl⟩ := Value.ind.inj (Eval.unique hscrut hev)
+      simp [hlookup] at hnone
+    | indMatchBody hev hlookup' h =>
+      obtain ⟨rfl, rfl, rfl⟩ := Value.ind.inj (Eval.unique hscrut hev)
+      obtain ⟨rfl, rfl⟩ := Prod.mk.inj (Option.some.inj (hlookup.symm.trans hlookup'))
+      exact ihbody h
+  | EIntLit i => rintro hs; cases hs
+  | EPlus e₁ e₂ h₁ h₂ ih₁ ih₂ =>
+    rintro hs
+    cases hs with
+    | plusLeft h => exact ih₁ h
+    | plusLeftNotInt hev hn => obtain rfl := Eval.unique h₁ hev; exact hn ⟨_, rfl⟩
+    | plusRight h => exact ih₂ h
+    | plusRightNotInt hev hn => obtain rfl := Eval.unique h₂ hev; exact hn ⟨_, rfl⟩
+  | EMinus e₁ e₂ h₁ h₂ ih₁ ih₂ =>
+    rintro hs
+    cases hs with
+    | minusLeft h => exact ih₁ h
+    | minusLeftNotInt hev hn => obtain rfl := Eval.unique h₁ hev; exact hn ⟨_, rfl⟩
+    | minusRight h => exact ih₂ h
+    | minusRightNotInt hev hn => obtain rfl := Eval.unique h₂ hev; exact hn ⟨_, rfl⟩
+  | EMin e₁ e₂ h₁ h₂ ih₁ ih₂ =>
+    rintro hs
+    cases hs with
+    | minLeft h => exact ih₁ h
+    | minLeftNotInt hev hn => obtain rfl := Eval.unique h₁ hev; exact hn ⟨_, rfl⟩
+    | minRight h => exact ih₂ h
+    | minRightNotInt hev hn => obtain rfl := Eval.unique h₂ hev; exact hn ⟨_, rfl⟩
+  | EMax e₁ e₂ h₁ h₂ ih₁ ih₂ =>
+    rintro hs
+    cases hs with
+    | maxLeft h => exact ih₁ h
+    | maxLeftNotInt hev hn => obtain rfl := Eval.unique h₁ hev; exact hn ⟨_, rfl⟩
+    | maxRight h => exact ih₂ h
+    | maxRightNotInt hev hn => obtain rfl := Eval.unique h₂ hev; exact hn ⟨_, rfl⟩
+  | EStringLit s => rintro hs; cases hs
+  | ENone ty => rintro hs; cases hs
+  | ESome e he ihe =>
+    rintro hs
+    cases hs with
+    | optionSomeInner h => exact ihe h
+  | EOptionMatchNone scrut nbody x sbody hscrut hnbody ihscrut ihnbody =>
+    rintro hs
+    cases hs with
+    | optionMatchScrut h => exact ihscrut h
+    | optionMatchNotOption hev hn => obtain rfl := Eval.unique hscrut hev; exact hn ⟨_, rfl⟩
+    | optionMatchNone _ h => exact ihnbody h
+    | optionMatchSome hev _ => exact absurd (Eval.unique hscrut hev) (by simp)
+  | EOptionMatchSome scrut nbody x sbody hscrut hsbody ihscrut ihsbody =>
+    rintro hs
+    cases hs with
+    | optionMatchScrut h => exact ihscrut h
+    | optionMatchNotOption hev hn => obtain rfl := Eval.unique hscrut hev; exact hn ⟨_, rfl⟩
+    | optionMatchNone hev _ => exact absurd (Eval.unique hscrut hev) (by simp)
+    | optionMatchSome hev h =>
+      obtain rfl := Option.some.inj (Value.option.inj (Eval.unique hscrut hev))
+      exact ihsbody h
+  | ENil ty => rintro hs; cases hs
+  | ECons e₁ e₂ h₁ h₂ ih₁ ih₂ =>
+    rintro hs
+    cases hs with
+    | lconsHead h => exact ih₁ h
+    | lconsTail h => exact ih₂ h
+    | lconsTailNotList hev hn => obtain rfl := Eval.unique h₂ hev; exact hn ⟨_, rfl⟩
+  | EListMatchNil scrut nbody hd tl cbody hscrut hnbody ihscrut ihnbody =>
+    rintro hs
+    cases hs with
+    | listMatchScrut h => exact ihscrut h
+    | listMatchNotList hev hn => obtain rfl := Eval.unique hscrut hev; exact hn ⟨_, rfl⟩
+    | listMatchNil _ h => exact ihnbody h
+    | listMatchCons hev _ => exact absurd (Eval.unique hscrut hev) (by simp)
+  | EListMatchCons scrut nbody hd tl cbody hscrut hcbody ihscrut ihcbody =>
+    rintro hs
+    cases hs with
+    | listMatchScrut h => exact ihscrut h
+    | listMatchNotList hev hn => obtain rfl := Eval.unique hscrut hev; exact hn ⟨_, rfl⟩
+    | listMatchNil hev _ => exact absurd (Eval.unique hscrut hev) (by simp)
+    | listMatchCons hev h =>
+      obtain ⟨rfl, rfl⟩ := List.cons.inj (Value.list.inj (Eval.unique hscrut hev))
+      exact ihcbody h
+  | EListIndex l i hl hi ihl ihi =>
+    rintro hs
+    cases hs with
+    | listIndexOperand h => exact ihl h
+    | listIndexNotList hev hn => obtain rfl := Eval.unique hl hev; exact hn ⟨_, rfl⟩
+    | listIndexIndex h => exact ihi h
+    | listIndexIndexNotInt hev hn => obtain rfl := Eval.unique hi hev; exact hn ⟨_, rfl⟩
+  | EListMap e f he hf hlen hat hev ihe ihf ihev =>
+    rintro hs
+    cases hs with
+    | listMapOperand h => exact ihe h
+    | listMapNotList hev' hn => obtain rfl := Eval.unique he hev'; exact hn ⟨_, rfl⟩
+    | listMapFn h => exact ihf h
+    | listMapFnNotClosure hev' hn =>
+      obtain rfl := Eval.unique hf hev'; exact hn ⟨_, _, _, _, rfl⟩
+    | listMapArg hel hfl hmem hnat =>
+      obtain rfl := Value.list.inj (Eval.unique he hel)
+      obtain ⟨rfl, rfl, rfl, rfl⟩ := Value.closure.inj (Eval.unique hf hfl)
+      obtain ⟨_, hb⟩ := List.exists_mem_zip_left hlen hmem
+      exact hnat (hat _ hb)
+    | listMapCall hel hfl hmem _ h =>
+      obtain rfl := Value.list.inj (Eval.unique he hel)
+      obtain ⟨rfl, rfl, rfl, rfl⟩ := Value.closure.inj (Eval.unique hf hfl)
+      obtain ⟨_, hb⟩ := List.exists_mem_zip_left hlen hmem
+      exact ihev _ hb h
+  | EListFlatMap e f he hf hlen hat hev ihe ihf ihev =>
+    rintro hs
+    cases hs with
+    | listFlatMapOperand h => exact ihe h
+    | listFlatMapNotList hev' hn => obtain rfl := Eval.unique he hev'; exact hn ⟨_, rfl⟩
+    | listFlatMapFn h => exact ihf h
+    | listFlatMapFnNotClosure hev' hn =>
+      obtain rfl := Eval.unique hf hev'; exact hn ⟨_, _, _, _, rfl⟩
+    | listFlatMapArg hel hfl hmem hnat =>
+      obtain rfl := Value.list.inj (Eval.unique he hel)
+      obtain ⟨rfl, rfl, rfl, rfl⟩ := Value.closure.inj (Eval.unique hf hfl)
+      obtain ⟨_, hb⟩ := List.exists_mem_zip_left hlen hmem
+      exact hnat (hat _ hb)
+    | listFlatMapCall hel hfl hmem _ h =>
+      obtain rfl := Value.list.inj (Eval.unique he hel)
+      obtain ⟨rfl, rfl, rfl, rfl⟩ := Value.closure.inj (Eval.unique hf hfl)
+      obtain ⟨_, hb⟩ := List.exists_mem_zip_left hlen hmem
+      exact ihev _ hb h
+    | listFlatMapCallNotList hel hfl hmem _ hev' hn =>
+      obtain rfl := Value.list.inj (Eval.unique he hel)
+      obtain ⟨rfl, rfl, rfl, rfl⟩ := Value.closure.inj (Eval.unique hf hfl)
+      obtain ⟨_, hb⟩ := List.exists_mem_zip_left hlen hmem
+      obtain rfl := Eval.unique (hev _ hb) hev'
+      exact hn ⟨_, rfl⟩
+  | EListLength e he ihe =>
+    rintro hs
+    cases hs with
+    | listLengthOperand h => exact ihe h
+    | listLengthNotList hev hn => obtain rfl := Eval.unique he hev; exact hn ⟨_, rfl⟩
+  | EListFindIndexSome e f he hf hatpre hpre hatw hw ihe ihf ihpre ihw =>
+    rintro hs
+    cases hs with
+    | listFindIndexOperand h => exact ihe h
+    | listFindIndexNotList hev hn => obtain rfl := Eval.unique he hev; exact hn ⟨_, rfl⟩
+    | listFindIndexFn h => exact ihf h
+    | listFindIndexFnNotClosure hev hn =>
+      obtain rfl := Eval.unique hf hev; exact hn ⟨_, _, _, _, rfl⟩
+    | listFindIndexArg hel hfl _ hpre' hnat =>
+      obtain ⟨rfl, rfl, rfl, rfl⟩ := Value.closure.inj (Eval.unique hf hfl)
+      rcases Stuck.mem_pre_or_eq_of_findIndex (Value.list.inj (Eval.unique he hel)) hpre' hw with
+        hmem | rfl
+      · exact hnat (hatpre _ hmem)
+      · exact hnat hatw
+    | listFindIndexCall hel hfl _ hpre' _ h =>
+      obtain ⟨rfl, rfl, rfl, rfl⟩ := Value.closure.inj (Eval.unique hf hfl)
+      rcases Stuck.mem_pre_or_eq_of_findIndex (Value.list.inj (Eval.unique he hel)) hpre' hw with
+        hmem | rfl
+      · exact ihpre _ hmem h
+      · exact ihw h
+    | listFindIndexCallNotBool hel hfl _ hpre' _ hev hn =>
+      obtain ⟨rfl, rfl, rfl, rfl⟩ := Value.closure.inj (Eval.unique hf hfl)
+      rcases Stuck.mem_pre_or_eq_of_findIndex (Value.list.inj (Eval.unique he hel)) hpre' hw with
+        hmem | rfl
+      · obtain rfl := Eval.unique (hpre _ hmem) hev
+        exact hn ⟨_, rfl⟩
+      · obtain rfl := Eval.unique hw hev
+        exact hn ⟨_, rfl⟩
+  | EListFindIndexNone e f he hf hat hall ihe ihf ihall =>
+    rintro hs
+    cases hs with
+    | listFindIndexOperand h => exact ihe h
+    | listFindIndexNotList hev hn => obtain rfl := Eval.unique he hev; exact hn ⟨_, rfl⟩
+    | listFindIndexFn h => exact ihf h
+    | listFindIndexFnNotClosure hev hn =>
+      obtain rfl := Eval.unique hf hev; exact hn ⟨_, _, _, _, rfl⟩
+    | listFindIndexArg hel hfl _ _ hnat =>
+      obtain ⟨rfl, rfl, rfl, rfl⟩ := Value.closure.inj (Eval.unique hf hfl)
+      obtain rfl := Value.list.inj (Eval.unique he hel)
+      exact hnat (hat _ (by simp))
+    | listFindIndexCall hel hfl _ _ _ h =>
+      obtain ⟨rfl, rfl, rfl, rfl⟩ := Value.closure.inj (Eval.unique hf hfl)
+      obtain rfl := Value.list.inj (Eval.unique he hel)
+      exact ihall _ (by simp) h
+    | listFindIndexCallNotBool hel hfl _ _ _ hev hn =>
+      obtain ⟨rfl, rfl, rfl, rfl⟩ := Value.closure.inj (Eval.unique hf hfl)
+      obtain rfl := Value.list.inj (Eval.unique he hel)
+      obtain rfl := Eval.unique (hall _ (by simp)) hev
+      exact hn ⟨_, rfl⟩
+  | EListReverse e he ihe =>
+    rintro hs
+    cases hs with
+    | listReverseOperand h => exact ihe h
+    | listReverseNotList hev hn => obtain rfl := Eval.unique he hev; exact hn ⟨_, rfl⟩
+  | EListSortOn e f he hf hlen hat hev hcmp ihe ihf ihev =>
+    rintro hs
+    cases hs with
+    | listSortOnOperand h => exact ihe h
+    | listSortOnNotList hev' hn => obtain rfl := Eval.unique he hev'; exact hn ⟨_, rfl⟩
+    | listSortOnFn h => exact ihf h
+    | listSortOnFnNotClosure hev' hn =>
+      obtain rfl := Eval.unique hf hev'; exact hn ⟨_, _, _, _, rfl⟩
+    | listSortOnArg hel hfl hmem hnat =>
+      obtain rfl := Value.list.inj (Eval.unique he hel)
+      obtain ⟨rfl, rfl, rfl, rfl⟩ := Value.closure.inj (Eval.unique hf hfl)
+      obtain ⟨_, hb⟩ := List.exists_mem_zip_left hlen hmem
+      exact hnat (hat _ hb)
+    | listSortOnCall hel hfl hmem _ h =>
+      obtain rfl := Value.list.inj (Eval.unique he hel)
+      obtain ⟨rfl, rfl, rfl, rfl⟩ := Value.closure.inj (Eval.unique hf hfl)
+      obtain ⟨_, hb⟩ := List.exists_mem_zip_left hlen hmem
+      exact ihev _ hb h
+    | listSortOnKeys hel hfl ha hb _ _ hka hkb hnone =>
+      obtain rfl := Value.list.inj (Eval.unique he hel)
+      obtain ⟨rfl, rfl, rfl, rfl⟩ := Value.closure.inj (Eval.unique hf hfl)
+      obtain ⟨_, hza⟩ := List.exists_mem_zip_left hlen ha
+      obtain ⟨_, hzb⟩ := List.exists_mem_zip_left hlen hb
+      obtain rfl := Eval.unique (hev _ hza) hka
+      obtain rfl := Eval.unique (hev _ hzb) hkb
+      have := hcmp _ (List.of_mem_zip hza).2 _ (List.of_mem_zip hzb).2
+      simp [hnone] at this
+  | EListSortBy e f he hf hat hev ihe ihf ihev =>
+    rintro hs
+    cases hs with
+    | listSortByOperand h => exact ihe h
+    | listSortByNotList hev' hn => obtain rfl := Eval.unique he hev'; exact hn ⟨_, rfl⟩
+    | listSortByFn h => exact ihf h
+    | listSortByFnNotClosure hev' hn =>
+      obtain rfl := Eval.unique hf hev'; exact hn ⟨_, _, _, _, rfl⟩
+    | listSortByArgs hel hfl ha hb hnat =>
+      obtain rfl := Value.list.inj (Eval.unique he hel)
+      obtain ⟨rfl, rfl, rfl, rfl⟩ := Value.closure.inj (Eval.unique hf hfl)
+      exact hnat (hat _ ha _ hb)
+    | listSortByCall hel hfl ha hb _ h =>
+      obtain rfl := Value.list.inj (Eval.unique he hel)
+      obtain ⟨rfl, rfl, rfl, rfl⟩ := Value.closure.inj (Eval.unique hf hfl)
+      exact ihev _ ha _ hb h
+    | listSortByCallNotBool hel hfl ha hb _ hev' hn =>
+      obtain rfl := Value.list.inj (Eval.unique he hel)
+      obtain ⟨rfl, rfl, rfl, rfl⟩ := Value.closure.inj (Eval.unique hf hfl)
+      obtain rfl := Eval.unique (hev _ ha _ hb) hev'
+      exact hn ⟨_, rfl⟩
+  | EHashmapEmpty kt vt => rintro hs; cases hs
+  | EHashmapPut m k val hm hk hval herase ihm ihk ihval =>
+    rintro hs
+    cases hs with
+    | hashmapPutMap h => exact ihm h
+    | hashmapPutMapNotHashmap hev hn => obtain rfl := Eval.unique hm hev; exact hn ⟨_, rfl⟩
+    | hashmapPutKey h => exact ihk h
+    | hashmapPutValue h => exact ihval h
+    | hashmapPutIncomparable hev hkev hnone =>
+      obtain rfl := Value.hashmap.inj (Eval.unique hm hev)
+      obtain rfl := Eval.unique hk hkev
+      simp [herase] at hnone
+  | EHashmapGet m k hm hk hlookup ihm ihk =>
+    rintro hs
+    cases hs with
+    | hashmapGetMap h => exact ihm h
+    | hashmapGetMapNotHashmap hev hn => obtain rfl := Eval.unique hm hev; exact hn ⟨_, rfl⟩
+    | hashmapGetKey h => exact ihk h
+    | hashmapGetIncomparable hev hkev hnone =>
+      obtain rfl := Value.hashmap.inj (Eval.unique hm hev)
+      obtain rfl := Eval.unique hk hkev
+      simp [hlookup] at hnone
+  | EHashmapMap m f hm hf hkeys hat hev ihm ihf ihev =>
+    rintro hs
+    cases hs with
+    | hashmapMapMap h => exact ihm h
+    | hashmapMapMapNotHashmap hev' hn => obtain rfl := Eval.unique hm hev'; exact hn ⟨_, rfl⟩
+    | hashmapMapFn h => exact ihf h
+    | hashmapMapFnNotClosure hev' hn =>
+      obtain rfl := Eval.unique hf hev'; exact hn ⟨_, _, _, _, rfl⟩
+    | hashmapMapArgs hml hfl hmem hnat =>
+      obtain rfl := Value.hashmap.inj (Eval.unique hm hml)
+      obtain ⟨rfl, rfl, rfl, rfl⟩ := Value.closure.inj (Eval.unique hf hfl)
+      obtain ⟨_, hb⟩ :=
+        List.exists_mem_zip_left (by simpa using congrArg List.length hkeys) hmem
+      exact hnat (hat _ hb)
+    | hashmapMapCall hml hfl hmem _ h =>
+      obtain rfl := Value.hashmap.inj (Eval.unique hm hml)
+      obtain ⟨rfl, rfl, rfl, rfl⟩ := Value.closure.inj (Eval.unique hf hfl)
+      obtain ⟨_, hb⟩ :=
+        List.exists_mem_zip_left (by simpa using congrArg List.length hkeys) hmem
+      exact ihev _ hb h
+  | EHashmapToList m hm ihm =>
+    rintro hs
+    cases hs with
+    | hashmapToListOperand h => exact ihm h
+    | hashmapToListNotHashmap hev hn => obtain rfl := Eval.unique hm hev; exact hn ⟨_, rfl⟩
+  | ETupleNew es hlen hev ihev =>
+    rintro hs
+    cases hs with
+    | tupleNewElem hmem h =>
+      obtain ⟨_, hb⟩ := List.exists_mem_zip_left hlen hmem
+      exact ihev _ hb h
+  | ETupleGet e i he hi ihe =>
+    rintro hs
+    cases hs with
+    | tupleGetOperand h => exact ihe h
+    | tupleGetNotTuple hev hn => obtain rfl := Eval.unique he hev; exact hn ⟨_, rfl⟩
+    | tupleGetIndex hev hnone =>
+      obtain rfl := Value.tuple.inj (Eval.unique he hev)
+      simp [hi] at hnone
+
 /-! ## Refuting a derivation, form by form
 
 `¬Stuck` read along a body is what a progress proof about one declaration does, and it is the same
@@ -503,11 +986,16 @@ by *reading* the value a subexpression produced — every one of them carries an
 is why the lemmas below ask for hypotheses about what the subexpressions can evaluate to rather than
 for evaluations of them.
 
-Those hypotheses are stated over *every* value a subexpression can produce, not over one.  Nothing
-here proves `Eval` deterministic, so the value a `Stuck` derivation's premise produced need not be
-the one a separate derivation produced, and a lemma handed a single evaluation would have nothing to
-say to the mismatch rules.  Where a subexpression is determined — a `varRef`, a `lam` — the
-quantifier costs its caller nothing: `Eval.varRef_inv` and `Eval.lam_inv` answer for every value.
+Those hypotheses are stated over *every* value a subexpression can produce, not over one.  That is
+what a mismatch rule hands over — the `Eval` premise it carries is a derivation of its own — and
+when these were written nothing said it produced the same value as the caller's, so a lemma handed
+a single evaluation would have had nothing to say to those rules.
+
+`Eval.unique` now says it does, and the quantifier is no longer a cost to a caller that has an
+evaluation in hand: `Eval.Yields.forall_eval` (Eval/Yields.lean) discharges one of these hypotheses
+at the single value, which is what every `∀ v, Eval td env e v → P v` below amounts to now.  Where
+a subexpression is determined — a `varRef`, a `lam` — it never was a cost: `Eval.varRef_inv` and
+`Eval.lam_inv` answer for every value.
 
 A form whose calls are the thing that can go wrong gets one hypothesis per element or pair rather
 than one over the list, matching the rules: `Eval`'s premises run over a zip because a mapping

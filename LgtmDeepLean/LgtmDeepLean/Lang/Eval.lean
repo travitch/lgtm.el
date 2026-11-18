@@ -540,18 +540,18 @@ exception — it has two rules — and the version here is for the shape the mod
 nothing a proof of what a call *returned* has further use for.  A caller that wants them can still
 `cases` the evaluation itself. -/
 
-public theorem Eval.varRef_inv {td : TypeDecls} {env : Env} {x : String} {v : Value}
+@[grind →] public theorem Eval.varRef_inv {td : TypeDecls} {env : Env} {x : String} {v : Value}
     (h : Eval td env (.varRef x) v) : env.lookup x = some v := by
   cases h with
   | EVarRef _ hx => exact hx
 
-public theorem Eval.lam_inv {td : TypeDecls} {env : Env} {ps : List (String × Ty)}
+@[grind →] public theorem Eval.lam_inv {td : TypeDecls} {env : Env} {ps : List (String × Ty)}
     {body : Expression} {v : Value} (h : Eval td env (.lam ps body) v) :
     v = env.closure ps body := by
   cases h with
   | ELam _ _ => rfl
 
-public theorem Eval.let_inv {td : TypeDecls} {env : Env} {x : String} {e body : Expression}
+@[grind →] public theorem Eval.let_inv {td : TypeDecls} {env : Env} {x : String} {e body : Expression}
     {v : Value} (h : Eval td env (.let_ x e body) v) :
     ∃ w, Eval td env e w ∧ Eval td ⟨(x, w) :: env.bindings, env.globals⟩ body v := by
   cases h with
@@ -562,31 +562,31 @@ beyond evaluating them.  A literal's inversion is an equation rather than an exi
 nothing in it to be found — and the three arithmetic forms hand back the two `Int`s their operands
 produced beside what the operation made of them. -/
 
-public theorem Eval.intLit_inv {td : TypeDecls} {env : Env} {i : Int} {v : Value}
+@[grind →] public theorem Eval.intLit_inv {td : TypeDecls} {env : Env} {i : Int} {v : Value}
     (h : Eval td env (.intLit i) v) : v = .int i := by
   cases h with
   | EIntLit _ => rfl
 
-public theorem Eval.plus_inv {td : TypeDecls} {env : Env} {e₁ e₂ : Expression} {v : Value}
+@[grind →] public theorem Eval.plus_inv {td : TypeDecls} {env : Env} {e₁ e₂ : Expression} {v : Value}
     (h : Eval td env (.plus e₁ e₂) v) :
     ∃ n₁ n₂ : Int, Eval td env e₁ (.int n₁) ∧ Eval td env e₂ (.int n₂) ∧ v = .int (n₁ + n₂) := by
   cases h with
   | EPlus _ _ h₁ h₂ => exact ⟨_, _, h₁, h₂, rfl⟩
 
-public theorem Eval.minus_inv {td : TypeDecls} {env : Env} {e₁ e₂ : Expression} {v : Value}
+@[grind →] public theorem Eval.minus_inv {td : TypeDecls} {env : Env} {e₁ e₂ : Expression} {v : Value}
     (h : Eval td env (.minus e₁ e₂) v) :
     ∃ n₁ n₂ : Int, Eval td env e₁ (.int n₁) ∧ Eval td env e₂ (.int n₂) ∧ v = .int (n₁ - n₂) := by
   cases h with
   | EMinus _ _ h₁ h₂ => exact ⟨_, _, h₁, h₂, rfl⟩
 
-public theorem Eval.min_inv {td : TypeDecls} {env : Env} {e₁ e₂ : Expression} {v : Value}
+@[grind →] public theorem Eval.min_inv {td : TypeDecls} {env : Env} {e₁ e₂ : Expression} {v : Value}
     (h : Eval td env (.min e₁ e₂) v) :
     ∃ n₁ n₂ : Int, Eval td env e₁ (.int n₁) ∧ Eval td env e₂ (.int n₂) ∧
       v = .int (min n₁ n₂) := by
   cases h with
   | EMin _ _ h₁ h₂ => exact ⟨_, _, h₁, h₂, rfl⟩
 
-public theorem Eval.structGet_inv {td : TypeDecls} {env : Env} {e : Expression} {f : FieldName}
+@[grind →] public theorem Eval.structGet_inv {td : TypeDecls} {env : Env} {e : Expression} {f : FieldName}
     {v : Value} (h : Eval td env (.structGet e f) v) :
     ∃ name fvs, Eval td env e (.struct name fvs) ∧ fvs.lookup f = some v := by
   cases h with
@@ -603,40 +603,36 @@ value the operand can produce because nothing here makes `Eval` deterministic. -
 public theorem Eval.structGet_eq {td : TypeDecls} {env : Env} {e : Expression} {f : FieldName}
     {w u : Value} (hop : ∀ v, Eval td env e v → v.field? f = some w)
     (h : Eval td env (.structGet e f) u) : u = w := by
-  obtain ⟨name', fvs', hev, hf'⟩ := Eval.structGet_inv h
-  have hf := hop _ hev
-  simp only [Value.field?] at hf
-  exact Option.some.inj (hf'.symm.trans hf)
+  grind [Value.field?]
 
 /-- The same at an operand that is a name the environment binds, where the quantifier collapses: a
 `varRef` produces the one value the environment holds. -/
 public theorem Eval.structGet_varRef_eq {td : TypeDecls} {env : Env} {x : String}
     {v : Value} {f : FieldName} {w u : Value}
     (hx : env.lookup x = some v) (hf : v.field? f = some w)
-    (h : Eval td env (.structGet (.varRef x) f) u) : u = w :=
-  Eval.structGet_eq (fun _ hu => by
-    rw [Option.some.inj ((Eval.varRef_inv hu).symm.trans hx)]; exact hf) h
+    (h : Eval td env (.structGet (.varRef x) f) u) : u = w := by
+  grind [Value.field?]
 
-public theorem Eval.tupleGet_inv {td : TypeDecls} {env : Env} {e : Expression} {i : Nat}
+@[grind →] public theorem Eval.tupleGet_inv {td : TypeDecls} {env : Env} {e : Expression} {i : Nat}
     {v : Value} (h : Eval td env (.tupleGet e i) v) :
     ∃ vs, Eval td env e (.tuple vs) ∧ vs[i]? = some v := by
   cases h with
   | ETupleGet _ _ he hi => exact ⟨_, he, hi⟩
 
-public theorem Eval.tupleNew_inv {td : TypeDecls} {env : Env} {es : List Expression} {v : Value}
+@[grind →] public theorem Eval.tupleNew_inv {td : TypeDecls} {env : Env} {es : List Expression} {v : Value}
     (h : Eval td env (.tupleNew es) v) :
     ∃ vs, v = .tuple vs ∧ es.length = vs.length ∧ ∀ p ∈ es.zip vs, Eval td env p.1 p.2 := by
   cases h with
   | ETupleNew _ hlen hev => exact ⟨_, rfl, hlen, hev⟩
 
-public theorem Eval.hashmapGet_inv {td : TypeDecls} {env : Env} {m k : Expression}
+@[grind →] public theorem Eval.hashmapGet_inv {td : TypeDecls} {env : Env} {m k : Expression}
     {o : Option Value} (h : Eval td env (.hashmapGet m k) (.option o)) :
     ∃ kvs vk, Eval td env m (.hashmap kvs) ∧ Eval td env k vk ∧
       KeyValues.lookup? kvs vk = some o := by
   cases h with
   | EHashmapGet _ _ hm hk hlookup => exact ⟨_, _, hm, hk, hlookup⟩
 
-public theorem Eval.hashmapToList_inv {td : TypeDecls} {env : Env} {m : Expression}
+@[grind →] public theorem Eval.hashmapToList_inv {td : TypeDecls} {env : Env} {m : Expression}
     {vs : List Value} (h : Eval td env (.hashmapToList m) (.list vs)) :
     ∃ kvs, Eval td env m (.hashmap kvs) ∧ vs = kvs.map fun p => .tuple [p.1, p.2] := by
   cases h with
@@ -644,7 +640,7 @@ public theorem Eval.hashmapToList_inv {td : TypeDecls} {env : Env} {m : Expressi
 
 /-- A match on an option whose empty case is an `unreachable` took the other case: there is no rule
 for an `unreachable`, so a value for the match at all is a value for the scrutinee. -/
-public theorem Eval.optionMatch_unreachable_inv {td : TypeDecls} {env : Env} {scrut : Expression}
+@[grind →] public theorem Eval.optionMatch_unreachable_inv {td : TypeDecls} {env : Env} {scrut : Expression}
     {t : Ty} {why x : String} {sbody : Expression} {v : Value}
     (h : Eval td env (.optionMatch scrut (.unreachable t why) x sbody) v) :
     ∃ w, Eval td env scrut (.option (some w)) ∧
@@ -659,7 +655,7 @@ public theorem Eval.optionMatch_unreachable_inv {td : TypeDecls} {env : Env} {sc
 No disjunction, unlike `Eval.listFindIndex_inv`: one rule answers for an index the list has an
 element at and for one it does not, so what the value is is settled by the function rather than by a
 case a proof has to make. -/
-public theorem Eval.listIndex_inv {td : TypeDecls} {env : Env} {l i : Expression} {v : Value}
+@[grind →] public theorem Eval.listIndex_inv {td : TypeDecls} {env : Env} {l i : Expression} {v : Value}
     (h : Eval td env (.listIndex l i) v) :
     ∃ vs n, Eval td env l (.list vs) ∧ Eval td env i (.int n) ∧
       v = .option (Value.index? vs n) := by
@@ -669,13 +665,13 @@ public theorem Eval.listIndex_inv {td : TypeDecls} {env : Env} {l i : Expression
 /-- A length inverted: the list its operand produced, and how many elements it had.  The cast to the
 `Int` a `Value.int` holds is the rule's own, so what this hands back is the `Nat` the list has and
 the equation it stands in. -/
-public theorem Eval.listLength_inv {td : TypeDecls} {env : Env} {e : Expression} {v : Value}
+@[grind →] public theorem Eval.listLength_inv {td : TypeDecls} {env : Env} {e : Expression} {v : Value}
     (h : Eval td env (.listLength e) v) :
     ∃ vs, Eval td env e (.list vs) ∧ v = .int (vs.length : Int) := by
   cases h with
   | EListLength _ he => exact ⟨_, he, rfl⟩
 
-public theorem Eval.listMap_inv {td : TypeDecls} {env : Env} {e f : Expression} {v : Value}
+@[grind →] public theorem Eval.listMap_inv {td : TypeDecls} {env : Env} {e f : Expression} {v : Value}
     (h : Eval td env (.listMap e f) v) :
     ∃ vs vs' cb cg ps body, Eval td env e (.list vs) ∧ Eval td env f (.closure cb cg ps body) ∧
       vs.length = vs'.length ∧
@@ -683,7 +679,7 @@ public theorem Eval.listMap_inv {td : TypeDecls} {env : Env} {e f : Expression} 
   cases h with
   | EListMap _ _ he hf hlen _ hev => exact ⟨_, _, _, _, _, _, he, hf, hlen, hev, rfl⟩
 
-public theorem Eval.listFlatMap_inv {td : TypeDecls} {env : Env} {e f : Expression} {v : Value}
+@[grind →] public theorem Eval.listFlatMap_inv {td : TypeDecls} {env : Env} {e f : Expression} {v : Value}
     (h : Eval td env (.listFlatMap e f) v) :
     ∃ vs vss cb cg ps body, Eval td env e (.list vs) ∧ Eval td env f (.closure cb cg ps body) ∧
       vs.length = vss.length ∧
@@ -699,7 +695,7 @@ elements: the value is the elements paired with their keys and reordered, which 
 The comparability premise is dropped with the `ArgsHaveType` ones.  It is what makes a sort whose
 keys cannot all be compared stuck, and the order the value carries is `Value.sortByKey`'s whether or
 not a proof has it to hand. -/
-public theorem Eval.listSortOn_inv {td : TypeDecls} {env : Env} {e f : Expression} {v : Value}
+@[grind →] public theorem Eval.listSortOn_inv {td : TypeDecls} {env : Env} {e f : Expression} {v : Value}
     (h : Eval td env (.listSortOn e f) v) :
     ∃ vs ks cb cg ps body, Eval td env e (.list vs) ∧ Eval td env f (.closure cb cg ps body) ∧
       vs.length = ks.length ∧
@@ -713,7 +709,7 @@ holds to the DSL function is existential here, so what is left is that the value
 sort of the elements — enough for every fact about which elements it holds, and for nothing about
 the order they are in.  A proof that needs the order has to `cases` the evaluation and work from the
 comparison's own answers. -/
-public theorem Eval.listSortBy_inv {td : TypeDecls} {env : Env} {e f : Expression} {v : Value}
+@[grind →] public theorem Eval.listSortBy_inv {td : TypeDecls} {env : Env} {e f : Expression} {v : Value}
     (h : Eval td env (.listSortBy e f) v) :
     ∃ vs cmp, Eval td env e (.list vs) ∧ v = .list (Value.sortWith cmp vs) := by
   cases h with
@@ -732,7 +728,7 @@ the predicate, which is the short circuit the rule carries and the one thing thi
 hand back.
 
 `ArgsHaveType` premises are dropped as they are everywhere here. -/
-public theorem Eval.listFindIndex_inv {td : TypeDecls} {env : Env} {e f : Expression} {v : Value}
+@[grind →] public theorem Eval.listFindIndex_inv {td : TypeDecls} {env : Env} {e f : Expression} {v : Value}
     (h : Eval td env (.listFindIndex e f) v) :
     ∃ vs cb cg ps body, Eval td env e (.list vs) ∧ Eval td env f (.closure cb cg ps body) ∧
       ((∃ pre w post,
@@ -749,39 +745,83 @@ public theorem Eval.listFindIndex_inv {td : TypeDecls} {env : Env} {e f : Expres
 /-! ### The shapes a form gives
 
 And where no type is to hand: a form whose every rule builds a value of one shape produces one,
-whatever its operands did.  These are the two such forms a mismatch rule one step out asks about —
-a get, whose option is what `optionMatch` matches on, and an ordering, whose `bool` is what a sort
-holds its comparison to — read off the rule rather than off a declaration's result type. -/
+whatever its operands did.  A get is the case that keeps arising — its option is what `optionMatch`
+matches on, and a mismatch rule one step out asks about it — but every form with a fixed result
+shape is one of these, and a form with two rules that agree on the shape (`boolAnd`, `listFindIndex`)
+is too.
 
-public theorem Eval.isOption_hashmapGet {td : TypeDecls} {env : Env} {m k : Expression} {v : Value}
-    (h : Eval td env (.hashmapGet m k) v) : v.IsOption := by
-  cases h with
-  | EHashmapGet _ _ _ _ _ => exact ⟨_, rfl⟩
+`Expression.shape` is the question read syntactically: which shape, where the form settles one.  So
+one theorem answers for all of them at once, and a new form adds a line to the function below rather
+than a lemma of its own. -/
 
-public theorem Eval.isBool_le {td : TypeDecls} {env : Env} {l r : Expression} {v : Value}
-    (h : Eval td env (.le l r) v) : v.IsBool := by
-  cases h with
-  | ELe _ _ _ _ _ => exact ⟨_, rfl⟩
+/-- The shape every value of this form has, where the form has one.
 
-public theorem Eval.isBool_equals {td : TypeDecls} {env : Env} {l r : Expression} {v : Value}
-    (h : Eval td env (.equals l r) v) : v.IsBool := by
-  cases h with
-  | EEquals _ _ _ _ _ => exact ⟨_, rfl⟩
+`none` at the ten forms that do not: a name, a call, a conditional, a `let`, the four matches, a
+field or element read, and an `unreachable`.  Those produce whatever their subexpressions or their
+environment produced, so there is nothing syntactic to read — what a proof has instead is the
+inversion principle, which hands back the subexpression's own value.
+
+A `lt` and a `le` and an `equals` are `bool` whatever they compared, a `listIndex` and a
+`listFindIndex` and a `hashmapGet` are options whether or not they found anything, and a
+`listLength` is an `int` because the count is cast on the way out — in each case the rule builds the
+constructor rather than passing one through. -/
+@[expose] public def Expression.shape : Expression → Option Value.Shape
+  | .lam .. => some .closure
+  | .boolLit _ | .boolAnd .. | .boolOr .. | .equals .. | .lt .. | .le .. => some .bool
+  | .intLit _ | .plus .. | .minus .. | .min .. | .max .. | .listLength _ => some .int
+  | .stringLit _ => some .string
+  | .optionNone _ | .optionSome _ | .listIndex .. | .listFindIndex .. | .hashmapGet .. =>
+    some .option
+  | .lnil _ | .lcons .. | .listMap .. | .listFlatMap .. | .listReverse _ | .listSortOn .. |
+      .listSortBy .. | .hashmapToList _ => some .list
+  | .hashmapEmpty .. | .hashmapPut .. | .hashmapMap .. => some .hashmap
+  | .tupleNew _ => some .tuple
+  | .structNew .. | .structUpdate .. => some .struct
+  | .indNew .. => some .ind
+  | .app .. | .ite .. | .let_ .. | .varRef _ | .structGet .. | .indMatch .. | .optionMatch .. |
+      .listMatch .. | .tupleGet .. | .unreachable .. => none
+
+/-- And what it says is true of the value: the whole family of shape lemmas, one theorem.
+
+The induction is the one every inversion principle here is — `cases` on the derivation, the
+expression settling which rule fired — and each case is then an equation between two constructors
+of `Value.Shape`.  The forms `Expression.shape` answers `none` for contribute nothing: the
+hypothesis is `none = some s` there.
+
+A caller spends this through the `Value.is*_of_shape` lemmas (Value.lean), which is where a shape
+equation becomes the predicate a `Stuck.not_*` lemma asks for:
+`Value.isList_of_shape (hu.shape rfl)` is "what a `listMap` produced is a list". -/
+public theorem Eval.shape {td : TypeDecls} {env : Env} {e : Expression} {v : Value}
+    {s : Value.Shape} (h : Eval td env e v) (hs : e.shape = some s) : v.shape = s := by
+  cases h <;> simp_all [Expression.shape, Value.shape, Env.closure]
+
+/-! The five the model's progress proofs reach for by name, each one `Eval.shape` at its form.
+`Value.IsOption` and `Value.IsBool` rather than a shape equation because that is what the mismatch
+rules of `Stuck` negate. -/
+
+@[grind →] public theorem Eval.isOption_hashmapGet {td : TypeDecls} {env : Env} {m k : Expression} {v : Value}
+    (h : Eval td env (.hashmapGet m k) v) : v.IsOption :=
+  Value.isOption_of_shape (h.shape rfl)
+
+@[grind →] public theorem Eval.isBool_le {td : TypeDecls} {env : Env} {l r : Expression} {v : Value}
+    (h : Eval td env (.le l r) v) : v.IsBool :=
+  Value.isBool_of_shape (h.shape rfl)
+
+@[grind →] public theorem Eval.isBool_equals {td : TypeDecls} {env : Env} {l r : Expression} {v : Value}
+    (h : Eval td env (.equals l r) v) : v.IsBool :=
+  Value.isBool_of_shape (h.shape rfl)
 
 /-- An index and a search both produce options, the one because a position the list has nothing at
 is an answer like any other and the other because a list the predicate accepts nothing in is: in
 both cases the `none` is a value rather than a failure, which is why both rules build an option
 whatever happened underneath. -/
-public theorem Eval.isOption_listIndex {td : TypeDecls} {env : Env} {l i : Expression} {v : Value}
-    (h : Eval td env (.listIndex l i) v) : v.IsOption := by
-  cases h with
-  | EListIndex _ _ _ _ => exact ⟨_, rfl⟩
+@[grind →] public theorem Eval.isOption_listIndex {td : TypeDecls} {env : Env} {l i : Expression} {v : Value}
+    (h : Eval td env (.listIndex l i) v) : v.IsOption :=
+  Value.isOption_of_shape (h.shape rfl)
 
-public theorem Eval.isOption_listFindIndex {td : TypeDecls} {env : Env} {e f : Expression}
-    {v : Value} (h : Eval td env (.listFindIndex e f) v) : v.IsOption := by
-  cases h with
-  | EListFindIndexSome _ _ _ _ _ _ _ _ => exact ⟨_, rfl⟩
-  | EListFindIndexNone _ _ _ _ _ _ => exact ⟨_, rfl⟩
+@[grind →] public theorem Eval.isOption_listFindIndex {td : TypeDecls} {env : Env} {e f : Expression}
+    {v : Value} (h : Eval td env (.listFindIndex e f) v) : v.IsOption :=
+  Value.isOption_of_shape (h.shape rfl)
 
 
 /-- Evaluating a well-typed expression produces a value of its inferred type.

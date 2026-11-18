@@ -4,6 +4,8 @@ module
 public import LgtmDeepLean.Basic
 public import LgtmDeepLean.Lang.Eval
 import LgtmDeepLean.Lang.Eval.Tests
+public import LgtmDeepLean.Lang.Eval.Unique
+public import LgtmDeepLean.Lang.Eval.Yields
 public import LgtmDeepLean.Lang.IR
 public import LgtmDeepLean.Lang.Progress
 public import LgtmDeepLean.Lang.Syntax

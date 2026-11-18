@@ -1,5 +1,6 @@
 module
 
+public import LgtmDeepLean.Lang.Eval.Yields
 public import LgtmDeepLean.Lang.Progress
 public import LgtmDeepLean.Lang.Value
 public import LgtmDeepLean.Model.Basic.WellFormed
@@ -170,8 +171,8 @@ private theorem CommentRef.eq_of_hasType {td : TypeDecls} {v : Value}
   clear hv
   obtain rfl : sd = CommentRef := Option.some.inj (hsd.symm.trans hd)
   have hfst : fvs.map Prod.fst = ["id"] := List.perm_singleton.mp hnames
-  obtain ⟨w, rfl⟩ : ∃ w, fvs = [("id", w)] := by
-    rcases fvs with _ | ⟨⟨f, w⟩, _ | _⟩ <;> simp_all [CommentRef]
+  obtain ⟨⟨f, w⟩, rfl⟩ := List.length_eq_one_iff.mp (by simpa using congrArg List.length hfst)
+  obtain rfl : f = "id" := by simpa using hfst
   obtain ⟨s, rfl⟩ := Value.hasType_string_iff.mp (htys "id" .string w rfl rfl)
   exact ⟨s, rfl⟩
 
@@ -216,7 +217,7 @@ theorem CommentThreads.asAlist.sortThreadLists_apply_of_mem {td : TypeDecls} {gs
   -- The sort by location rearranges and nothing else, so a group is one of the calls' answers.
   obtain ⟨lts, cmp, hlts, hgroups⟩ := Eval.listSortBy_inv hbody
   have hltsv := Eval.varRef_inv hlts
-  simp [Env.lookup, List.lookup] at hltsv
+  lgtm_env at hltsv
   subst hltsv
   obtain rfl : groups = Value.sortWith cmp lts := by simpa using hgroups
   -- The threads at each location are what the call to `sortThreadLists` returned.
@@ -225,7 +226,7 @@ theorem CommentThreads.asAlist.sortThreadLists_apply_of_mem {td : TypeDecls} {gs
   obtain rfl : lts = lts' := by simpa using hlts'
   have hlrcvv := Eval.varRef_inv hlrcv
   have hsortFnv := Eval.varRef_inv hsortFn
-  simp [Env.lookup, Env.closure, List.lookup] at hlrcvv hsortFnv
+  lgtm_env at hlrcvv hsortFnv
   obtain ⟨rfl, rfl, rfl, rfl⟩ := hsortFnv
   subst hlrcvv
   -- Each of those lists of root comments was read out of the manager.
@@ -233,7 +234,7 @@ theorem CommentThreads.asAlist.sortThreadLists_apply_of_mem {td : TypeDecls} {gs
     Eval.listMap_inv hlrc
   obtain rfl : lrc = lrc' := by simpa using hlrc'
   have hlookupFnv := Eval.varRef_inv hlookupFn
-  simp [Env.lookup, Env.closure, List.lookup] at hlookupFnv
+  lgtm_env at hlookupFnv
   obtain ⟨rfl, rfl, rfl, rfl⟩ := hlookupFnv
   have hcomments : ∀ p ∈ entries.zip lrc, ∃ loc roots, p.2 = .tuple [loc, .list roots] ∧
       CommentManager.ContainsComments manager roots := by
@@ -245,39 +246,27 @@ theorem CommentThreads.asAlist.sortThreadLists_apply_of_mem {td : TypeDecls} {gs
     obtain ⟨refs, cs, _cb, _cg, _ps, _body, hrefs, hcFn, hclen, hcev, rfl⟩ :=
       Eval.listMap_inv hmapComments
     have hcFnv := Eval.varRef_inv hcFn
-    simp [Env.extend, Env.lookup, List.lookup] at hcFnv
+    lgtm_env at hcFnv
     obtain ⟨rfl, rfl, rfl, rfl⟩ := hcFnv
     have hmanagerComments : CommentManager.ContainsComments manager cs := by
       intro c hc
       obtain ⟨ref, hpair⟩ := exists_mem_zip_of_mem_right hclen hc
       obtain ⟨w, hcall, hbound⟩ := Eval.optionMatch_unreachable_inv (hcev _ hpair)
       have hw := Eval.varRef_inv hbound
-      simp [Env.lookup, List.lookup] at hw
+      lgtm_env at hw
       subst hw
       obtain ⟨vs, hvlen, hvev, happly⟩ :=
         FuncDecl.apply_of_eval_app
-          (by
-            simpa [CommentThreads.asAlist, FuncDecl.callEnv, Env.extend, Globals.env]
-              using hDeclares.get)
-          (by simp [CommentThreads.asAlist, FuncDecl.callEnv, Env.extend, Globals.env,
-            List.lookup]) hcall
-      obtain ⟨a, b, rfl⟩ : ∃ a b, vs = [a, b] := by
-        rcases vs with _ | ⟨a, _ | ⟨b, _ | _⟩⟩ <;> simp_all
-      have hav := Eval.varRef_inv (hvev (Expression.varRef "manager", a) (by simp))
-      have hbv := Eval.varRef_inv (hvev (Expression.varRef "commentRef", b) (by simp))
-      simp [CommentThreads.asAlist, FuncDecl.callEnv, Env.extend, Globals.env, Env.lookup,
-        List.lookup] at hav hbv
-      subst hav
-      exact ⟨b, CommentManager.get.eq_get? happly⟩
+          (by lgtm_env [CommentThreads.asAlist] using hDeclares.get)
+          (by lgtm_env [CommentThreads.asAlist]) hcall
+      obtain rfl : vs = [manager, ref] := Eval.Yields.eq_of_args hvev hvlen
+        (.cons (.varRef (by lgtm_env [CommentThreads.asAlist]))
+          (.cons (.varRef (by lgtm_env [CommentThreads.asAlist])) .nil))
+      exact ⟨ref, CommentManager.get.eq_get? happly⟩
     -- and the pair this location contributes is that location beside them
     obtain ⟨tvs, htvs, htlen, htev⟩ := Eval.tupleNew_inv hentry
-    obtain ⟨a, b, rfl⟩ : ∃ a b, tvs = [a, b] := by
-      rcases tvs with _ | ⟨a, _ | ⟨b, _ | _⟩⟩ <;> simp_all
-    have hav := Eval.varRef_inv (htev (Expression.varRef "loc", a) (by simp))
-    have hbv := Eval.varRef_inv (htev (Expression.varRef "rootCommentsAtLoc", b) (by simp))
-    simp [Env.lookup, List.lookup] at hav hbv
-    subst hav
-    subst hbv
+    obtain rfl : tvs = [locv, .list cs] := Eval.Yields.eq_of_args htev htlen
+      (.cons (.varRef (by lgtm_env)) (.cons (.varRef (by lgtm_env)) .nil))
     exact ⟨locv, cs, htvs, hmanagerComments⟩
   -- Putting the two together: the group, the location it is at, and the comments it came from.
   intro group hgroup
@@ -287,22 +276,14 @@ theorem CommentThreads.asAlist.sortThreadLists_apply_of_mem {td : TypeDecls} {gs
   obtain ⟨loc, roots, rfl, hroots⟩ := hcomments _ hlpair
   obtain ⟨vs, hvlen, hvev, happly⟩ :=
     FuncDecl.apply_of_eval_app
-      (by simpa [CommentThreads.asAlist, FuncDecl.callEnv, Env.extend, Globals.env] using
-        hDeclares.sortThreadLists)
-      (by simp [CommentThreads.asAlist, FuncDecl.callEnv, Env.extend, Globals.env, List.lookup])
-      (hsev _ hpair)
-  obtain ⟨a, b, c, rfl⟩ : ∃ a b c, vs = [a, b, c] := by
-    rcases vs with _ | ⟨a, _ | ⟨b, _ | ⟨c, _ | _⟩⟩⟩ <;> simp_all
-  have hav := Eval.varRef_inv (hvev (Expression.varRef "threads", a) (by simp))
-  have hbv := Eval.varRef_inv (hvev (Expression.varRef "manager", b) (by simp))
-  have hcv := Eval.varRef_inv (hvev (Expression.varRef "locatedThreads", c) (by simp))
-  simp [CommentThreads.asAlist, FuncDecl.callEnv, Env.extend, Globals.env, Env.lookup,
-    List.lookup] at hav hbv hcv
-  subst hav
-  subst hbv
-  subst hcv
-  exact ⟨loc, roots, hroots,
-    by simpa [CommentThreads.asAlist, FuncDecl.callEnv, Env.extend, Globals.env] using happly⟩
+      (by lgtm_env [CommentThreads.asAlist] using hDeclares.sortThreadLists)
+      (by lgtm_env [CommentThreads.asAlist]) (hsev _ hpair)
+  obtain rfl : vs = [threads, manager, .tuple [loc, .list roots]] :=
+    Eval.Yields.eq_of_args hvev hvlen
+      (.cons (.varRef (by lgtm_env [CommentThreads.asAlist]))
+        (.cons (.varRef (by lgtm_env [CommentThreads.asAlist]))
+          (.cons (.varRef (by lgtm_env [CommentThreads.asAlist])) .nil)))
+  exact ⟨loc, roots, hroots, by lgtm_env [CommentThreads.asAlist] using happly⟩
 
 
 /-! ## One location's threads
@@ -334,18 +315,17 @@ theorem CommentThreads.asAlist.sortThreadLists.isSortedByTimestamp {td : TypeDec
     Eval.listSortOn_inv hsort
   obtain ⟨tvs, hscrut, hget⟩ := Eval.tupleGet_inv hlist
   have htvs := Eval.varRef_inv hscrut
-  simp [CommentThreads.asAlist.sortThreadLists, FuncDecl.callEnv, Env.extend, Globals.env,
-    Env.lookup, List.lookup] at htvs
+  lgtm_env [CommentThreads.asAlist.sortThreadLists] at htvs
   subst htvs
   obtain rfl : roots = vs := by simpa using hget
   -- Each key is the timestamp its comment records, so each key is an `int`.
   obtain ⟨rfl, rfl, rfl, rfl⟩ : _ ∧ _ ∧ _ ∧ _ := by
-    simpa [Env.closure, Value.closure.injEq] using Eval.lam_inv hfun
+    lgtm_env [Value.closure.injEq] using Eval.lam_inv hfun
   have hkeyField : ∀ p ∈ roots.zip ks, p.1.field? "createdTimestamp" = some p.2 := by
     intro p hp
     obtain ⟨_n, _fvs, hc, hf⟩ := Eval.structGet_inv (hkeys p hp)
     have hlc := Eval.varRef_inv hc
-    simp [Env.extend, Env.lookup] at hlc
+    lgtm_env at hlc
     rw [hlc]
     simpa [Value.field?] using hf
   have hkeyInt : ∀ p ∈ roots.zip ks, ∃ i : Int, p.2 = .int i := by
@@ -358,8 +338,7 @@ theorem CommentThreads.asAlist.sortThreadLists.isSortedByTimestamp {td : TypeDec
   obtain rfl := Eval.lam_inv hlookupFn
   have hsrv := Eval.varRef_inv hsr
   have hfnv := Eval.varRef_inv hfn
-  simp [CommentThreads.asAlist.sortThreadLists, FuncDecl.callEnv, Env.extend, Env.closure,
-    Globals.env, Env.lookup, List.lookup] at hsrv hfnv
+  lgtm_env [CommentThreads.asAlist.sortThreadLists] at hsrv hfnv
   obtain ⟨rfl, rfl, rfl, rfl⟩ := hfnv
   subst hsrv
   have hnode : ∀ p ∈ ((Value.sortByKey (roots.zip ks)).map Prod.fst).zip ts,
@@ -372,21 +351,19 @@ theorem CommentThreads.asAlist.sortThreadLists.isSortedByTimestamp {td : TypeDec
     have hlt := Eval.varRef_inv ht
     have hlc := Eval.varRef_inv hc
     have hlth := Eval.varRef_inv hthread
-    simp [Env.extend, Env.lookup, List.lookup] at hlt hlc hlth
+    lgtm_env at hlt hlc hlth
     subst hlt
     subst hlth
     exact ⟨ref, by rw [hlc]; simpa [Value.field?] using hcr,
       by simp [CommentThreads.node?, Value.lookupField?, Value.field?, hcn, hlookup]⟩
   -- What comes back is the location beside those threads.
   obtain ⟨rvs, rfl, hrlen, hrev⟩ := Eval.tupleNew_inv hbody
-  obtain ⟨a, b, rfl⟩ : ∃ a b, rvs = [a, b] := by
-    rcases rvs with _ | ⟨a, _ | ⟨b, _ | _⟩⟩ <;> simp_all
+  obtain ⟨a, b, rfl⟩ := List.length_eq_two_iff.mp (by simpa using hrlen.symm)
   obtain ⟨_rtvs, hloc, hloci⟩ :=
     Eval.tupleGet_inv (hrev ((Expression.varRef "commentThreadRoots").tupleGet 0, a) (by simp))
   have hlocv := Eval.varRef_inv hloc
   have hthreadsv := Eval.varRef_inv (hrev (Expression.varRef "sortedThreads", b) (by simp))
-  simp [CommentThreads.asAlist.sortThreadLists, FuncDecl.callEnv, Env.extend, Globals.env,
-    Env.lookup, List.lookup] at hlocv hthreadsv
+  lgtm_env [CommentThreads.asAlist.sortThreadLists] at hlocv hthreadsv
   subst hlocv
   subst hthreadsv
   obtain rfl : a = loc := by simpa using hloci.symm
@@ -455,24 +432,17 @@ theorem CommentThreads.toThreadsOrdered.groupsAreSorted {td : TypeDecls} {gs : G
   obtain ⟨groups, tss, _cb, _cg, _ps, _body, hcall, hfn, hflen, hfev, hres⟩ :=
     Eval.listFlatMap_inv hbody
   obtain ⟨rfl, rfl, rfl, rfl⟩ : _ ∧ _ ∧ _ ∧ _ := by
-    simpa [Env.closure, Value.closure.injEq] using Eval.lam_inv hfn
+    lgtm_env [Value.closure.injEq] using Eval.lam_inv hfn
   obtain rfl : ordered = tss.flatten := by simpa using hres
   -- The groups are what the call to `asAlist` returned.
   obtain ⟨vs, hvlen, hvev, happly⟩ :=
     FuncDecl.apply_of_eval_app
-      (by simpa [CommentThreads.toThreadsOrdered, FuncDecl.callEnv, Env.extend, Globals.env] using
-        hDeclares.asAlist)
-      (by simp [CommentThreads.toThreadsOrdered, FuncDecl.callEnv, Env.extend, Globals.env,
-        List.lookup]) hcall
-  obtain ⟨a, b, rfl⟩ : ∃ a b, vs = [a, b] := by
-    rcases vs with _ | ⟨a, _ | ⟨b, _ | _⟩⟩ <;> simp_all
-  have hav := Eval.varRef_inv (hvev (Expression.varRef "threads", a) (by simp))
-  have hbv := Eval.varRef_inv (hvev (Expression.varRef "manager", b) (by simp))
-  simp [CommentThreads.toThreadsOrdered, FuncDecl.callEnv, Env.extend, Globals.env, Env.lookup,
-    List.lookup] at hav hbv
-  subst hav
-  subst hbv
-  simp only [FuncDecl.callEnv, Globals.env, Env.globals_extend] at happly
+      (by lgtm_env [CommentThreads.toThreadsOrdered] using hDeclares.asAlist)
+      (by lgtm_env [CommentThreads.toThreadsOrdered]) hcall
+  obtain rfl : vs = [threads, manager] := Eval.Yields.eq_of_args hvev hvlen
+    (.cons (.varRef (by lgtm_env [CommentThreads.toThreadsOrdered]))
+      (.cons (.varRef (by lgtm_env [CommentThreads.toThreadsOrdered])) .nil))
+  lgtm_env at happly
   refine ⟨groups, happly, fun group hgroup => ?_⟩
   obtain ⟨loc, ts, stamps, rfl, hlen, hstamps, hsorted⟩ :=
     CommentThreads.asAlist.threadLocationsSortedByTimestamp hDeclares
@@ -481,7 +451,7 @@ theorem CommentThreads.toThreadsOrdered.groupsAreSorted {td : TypeDecls} {gs : G
   obtain ⟨l, hpair⟩ := exists_mem_zip_of_mem_left hflen hgroup
   obtain ⟨tvs, hscrut, hidx⟩ := Eval.tupleGet_inv (hfev _ hpair)
   have htvs := Eval.varRef_inv hscrut
-  simp [Env.extend, Env.lookup] at htvs
+  lgtm_env at htvs
   subst htvs
   obtain rfl : ts = l := by simpa using hidx
   exact ⟨loc, ts, stamps, rfl, infix_flatten_of_mem (List.of_mem_zip hpair).2, hlen, hstamps,
@@ -552,53 +522,42 @@ theorem CommentThread.linearize.apply_inv {td : TypeDecls} {gs : Globals}
     cases hhead with
     | @EApp _env _cb _cg _ps _lbody argVals v _ _ hf hlen hargs _ hcbody =>
       obtain ⟨rfl, rfl, rfl, rfl⟩ : _ ∧ _ ∧ _ ∧ _ := by
-        simpa [Env.lookup, Env.closure, Value.closure.injEq, List.lookup] using
-          Eval.varRef_inv hf
-      obtain ⟨root, rfl⟩ : ∃ root, argVals = [root] := by
-        rcases argVals with _ | ⟨a, _ | _⟩ <;> simp_all
+        lgtm_env [Value.closure.injEq] using Eval.varRef_inv hf
+      obtain ⟨root, rfl⟩ := List.length_eq_one_iff.mp (by simpa using hlen.symm)
       obtain ⟨_tn, _tfvs, hthreadRef, hvalue⟩ :=
         Eval.structGet_inv
           (hargs ((Expression.varRef "thread").structGet "value", root) (by simp))
       have hthreadEq := Eval.varRef_inv hthreadRef
-      simp [CommentThread.linearize, FuncDecl.callEnv, Env.extend, Globals.env,
-        Env.lookup, List.lookup] at hthreadEq
+      lgtm_env [CommentThread.linearize] at hthreadEq
       have hrootField : thread.field? "value" = some root := by
         rw [hthreadEq]; simpa [Value.field?] using hvalue
       -- The comment that ref names is the one the manager has under it.
       obtain ⟨c, hcall, hbound⟩ := Eval.optionMatch_unreachable_inv hcbody
       have hcv := Eval.varRef_inv hbound
-      simp [Env.lookup, List.lookup] at hcv
+      lgtm_env at hcv
       subst hcv
       obtain ⟨vs, hvlen, hvev, hgetApply⟩ :=
         FuncDecl.apply_of_eval_app
-          (by simpa [CommentThread.linearize, FuncDecl.callEnv, Env.extend,
-            Globals.env] using hDeclares.get)
-          (by simp [CommentThread.linearize, FuncDecl.callEnv, Env.extend,
-            Globals.env, List.lookup]) hcall
-      obtain ⟨m, r, rfl⟩ : ∃ m r, vs = [m, r] := by
-        rcases vs with _ | ⟨m, _ | ⟨r, _ | _⟩⟩ <;> simp_all
-      have hmv := Eval.varRef_inv (hvev (Expression.varRef "manager", m) (by simp))
-      have hrv := Eval.varRef_inv (hvev (Expression.varRef "ref", r) (by simp))
-      simp [CommentThread.linearize, FuncDecl.callEnv, Env.extend, Globals.env,
-        Env.lookup, List.lookup] at hmv hrv
-      subst hmv
-      subst hrv
+          (by lgtm_env [CommentThread.linearize] using hDeclares.get)
+          (by lgtm_env [CommentThread.linearize]) hcall
+      obtain rfl : vs = [manager, root] := Eval.Yields.eq_of_args hvev hvlen
+        (.cons (.varRef (by lgtm_env [CommentThread.linearize]))
+          (.cons (.varRef (by lgtm_env [CommentThread.linearize])) .nil))
       -- The rest of the list is one run per child, each the list that child's own call returned.
       obtain ⟨refs, lists, _fcb, _fcg, _fps, _fbody, hrefs, hfn, hflen, hfev, hlists⟩ :=
         Eval.listFlatMap_inv htail
       simp only [Value.list.injEq] at hlists
       subst hlists
       have hrefsv := Eval.varRef_inv hrefs
-      simp [Env.lookup, List.lookup] at hrefsv
+      lgtm_env at hrefsv
       obtain ⟨childRefs, cmp, hchildren, hsorted⟩ := Eval.listSortBy_inv hsort
       subst hrefsv
       obtain rfl : refs = Value.sortWith cmp childRefs := by simpa using hsorted
       obtain ⟨_cn, _cfvs, hthreadRef', hchildField⟩ := Eval.structGet_inv hchildren
       have hthreadEq' := Eval.varRef_inv hthreadRef'
-      simp [CommentThread.linearize, FuncDecl.callEnv, Env.extend, Globals.env,
-        Env.lookup, List.lookup] at hthreadEq'
+      lgtm_env [CommentThread.linearize] at hthreadEq'
       obtain ⟨rfl, rfl, rfl, rfl⟩ : _ ∧ _ ∧ _ ∧ _ := by
-        simpa [Env.closure, Value.closure.injEq] using Eval.lam_inv hfn
+        lgtm_env [Value.closure.injEq] using Eval.lam_inv hfn
       refine ⟨root, c, childRefs, hrootField, CommentManager.get.eq_get? hgetApply, by simp,
         by rw [hthreadEq']; simpa [Value.field?] using hchildField, fun r hr => ?_⟩
       -- The child is one of the refs the flattening ran over, so one of the runs is its own.
@@ -608,8 +567,7 @@ theorem CommentThread.linearize.apply_inv {td : TypeDecls} {gs : Globals}
       obtain ⟨_nn, _nfvs, hthreadsRef, hnodes⟩ := Eval.structGet_inv hm
       have hthreadsEq := Eval.varRef_inv hthreadsRef
       have hvk := Eval.varRef_inv hk
-      simp [CommentThread.linearize, FuncDecl.callEnv, Env.extend, Globals.env,
-        Env.lookup, List.lookup] at hthreadsEq hvk
+      lgtm_env [CommentThread.linearize] at hthreadsEq hvk
       subst hvk
       have hnode : CommentThreads.node? threads r = some node := by
         rw [hthreadsEq]
@@ -617,20 +575,12 @@ theorem CommentThread.linearize.apply_inv {td : TypeDecls} {gs : Globals}
       -- And that run is what the recursive call on the child's node returned.
       obtain ⟨rvs, hrvlen, hrvev, hrapply⟩ :=
         FuncDecl.apply_of_eval_app
-          (by simpa [CommentThread.linearize, FuncDecl.callEnv, Env.extend,
-            Globals.env] using hDeclares.linearize)
-          (by simp [CommentThread.linearize, FuncDecl.callEnv, Env.extend,
-            Globals.env, List.lookup]) hreccall
-      obtain ⟨a, b, t', rfl⟩ : ∃ a b t', rvs = [a, b, t'] := by
-        rcases rvs with _ | ⟨a, _ | ⟨b, _ | ⟨t', _ | _⟩⟩⟩ <;> simp_all
-      have hav := Eval.varRef_inv (hrvev (Expression.varRef "threads", a) (by simp))
-      have hbv := Eval.varRef_inv (hrvev (Expression.varRef "manager", b) (by simp))
-      have htv := Eval.varRef_inv (hrvev (Expression.varRef "childThread", t') (by simp))
-      simp [CommentThread.linearize, FuncDecl.callEnv, Env.extend, Globals.env,
-        Env.lookup, List.lookup] at hav hbv htv
-      subst hav
-      subst hbv
-      subst htv
+          (by lgtm_env [CommentThread.linearize] using hDeclares.linearize)
+          (by lgtm_env [CommentThread.linearize]) hreccall
+      obtain rfl : rvs = [threads, manager, node] := Eval.Yields.eq_of_args hrvev hrvlen
+        (.cons (.varRef (by lgtm_env [CommentThread.linearize]))
+          (.cons (.varRef (by lgtm_env [CommentThread.linearize]))
+            (.cons (.varRef (by lgtm_env [CommentThread.linearize])) .nil)))
       exact ⟨node, cs, hnode, hrapply, fun x hx =>
         List.mem_cons_of_mem _ (List.mem_flatten.mpr ⟨cs, (List.of_mem_zip hpair).2, hx⟩)⟩
 
@@ -681,61 +631,28 @@ private theorem CommentThread.linearize.apply_expectComment {td : TypeDecls} {gs
         (.optionMatch (.app (.varRef "CommentManager.get") [.varRef "manager", .varRef "ref"])
           (.unreachable (.struct "Comment") "Comments are required to be present in the manager")
           "c" (.varRef "c"))))
-    (hargE : Eval td callerEnv argE ref) :
-    Eval td callerEnv (.app (.varRef "expectComment") [argE]) ca := by
-  have hbody : Eval td
-      (Env.extend (CommentThread.linearize.callEnv gs [threads, manager, thread])
-        [("ref", Ty.struct "CommentRef")] [ref])
-      (.optionMatch (.app (.varRef "CommentManager.get") [.varRef "manager", .varRef "ref"])
-        (.unreachable (.struct "Comment") "Comments are required to be present in the manager")
-        "c" (.varRef "c"))
-      ca := by
-    have hm : Eval td
-        (Env.extend (CommentThread.linearize.callEnv gs [threads, manager, thread])
-          [("ref", Ty.struct "CommentRef")] [ref]) (.varRef "manager") manager :=
-      Eval.EVarRef _
-        (by simp [CommentThread.linearize, FuncDecl.callEnv, Env.extend, Globals.env,
-          Env.lookup, List.lookup])
-    have hr : Eval td
-        (Env.extend (CommentThread.linearize.callEnv gs [threads, manager, thread])
-          [("ref", Ty.struct "CommentRef")] [ref]) (.varRef "ref") ref :=
-      Eval.EVarRef _ (by simp [Env.extend, Env.lookup])
-    have hscrut : Eval td
-        (Env.extend (CommentThread.linearize.callEnv gs [threads, manager, thread])
-          [("ref", Ty.struct "CommentRef")] [ref])
-        (.app (.varRef "CommentManager.get") [.varRef "manager", .varRef "ref"])
-        (.option (some ca)) :=
-      FuncDecl.eval_app_of_apply hGet
-        (by simp [CommentThread.linearize, FuncDecl.callEnv, Env.extend, Globals.env,
-          List.lookup]) rfl
-        (by
-          intro p hp
-          simp only [List.zip_cons_cons, List.zip_nil_right, List.mem_cons, List.not_mem_nil,
-            or_false] at hp
-          rcases hp with rfl | rfl
-          · exact hm
-          · exact hr)
-        (CommentManager.get.apply_of_get? hManager hrefHasType hcGet)
-    exact Eval.EOptionMatchSome _ _ _ _ hscrut (Eval.EVarRef _ (by simp [Env.extend, Env.lookup]))
-  exact Eval.EApp _ _ (Eval.EVarRef _ hcallerLookup) rfl
-    (by
-      intro p hp
-      simp only [List.zip_cons_cons, List.zip_nil_right, List.mem_cons, List.not_mem_nil,
-        or_false] at hp
-      obtain rfl := hp
-      exact hargE)
-    (.cons "ref" hrefHasType .nil) hbody
+    (hargE : Eval.Yields td callerEnv argE ref) :
+    Eval.Yields td callerEnv (.app (.varRef "expectComment") [argE]) ca := by
+  refine Eval.Yields.app_closure hcallerLookup (.cons hargE .nil) (.cons "ref" hrefHasType .nil) ?_
+  exact .optionMatch_some
+    (.app_global hGet (by yields_lookup)
+      (.cons (.varRef (by yields_lookup)) (.cons (.varRef (by yields_lookup)) .nil))
+      (CommentManager.get.apply_of_get? hManager hrefHasType hcGet))
+    (.varRef (by yields_lookup))
 
 /-- `comparisonFunction`'s body, evaluated at two refs the manager covers: two calls to
 `expectComment`, built by `apply_expectComment`, two `structGet`s reading their timestamps, and
-`Eval.ELe` over the two `Int`s — whose answer is `refLe manager a b`, by `refLe_eq_decide`, which is
-the fact the caller (`EListSortBy`'s comparability premise) actually wants. -/
+`Eval.Yields.le` over the two `Int`s — whose answer is `refLe manager a b`, by `refLe_eq_decide`,
+which is the fact the caller (the sort's comparison premise) actually wants.
+
+Nothing is asked of the two comments beyond the timestamps they carry: the reads are
+`Value.field?` of whatever the calls returned, so the canonical form of a `Comment` value — which
+this used to take apart to get at a `FieldValues` to look the field up in — costs nothing here. -/
 private theorem CommentThread.linearize.apply_comparisonFunction_body {td : TypeDecls}
     {gs : Globals} {threads manager thread : Value} {a b ca cb : Value} {i j : Int} {env1 : Env}
     (hGet : gs.lookup "CommentManager.get" = some CommentManager.get)
     (hManager : manager.HasType td (.struct "CommentManager"))
     (ha : a.HasType td (.struct "CommentRef")) (hb : b.HasType td (.struct "CommentRef"))
-    (hcaHasType : ca.HasType td (.struct "Comment")) (hcbHasType : cb.HasType td (.struct "Comment"))
     (hcaGet : CommentManager.get? manager a = some ca)
     (hcbGet : CommentManager.get? manager b = some cb)
     (hcai : ca.field? "createdTimestamp" = some (.int i))
@@ -750,23 +667,16 @@ private theorem CommentThread.linearize.apply_comparisonFunction_body {td : Type
       (.le (.structGet (.app (.varRef "expectComment") [.varRef "a"]) "createdTimestamp")
         (.structGet (.app (.varRef "expectComment") [.varRef "b"]) "createdTimestamp"))
       (.bool (decide (i ≤ j))) := by
-  obtain ⟨fvsA, rfl⟩ := Value.eq_struct_of_hasType hcaHasType
-  obtain ⟨fvsB, rfl⟩ := Value.eq_struct_of_hasType hcbHasType
   have hshift : (Env.extend env1 [("a", Ty.struct "CommentRef"), ("b", Ty.struct "CommentRef")]
-      [a, b]).lookup "expectComment" = env1.lookup "expectComment" := by
-    simp [Env.extend, Env.lookup, List.lookup]
-  have hcallA : Eval td
-      (Env.extend env1 [("a", Ty.struct "CommentRef"), ("b", Ty.struct "CommentRef")] [a, b])
-      (.app (.varRef "expectComment") [.varRef "a"]) (.struct "Comment" fvsA) :=
-    CommentThread.linearize.apply_expectComment (threads := threads) (thread := thread) hGet
-      hManager ha hcaGet (hshift.trans hexpect) (Eval.EVarRef _ (by simp [Env.extend, Env.lookup]))
-  have hcallB : Eval td
-      (Env.extend env1 [("a", Ty.struct "CommentRef"), ("b", Ty.struct "CommentRef")] [a, b])
-      (.app (.varRef "expectComment") [.varRef "b"]) (.struct "Comment" fvsB) :=
-    CommentThread.linearize.apply_expectComment (threads := threads) (thread := thread) hGet
-      hManager hb hcbGet (hshift.trans hexpect)
-      (Eval.EVarRef _ (by simp [Env.extend, Env.lookup, List.lookup]))
-  exact Eval.ELe _ _ (Eval.EStructGet _ _ hcallA hcai) (Eval.EStructGet _ _ hcallB hcbj) (by simp)
+      [a, b]).lookup "expectComment" = env1.lookup "expectComment" := by yields_lookup
+  exact Eval.Yields.le
+    (.structGet (CommentThread.linearize.apply_expectComment (threads := threads)
+      (thread := thread) hGet hManager ha hcaGet (hshift.trans hexpect)
+      (.varRef (by yields_lookup))) hcai)
+    (.structGet (CommentThread.linearize.apply_expectComment (threads := threads)
+      (thread := thread) hGet hManager hb hcbGet (hshift.trans hexpect)
+      (.varRef (by yields_lookup))) hcbj)
+    (by simp)
 
 /-- A node the pool holds is held in its `commentTreeNodes` map under the ref it is registered
 under, as the two premises `Eval.EHashmapGet` asks for: the map it ran in, and the answer
@@ -789,24 +699,26 @@ node for: the node is read out of `commentTreeNodes` — which is where `childre
 the `none` branch being an `unreachable` and so having no value at all — and what the body returns
 is what the recursive call on that node returned.
 
-Abstracted over the environment the way `apply_expectComment` is, with one hypothesis per name the
-body reads, so that the caller need not write out the three `let`s this sits under.  The bindings
-are asked for at `env.bindings` rather than at `Env.lookup`: the recursive call resolves *its own*
-name through the globals, so saying that the three arguments are local bindings rather than globals
-of those names is part of what makes the call the one `hLinearize` names. -/
+Abstracted over the environment the way `apply_expectComment` is, so that the caller need not write
+out the three `let`s this sits under, and over `Env.Describes` rather than over one hypothesis per
+name: the three names it reads, the one it resolves through the globals, and the globals themselves
+are the whole of what it asks, which is one bundle and one `constructor` at the call site.
+
+The bindings are asked for at `env.bindings` rather than at `Env.lookup` — which is `Env.Describes`'
+own choice and the reason it has an `unshadowed` clause: the recursive call resolves *its own* name
+through the globals, so saying that the three arguments are local bindings rather than globals of
+those names is part of what makes the call the one `hLinearize` names. -/
 private theorem CommentThread.linearize.eval_childBody {td : TypeDecls} {gs : Globals}
     {manager node r : Value} {cs : List Value} {env : Env} {thfvs : FieldValues} {kvs : KeyValues}
     (hLinearize : gs.lookup "CommentThread.linearize" = some CommentThread.linearize)
-    (hglobals : env.globals = gs)
-    (hshadow : env.bindings.lookup "CommentThread.linearize" = none)
-    (hthreads : env.bindings.lookup "threads" = some (.struct "CommentThreads" thfvs))
-    (hmanager : env.bindings.lookup "manager" = some manager)
-    (hchildRef : env.bindings.lookup "childRef" = some r)
+    (hEnv : Env.Describes env gs
+      [("threads", .struct "CommentThreads" thfvs), ("manager", manager), ("childRef", r)]
+      ["CommentThread.linearize"])
     (hnodes : thfvs.lookup "commentTreeNodes" = some (.hashmap kvs))
     (hlookup : KeyValues.lookup? kvs r = some (some node))
     (happly : CommentThread.linearize.Apply td gs
       [.struct "CommentThreads" thfvs, manager, node] (.list cs)) :
-    Eval td env
+    Eval.Yields td env
       (.optionMatch
         (.hashmapGet (.structGet (.varRef "threads") "commentTreeNodes") (.varRef "childRef"))
         (.unreachable (.list (.struct "Comment"))
@@ -815,20 +727,15 @@ private theorem CommentThread.linearize.eval_childBody {td : TypeDecls} {gs : Gl
         (.app (.varRef "CommentThread.linearize")
           [.varRef "threads", .varRef "manager", .varRef "childThread"]))
       (.list cs) := by
-  refine Eval.EOptionMatchSome _ _ _ _
-    (Eval.EHashmapGet _ _
-      (Eval.EStructGet _ _ (Eval.EVarRef _ (Env.lookup_of_bindings hthreads)) hnodes)
-      (Eval.EVarRef _ (Env.lookup_of_bindings hchildRef)) hlookup) ?_
-  refine FuncDecl.eval_app_of_apply (x := "CommentThread.linearize")
-    (by simpa [hglobals] using hLinearize) (by simp [List.lookup, hshadow]) rfl ?_
-    (by simpa [hglobals] using happly)
-  intro p hp
-  simp only [List.zip_cons_cons, List.zip_nil_right, List.mem_cons, List.not_mem_nil,
-    or_false] at hp
-  rcases hp with rfl | rfl | rfl
-  · exact Eval.EVarRef _ (Env.lookup_of_bindings (by simp [List.lookup, hthreads]))
-  · exact Eval.EVarRef _ (Env.lookup_of_bindings (by simp [List.lookup, hmanager]))
-  · exact Eval.EVarRef _ (Env.lookup_of_bindings (by simp [List.lookup]))
+  have hthreads := hEnv.lookup (x := "threads") (v := .struct "CommentThreads" thfvs) (by simp)
+  have hmanager := hEnv.lookup (x := "manager") (v := manager) (by simp)
+  have hchildRef := hEnv.lookup (x := "childRef") (v := r) (by simp)
+  refine Eval.Yields.optionMatch_some
+    (.hashmapGet (.structGet (.varRef hthreads) hnodes) (.varRef hchildRef) hlookup) ?_
+  exact .app_global (by simpa [hEnv.globals] using hLinearize) (hEnv.unshadowed _ (by simp))
+    (.cons (.varRef (by yields_lookup [hthreads])) (.cons (.varRef (by yields_lookup [hmanager]))
+      (.cons (.varRef (by yields_lookup)) .nil)))
+    (by simpa [hEnv.globals] using happly)
 
 /-- A call to `linearize` on a node the pool holds has a value.
 `Model.Declares`' docstring anticipates this one by name: it is what the fuel parameter the shallow
@@ -881,33 +788,29 @@ theorem CommentThread.linearize.apply_exists {td : TypeDecls} {gs : Globals}
     obtain rfl : rootv = tref := Option.some.inj (hrootField'.symm.trans hrootField)
     exact hrootTy
   obtain ⟨rootComment, hrootGet⟩ := hCovered tref _ htref
-  have hvalue : tfvs.lookup "value" = some tref := by simpa [Value.field?] using hrootField
   -- The children, every one of them registered and so every one of them covered.
   obtain ⟨chv, hchField, hchTy⟩ :=
     Value.hasType_field ht hDeclares.commentThread (f := "children")
       (t := .list (.struct "CommentRef")) rfl
   obtain ⟨childRefs, rfl, hchildTy⟩ := Value.eq_list_of_hasType hchTy
-  have hchildren : tfvs.lookup "children" = some (.list childRefs) := by
-    simpa [Value.field?] using hchField
   have hchildNode : ∀ r ∈ childRefs, ∃ node,
       CommentThreads.node? (.struct "CommentThreads" thfvs) r = some node := fun r hr =>
     hThreadsWF.childrenRegistered tref _ childRefs r htref hchField hr
   have hchildStamp : ∀ r ∈ childRefs, ∃ c i, CommentManager.get? manager r = some c ∧
-      c.HasType td (.struct "Comment") ∧ c.field? "createdTimestamp" = some (.int i) := by
+      c.field? "createdTimestamp" = some (.int i) := by
     intro r hr
     obtain ⟨node, hnode⟩ := hchildNode r hr
     obtain ⟨c, hc⟩ := hCovered r node hnode
     obtain ⟨i, hi⟩ := CommentManager.timestampIsInt hDeclares.toDeclaresTypes hManagerWF hc
-    exact ⟨c, i, hc, CommentManager.hasType_get? hDeclares.toDeclaresTypes hManagerWF hc, hi⟩
+    exact ⟨c, i, hc, hi⟩
   -- One list per child, each the answer to the recursive call on that child's node.  Stated under
   -- every environment that binds what the body reads, so the list is in hand before the `let`s the
   -- body sits under are built and `exists_zip_of_forall_exists` can collect them.
-  have hchild : ∀ r ∈ childRefs, ∃ cs, ∀ env : Env, env.globals = gs →
-      env.bindings.lookup "CommentThread.linearize" = none →
-      env.bindings.lookup "threads" = some (.struct "CommentThreads" thfvs) →
-      env.bindings.lookup "manager" = some manager →
-      env.bindings.lookup "childRef" = some r →
-      Eval td env
+  have hchild : ∀ r ∈ childRefs, ∃ cs, ∀ env : Env,
+      Env.Describes env gs
+        [("threads", .struct "CommentThreads" thfvs), ("manager", manager), ("childRef", r)]
+        ["CommentThread.linearize"] →
+      Eval.Yields td env
         (.optionMatch
           (.hashmapGet (.structGet (.varRef "threads") "commentTreeNodes") (.varRef "childRef"))
           (.unreachable (.list (.struct "Comment"))
@@ -919,59 +822,39 @@ theorem CommentThread.linearize.apply_exists {td : TypeDecls} {gs : Globals}
     intro r hr
     obtain ⟨node, hnode⟩ := hchildNode r hr
     obtain ⟨cs, hcs⟩ := ih node ⟨tref, childRefs, r, htref, hchField, hr, hnode⟩ ⟨r, hnode⟩
-    exact ⟨cs, fun env hg hs hthreads hmanager hchildRef =>
-      CommentThread.linearize.eval_childBody hDeclares.linearize hg hs hthreads hmanager hchildRef
-        hnodes (CommentThreads.lookup?_of_node? hmfield hnode) hcs⟩
+    exact ⟨cs, fun env hEnv =>
+      CommentThread.linearize.eval_childBody hDeclares.linearize hEnv hnodes
+        (CommentThreads.lookup?_of_node? hmfield hnode) hcs⟩
   obtain ⟨vss, hvlen, hvev⟩ :=
     exists_zip_of_forall_exists (l := Value.sortWith (refLe manager) childRefs)
       fun r hr => hchild r (Value.mem_sortWith.mp hr)
   refine ⟨rootComment :: vss.flatten,
     .EApply _ (.cons "threads" hThreadsWF.hasType
       (.cons "manager" hManagerWF.hasType (.cons "thread" ht .nil))) ?_⟩
-  refine Eval.ELet _ _ _ (Eval.ELam _ _)
-    (Eval.ELet _ _ _ (Eval.ELam _ _)
-      (Eval.ELet (v₁ := .list (Value.sortWith (refLe manager) childRefs)) _ _ _ ?sort ?rest))
-  case sort =>
-    refine Eval.EListSortBy (cmp := refLe manager) _ _
-      (Eval.EStructGet (name := "CommentThread") _ _
-        (Eval.EVarRef _ (by
-          simp [CommentThread.linearize, FuncDecl.callEnv, Env.extend, Globals.env, Env.lookup,
-            List.lookup]))
-        hchildren)
-      (Eval.EVarRef _ rfl)
-      (fun a ha b hb => .cons "a" (hchildTy a ha) (.cons "b" (hchildTy b hb) .nil)) ?_
+  -- `expectComment`, `comparisonFunction`, and the children in the order the sort puts them.
+  refine Eval.Yields.let_ .lam ?_
+  refine .let_ .lam ?_
+  refine .let_ (.listSortBy (cmp := refLe manager)
+    (.structGet (.varRef (by yields_lookup)) hchField) (.varRef rfl) ?cmp) ?_
+  case cmp =>
     intro a ha b hb
-    obtain ⟨ca, i, hcaGet, hcaTy, hcai⟩ := hchildStamp a ha
-    obtain ⟨cb, j, hcbGet, hcbTy, hcbj⟩ := hchildStamp b hb
+    obtain ⟨ca, i, hcaGet, hcai⟩ := hchildStamp a ha
+    obtain ⟨cb, j, hcbGet, hcbj⟩ := hchildStamp b hb
+    refine ⟨.cons "a" (hchildTy a ha) (.cons "b" (hchildTy b hb) .nil), ?_⟩
     rw [refLe_eq_decide hcaGet hcai hcbGet hcbj]
     exact CommentThread.linearize.apply_comparisonFunction_body
       (threads := .struct "CommentThreads" thfvs) (thread := .struct "CommentThread" tfvs)
-      hDeclares.get hManagerWF.hasType
-      (hchildTy a ha) (hchildTy b hb) hcaTy hcbTy hcaGet hcbGet hcai hcbj
-      (by simp [Env.lookup, List.lookup])
-  case rest =>
-    refine Eval.ECons _ _
-      (CommentThread.linearize.apply_expectComment
-        (threads := .struct "CommentThreads" thfvs) (thread := .struct "CommentThread" tfvs)
-        hDeclares.get hManagerWF.hasType hrootTy
-        hrootGet (by simp [Env.lookup, List.lookup])
-        (Eval.EStructGet (name := "CommentThread") _ _
-          (Eval.EVarRef _ (by
-            simp [CommentThread.linearize, FuncDecl.callEnv, Env.extend, Globals.env, Env.lookup,
-              List.lookup]))
-          hvalue))
-      ?_
-    refine Eval.EListFlatMap _ _ (Eval.EVarRef _ (by simp [Env.lookup, List.lookup]))
-      (Eval.ELam _ _) hvlen
-      (fun p hp => .cons "childRef"
-        (hchildTy p.1 (Value.mem_sortWith.mp (List.of_mem_zip hp).1)) .nil) ?_
-    intro p hp
-    exact hvev p hp _
-      (by simp [Env.extend, CommentThread.linearize, FuncDecl.callEnv, Globals.env])
-      (by simp [Env.extend, CommentThread.linearize, FuncDecl.callEnv, Globals.env, List.lookup])
-      (by simp [Env.extend, CommentThread.linearize, FuncDecl.callEnv, Globals.env, List.lookup])
-      (by simp [Env.extend, CommentThread.linearize, FuncDecl.callEnv, Globals.env, List.lookup])
-      (by simp [Env.extend])
+      hDeclares.get hManagerWF.hasType (hchildTy a ha) (hchildTy b hb) hcaGet hcbGet hcai hcbj
+      (by yields_lookup)
+  -- The thread's own comment, and then one run per child.
+  refine .lcons
+    (CommentThread.linearize.apply_expectComment
+      (threads := .struct "CommentThreads" thfvs) (thread := .struct "CommentThread" tfvs)
+      hDeclares.get hManagerWF.hasType hrootTy hrootGet (by yields_lookup)
+      (.structGet (.varRef (by yields_lookup)) hrootField)) ?_
+  exact .listFlatMap (.varRef (by yields_lookup)) .lam hvlen fun p hp =>
+    ⟨.cons "childRef" (hchildTy p.1 (Value.mem_sortWith.mp (List.of_mem_zip hp).1)) .nil,
+      hvev p hp _ (by constructor <;> yields_lookup [CommentThread.linearize])⟩
 
 theorem CommentThread.linearize_hasAllThreadComments {td : TypeDecls} {gs : Globals}
     {threads manager thread : Value} {comments : List Value}
@@ -981,19 +864,9 @@ theorem CommentThread.linearize_hasAllThreadComments {td : TypeDecls} {gs : Glob
       ∃ c, CommentManager.get? manager ref = some c ∧ c ∈ comments := by
   intro ref hhas
   induction hhas generalizing comments with
-  | root hvalue =>
-    obtain ⟨root, c, -, hroot, hget, hmem, -, -⟩ :=
-      CommentThread.linearize.apply_inv hDeclares h
-    obtain rfl := Option.some.inj (hroot.symm.trans hvalue)
-    exact ⟨c, hget, hmem⟩
+  | root hvalue => grind [CommentThread.linearize.apply_inv]
   | child hchildField hchildMem hchildNode hrest ih =>
-    obtain ⟨root, c, childRefs, hroot, hget, hmem, hchildren, hkids⟩ :=
-      CommentThread.linearize.apply_inv hDeclares h
-    obtain rfl : childRefs = _ := by simpa [hchildren] using hchildField
-    obtain ⟨node, cs, hnode, happly, hsub⟩ := hkids _ hchildMem
-    obtain rfl : node = _ := Option.some.inj (hnode.symm.trans hchildNode)
-    obtain ⟨c', hget', hmem'⟩ := ih happly
-    exact ⟨c', hget', hsub c' hmem'⟩
+    grind [CommentThread.linearize.apply_inv]
 
 theorem CommentThread.linearize_hasAllThreadComments_modelProgram
     (threads manager thread : Value) (comments : List Value)
@@ -1006,410 +879,31 @@ theorem CommentThread.linearize_hasAllThreadComments_modelProgram
       some CommentThread.linearize from rfl).symm.trans hd
   exact CommentThread.linearize_hasAllThreadComments Model.declares_modelProgram happly
 
-/-! ## Going wrong, declaration by declaration
+/-! ## Going wrong
 
-`Stuck` read along a body, which is the other half of progress.  It is not a statement about one
-body: `Stuck.appBody` says a call is stuck wherever the body it enters is, so the declarations this
-one calls have to be walked to the bottom — `CommentThread.linearize` and, through it,
-`CommentManager.get`.
+`Stuck` read along a body, which is the other half of progress — and it is now a corollary of the
+half above rather than a second proof of it.  `Eval.not_stuck` (Lang/Progress.lean) says that an
+expression with a value is not stuck, so `CommentThread.linearize.apply_exists` already answers for
+every form this body and the bodies it calls into reach: the induction on `childEdgeWf`, the
+invariants it spends and the places it spends them are written once, above.
 
-Every mismatch rule of `Stuck` carries `Eval` premises about the subexpressions, so refuting one is
-*reading* the value a subexpression produced.  That is why each lemma below comes with whatever
-inversion its own mismatch rules need, and it is why `Eval` being deterministic is never wanted: the
-value a `Stuck` derivation's premise produced need not be the one a separate `Eval` derivation
-produced, so what rules the mismatch out has to be read off that premise.
-
-What a form of the language goes wrong in is the language's business, so the refutation rules form
-by form — `Stuck.not_let`, `Stuck.not_app_varRef` and their neighbours, one per form these bodies
-use — live beside `Stuck` itself in `Lang/Progress.lean`, together with the inversion
-(`Eval.structGet_varRef_eq`) their mismatch rules are read with.  What is left here is what those
-lemmas have to be handed: the invariants, declaration by declaration. -/
-
-/-! ### `CommentManager.get`
-
-The bottom of the chain: one `hashmapGet` over one field.  The two things that can go wrong are the
-field not being a hashmap and the key having no answer in it, and `CommentManager.get? manager ref =
-some c` rules out both at once — it *is* the lookup having an answer, which is what
-`CommentManager.eq_hashmap_of_get?` takes it apart into. -/
-
-/-- A comment the manager holds under `ref` is held in its `comments` map, as the two premises
-`Eval.EHashmapGet` asks for.  `CommentThreads.lookup?_of_node?` for the manager, with the field read
-existential rather than given: a caller of this has the invariant and not the map. -/
-private theorem CommentManager.eq_hashmap_of_get? {manager ref c : Value}
-    (h : CommentManager.get? manager ref = some c) :
-    ∃ kvs, manager.field? "comments" = some (.hashmap kvs) ∧
-      KeyValues.lookup? kvs ref = some (some c) := by
-  rw [CommentManager.get?, Value.lookupField?] at h
-  split at h
-  · next kvs heq => exact ⟨kvs, heq, by simpa [Option.join_eq_some_iff] using h⟩
-  · simp at h
-
-private theorem CommentManager.get.not_stuck_body {td : TypeDecls} {gs : Globals}
-    {manager ref c : Value} (hget : CommentManager.get? manager ref = some c) :
-    ¬Stuck td (CommentManager.get.callEnv gs [manager, ref]) CommentManager.get.body := by
-  obtain ⟨kvs, hfield, hlookup⟩ := CommentManager.eq_hashmap_of_get? hget
-  have hm : (CommentManager.get.callEnv gs [manager, ref]).lookup "manager" = some manager := by
-    simp [CommentManager.get, FuncDecl.callEnv, Env.extend, Globals.env, Env.lookup]
-  have hk : (CommentManager.get.callEnv gs [manager, ref]).lookup "ref" = some ref := by
-    simp [CommentManager.get, FuncDecl.callEnv, Env.extend, Globals.env, Env.lookup, List.lookup]
-  rintro hs
-  cases hs with
-  | hashmapGetMap h => exact Stuck.not_structGet_varRef hm hfield h
-  | hashmapGetMapNotHashmap hev hnh =>
-    obtain rfl := Eval.structGet_varRef_eq hm hfield hev
-    exact hnh ⟨_, rfl⟩
-  | hashmapGetKey h => exact Stuck.not_varRef hk h
-  | hashmapGetIncomparable hev hkev hnone =>
-    have heq := Eval.structGet_varRef_eq hm hfield hev
-    simp only [Value.hashmap.injEq] at heq
-    subst heq
-    obtain rfl := Option.some.inj ((Eval.varRef_inv hkev).symm.trans hk)
-    simp [hlookup] at hnone
-
-/-! ### `CommentThread.linearize`
-
-One level up, and where the recursion is paid for a second time: `Stuck.appBody` says the call on a
-child is stuck wherever that child's own body is, so this is the same well-founded induction on
-`childEdgeWf` that `CommentThread.linearize.apply_exists` is, read for failure rather than for a
-value.  The invariants are spent in the same places — `NodesCovered` at `expectComment`,
-`childrenRegistered` at the lookup in `commentTreeNodes`, `CommentManager.WellFormed` at the
-timestamps the sort compares — and `childEdgeWf` is again what makes the descent terminate.
-
-The closure `linearize` lets over its manager is dealt with first, as it is there: it is called from
-the head of the list and from each pair the sort compares, so what it does is a fact about the
-closure rather than about either call site.  Two facts, where the construction proof needed one — it
-is not stuck, and what it produced was the comment — because a mismatch rule outside such a call
-speaks of the value the call produced. -/
-
-/-- What a call to `expectComment` produced: the comment the manager holds under the ref it was
-handed, and nothing else.
-
-`CommentThread.linearize.apply_expectComment` read backwards, and what the mismatch rules outside
-such a call need — `Stuck.structGetMissing` and `Stuck.leIncomparable` both speak of the value a
-subexpression produced, so refuting them is reading it.  Stated over every value the argument
-expression can produce, and so over every value the call can, because nothing here makes `Eval`
-deterministic.
-
-The environment the closure captured is `cenv` rather than the call environment `linearize` lets it
-over, with the three facts this reads of it — the globals it resolves names through, that nothing
-local shadows `CommentManager.get`, and what `manager` is bound to — as hypotheses.  That is what
-lets a caller name the environment it is already holding instead of writing the call out again, and
-it is all the body of this closure reads. -/
-private theorem CommentThread.linearize.eval_expectComment_eq {td : TypeDecls} {gs : Globals}
-    {cenv callerEnv : Env} {argE : Expression} {manager ref ca v : Value}
-    (hGet : gs.lookup "CommentManager.get" = some CommentManager.get)
-    (hGlobals : cenv.globals = gs)
-    (hShadow : cenv.bindings.lookup "CommentManager.get" = none)
-    (hManagerBinding : cenv.bindings.lookup "manager" = some manager)
-    (hcGet : CommentManager.get? manager ref = some ca)
-    (hcallerLookup : callerEnv.lookup "expectComment" =
-      some (cenv.closure [("ref", Ty.struct "CommentRef")]
-        (.optionMatch (.app (.varRef "CommentManager.get") [.varRef "manager", .varRef "ref"])
-          (.unreachable (.struct "Comment") "Comments are required to be present in the manager")
-          "c" (.varRef "c"))))
-    (hargE : ∀ u, Eval td callerEnv argE u → u = ref)
-    (h : Eval td callerEnv (.app (.varRef "expectComment") [argE]) v) : v = ca := by
-  cases h with
-  | @EApp _env _cb _cg _ps _lbody argVals _v _ _ hf hlen hargs _ hcbody =>
-    obtain ⟨rfl, rfl, rfl, rfl⟩ : _ ∧ _ ∧ _ ∧ _ := by
-      simpa [Env.closure, Value.closure.injEq] using
-        Option.some.inj ((Eval.varRef_inv hf).symm.trans hcallerLookup)
-    obtain ⟨a, rfl⟩ : ∃ a, argVals = [a] := by
-      rcases argVals with _ | ⟨a, _ | _⟩ <;> simp_all
-    obtain rfl := hargE a (hargs (argE, a) (by simp))
-    -- The comment the ref names is the one the manager has under it.
-    obtain ⟨c, hcall, hbound⟩ := Eval.optionMatch_unreachable_inv hcbody
-    have hcv := Eval.varRef_inv hbound
-    simp [Env.lookup, List.lookup] at hcv
-    subst hcv
-    obtain ⟨vs, hvlen, hvev, hgetApply⟩ :=
-      FuncDecl.apply_of_eval_app
-        (by simpa [Env.extend, hGlobals] using hGet)
-        (by simp [Env.extend, List.lookup, hShadow]) hcall
-    obtain ⟨m, r, rfl⟩ : ∃ m r, vs = [m, r] := by
-      rcases vs with _ | ⟨m, _ | ⟨r, _ | _⟩⟩ <;> simp_all
-    have hmv := Eval.varRef_inv (hvev (Expression.varRef "manager", m) (by simp))
-    have hrv := Eval.varRef_inv (hvev (Expression.varRef "ref", r) (by simp))
-    simp [Env.extend, Env.lookup, List.lookup, hManagerBinding] at hmv hrv
-    subst hmv
-    subst hrv
-    exact Option.some.inj
-      ((CommentManager.get.eq_get? (by simpa [Env.extend, hGlobals] using hgetApply)).symm.trans
-        hcGet)
-
-/-- And that the call is not stuck: `expectComment`'s body, under the one binding a call to it makes,
-at a ref the manager covers.
-
-Three of the four rules of `Stuck` for a match on an option are refuted by the call to
-`CommentManager.get` the scrutinee is — not stuck by `CommentManager.get.not_stuck_body`, and
-producing an option because that is what the declaration's result type says — and the fourth,
-`optionMatchNone`, by `Stuck.not_unreachable`: the branch a ref the manager does not cover would take
-is the one form nothing is stuck at. -/
-private theorem CommentThread.linearize.not_stuck_expectComment_body {td : TypeDecls}
-    {gs : Globals} {cenv : Env} {manager ref ca : Value}
-    (hWellTyped : Globals.WellTyped td gs)
-    (hGet : gs.lookup "CommentManager.get" = some CommentManager.get)
-    (hGlobals : cenv.globals = gs)
-    (hShadow : cenv.bindings.lookup "CommentManager.get" = none)
-    (hManagerBinding : cenv.bindings.lookup "manager" = some manager)
-    (hManager : manager.HasType td (.struct "CommentManager"))
-    (hrefHasType : ref.HasType td (.struct "CommentRef"))
-    (hcGet : CommentManager.get? manager ref = some ca) :
-    ¬Stuck td (Env.extend cenv [("ref", Ty.struct "CommentRef")] [ref])
-      (.optionMatch (.app (.varRef "CommentManager.get") [.varRef "manager", .varRef "ref"])
-        (.unreachable (.struct "Comment") "Comments are required to be present in the manager")
-        "c" (.varRef "c")) := by
-  have hm : (Env.extend cenv [("ref", Ty.struct "CommentRef")] [ref]).lookup "manager" =
-      some manager := by
-    simp [Env.extend, Env.lookup, List.lookup, hManagerBinding]
-  have hr : (Env.extend cenv [("ref", Ty.struct "CommentRef")] [ref]).lookup "ref" = some ref := by
-    simp [Env.extend, Env.lookup]
-  -- The arguments the call passes are the manager and the ref, whatever derivation produced them.
-  have hvs : ∀ vs : List Value, [Expression.varRef "manager", Expression.varRef "ref"].length =
-      vs.length →
-      (∀ p ∈ [Expression.varRef "manager", Expression.varRef "ref"].zip vs,
-        Eval td (Env.extend cenv [("ref", Ty.struct "CommentRef")] [ref]) p.1 p.2) →
-      vs = [manager, ref] := by
-    intro vs hlen hev
-    obtain ⟨m, r, rfl⟩ : ∃ m r, vs = [m, r] := by
-      rcases vs with _ | ⟨m, _ | ⟨r, _ | _⟩⟩ <;> simp_all
-    obtain rfl := Option.some.inj
-      ((Eval.varRef_inv (hev (Expression.varRef "manager", m) (by simp))).symm.trans hm)
-    obtain rfl := Option.some.inj
-      ((Eval.varRef_inv (hev (Expression.varRef "ref", r) (by simp))).symm.trans hr)
-    rfl
-  refine Stuck.not_optionMatch_unreachable
-    (Stuck.not_app_global (d := CommentManager.get) (by simpa [Env.extend, hGlobals] using hGet)
-      (by simp [Env.extend, List.lookup, hShadow]) ?_ ?_ ?_) ?_ ?_
-  · intro a ha
-    rcases List.mem_cons.mp ha with rfl | ha'
-    · exact Stuck.not_varRef hm
-    · rcases List.mem_cons.mp ha' with rfl | ha''
-      · exact Stuck.not_varRef hr
-      · simp at ha''
-  · intro vs hlen hev
-    obtain rfl := hvs vs hlen hev
-    exact .cons "manager" hManager (.cons "ref" hrefHasType .nil)
-  · intro vs hlen hev
-    obtain rfl := hvs vs hlen hev
-    simpa [Env.extend, hGlobals] using
-      CommentManager.get.not_stuck_body (td := td) (gs := gs) hcGet
-  · intro v hv
-    obtain ⟨vs, hvlen, hvev, happly⟩ :=
-      FuncDecl.apply_of_eval_app (by simpa [Env.extend, hGlobals] using hGet)
-        (by simp [Env.extend, List.lookup, hShadow]) hv
-    have happly' : CommentManager.get.Apply td gs vs v := by
-      simpa [Env.extend, hGlobals] using happly
-    exact Value.isOption_of_hasType (t := .struct "Comment")
-      (happly'.hasType hWellTyped (hWellTyped _ _ hGet))
-  · intro w hw
-    exact Stuck.not_varRef (v := w) (by simp [Env.lookup, List.lookup])
-
-/-- `comparisonFunction`'s body is not stuck at two refs the manager covers: two calls to
-`expectComment`, two field reads off what they produced, and `Value.le?` on the two `Int`s those
-reads found — which is the one thing `Stuck.leIncomparable` has to be refuted by, and where the
-comments' timestamps being `int`s is spent.
-
-`CommentThread.linearize.apply_comparisonFunction_body`'s counterpart, and abstracted over the
-environment the same way, except that the two names are asked for by `Env.lookup` rather than
-supplied by an `Env.extend`: the caller has them from whatever `Stuck.listSortByCall` handed it. -/
-private theorem CommentThread.linearize.not_stuck_comparisonFunction_body {td : TypeDecls}
-    {gs : Globals} {cenv env : Env} {manager a b ca cb : Value} {i j : Int}
-    (hWellTyped : Globals.WellTyped td gs)
-    (hGet : gs.lookup "CommentManager.get" = some CommentManager.get)
-    (hGlobals : cenv.globals = gs)
-    (hShadow : cenv.bindings.lookup "CommentManager.get" = none)
-    (hManagerBinding : cenv.bindings.lookup "manager" = some manager)
-    (hManager : manager.HasType td (.struct "CommentManager"))
-    (ha : a.HasType td (.struct "CommentRef")) (hb : b.HasType td (.struct "CommentRef"))
-    (hcaGet : CommentManager.get? manager a = some ca)
-    (hcbGet : CommentManager.get? manager b = some cb)
-    (hcai : ca.field? "createdTimestamp" = some (.int i))
-    (hcbj : cb.field? "createdTimestamp" = some (.int j))
-    (haLookup : env.lookup "a" = some a) (hbLookup : env.lookup "b" = some b)
-    (hexpect : env.lookup "expectComment" =
-      some (cenv.closure [("ref", Ty.struct "CommentRef")]
-        (.optionMatch (.app (.varRef "CommentManager.get") [.varRef "manager", .varRef "ref"])
-          (.unreachable (.struct "Comment") "Comments are required to be present in the manager")
-          "c" (.varRef "c")))) :
-    ¬Stuck td env
-      (.le (.structGet (.app (.varRef "expectComment") [.varRef "a"]) "createdTimestamp")
-        (.structGet (.app (.varRef "expectComment") [.varRef "b"]) "createdTimestamp")) := by
-  -- One side of the comparison, read at either of the two names.
-  have hside : ∀ (x : String) (r cr : Value) (k : Int), env.lookup x = some r →
-      r.HasType td (.struct "CommentRef") → CommentManager.get? manager r = some cr →
-      cr.field? "createdTimestamp" = some (.int k) →
-      ¬Stuck td env (.structGet (.app (.varRef "expectComment") [.varRef x]) "createdTimestamp") ∧
-        ∀ u, Eval td env
-          (.structGet (.app (.varRef "expectComment") [.varRef x]) "createdTimestamp") u →
-          u = .int k := by
-    intro x r cr k hx hrty hrGet hk
-    have hargE : ∀ u, Eval td env (.varRef x) u → u = r :=
-      fun u hu => Option.some.inj ((Eval.varRef_inv hu).symm.trans hx)
-    have hcallEq : ∀ u, Eval td env (.app (.varRef "expectComment") [.varRef x]) u → u = cr :=
-      fun u hu => CommentThread.linearize.eval_expectComment_eq hGet hGlobals hShadow
-        hManagerBinding hrGet hexpect hargE hu
-    refine ⟨Stuck.not_structGet (Stuck.not_app_varRef hexpect ?_ ?_ ?_)
-        (fun v hv => ⟨.int k, by rw [hcallEq v hv]; exact hk⟩),
-      fun u hu => Eval.structGet_eq (fun v hv => by rw [hcallEq v hv]; exact hk) hu⟩
-    · intro e he
-      obtain rfl : e = Expression.varRef x := by simpa using he
-      exact Stuck.not_varRef hx
-    · intro vs hlen hev
-      obtain ⟨v, rfl⟩ : ∃ v, vs = [v] := by
-        rcases vs with _ | ⟨v, _ | _⟩ <;> simp_all
-      obtain rfl := hargE v (hev (Expression.varRef x, v) (by simp))
-      exact .cons "ref" hrty .nil
-    · intro vs hlen hev
-      obtain ⟨v, rfl⟩ : ∃ v, vs = [v] := by
-        rcases vs with _ | ⟨v, _ | _⟩ <;> simp_all
-      obtain rfl := hargE v (hev (Expression.varRef x, v) (by simp))
-      exact CommentThread.linearize.not_stuck_expectComment_body hWellTyped hGet hGlobals hShadow
-        hManagerBinding hManager hrty hrGet
-  obtain ⟨hlStuck, hlEq⟩ := hside "a" a ca i haLookup ha hcaGet hcai
-  obtain ⟨hrStuck, hrEq⟩ := hside "b" b cb j hbLookup hb hcbGet hcbj
-  refine Stuck.not_le hlStuck hrStuck fun v₁ v₂ h₁ h₂ => ?_
-  rw [hlEq v₁ h₁, hrEq v₂ h₂]
-  simp
-
-/-- Whatever the body of the flat mapping `linearize` runs over its children produced is a list,
-which is what `Stuck.listFlatMapCallNotList` asks of a call.
-
-The only fact about this body that needs the globals to check: the branch that has a value is the
-recursive call, and what a call produces is of the declaration's result type, which for `linearize`
-is a list. -/
-private theorem CommentThread.linearize.isList_childBody {td : TypeDecls} {gs : Globals}
-    {u : Value} {env : Env}
-    (hWellTyped : Globals.WellTyped td gs)
-    (hLinearize : gs.lookup "CommentThread.linearize" = some CommentThread.linearize)
-    (hGlobals : env.globals = gs)
-    (hShadow : env.bindings.lookup "CommentThread.linearize" = none)
-    (h : Eval td env
-      (.optionMatch
-        (.hashmapGet (.structGet (.varRef "threads") "commentTreeNodes") (.varRef "childRef"))
-        (.unreachable (.list (.struct "Comment")) "All comments must have an entry in commentTreeNodes") "childThread"
-        (.app (.varRef "CommentThread.linearize")
-          [.varRef "threads", .varRef "manager", .varRef "childThread"])) u) : u.IsList := by
-  obtain ⟨w, -, hbody⟩ := Eval.optionMatch_unreachable_inv h
-  obtain ⟨vs, hvlen, hvev, happly⟩ :=
-    FuncDecl.apply_of_eval_app (by simpa [hGlobals] using hLinearize)
-      (by simp [List.lookup, hShadow]) hbody
-  have happly' : CommentThread.linearize.Apply td gs vs u := by simpa [hGlobals] using happly
-  exact Value.isList_of_hasType (t := .struct "Comment")
-    (happly'.hasType hWellTyped (hWellTyped _ _ hLinearize))
-
-/-- And that body is not stuck at a child ref the pool has a node for.
-
-`CommentThread.linearize.eval_childBody`'s counterpart, abstracted over the environment the same
-way, and with the recursive call's own progress — `hrec` — as a hypothesis: that is where the
-induction goes, exactly as the construction proof passes its induction hypothesis in here.
-
-The `none` branch is the `unreachable` `childrenRegistered` pays for, and it is paid twice over:
-`Stuck.not_unreachable` refutes `optionMatchNone` whatever the lookup answered, and `hnode` is what
-makes `Stuck.hashmapGetIncomparable` impossible — the key has an answer, so the get is not stuck
-either. -/
-private theorem CommentThread.linearize.not_stuck_childBody {td : TypeDecls} {gs : Globals}
-    {threads manager node r : Value} {kvs : KeyValues} {env : Env}
-    (hLinearize : gs.lookup "CommentThread.linearize" = some CommentThread.linearize)
-    (hGlobals : env.globals = gs)
-    (hShadow : env.bindings.lookup "CommentThread.linearize" = none)
-    (hthreadsBinding : env.bindings.lookup "threads" = some threads)
-    (hmanagerBinding : env.bindings.lookup "manager" = some manager)
-    (hchildRefBinding : env.bindings.lookup "childRef" = some r)
-    (hnodesField : threads.field? "commentTreeNodes" = some (.hashmap kvs))
-    (hthreadsTy : threads.HasType td (.struct "CommentThreads"))
-    (hmanagerTy : manager.HasType td (.struct "CommentManager"))
-    (hnodeTy : node.HasType td (.struct "CommentThread"))
-    (hnode : CommentThreads.node? threads r = some node)
-    (hrec : ¬Stuck td (CommentThread.linearize.callEnv gs [threads, manager, node])
-      CommentThread.linearize.body) :
-    ¬Stuck td env
-      (.optionMatch
-        (.hashmapGet (.structGet (.varRef "threads") "commentTreeNodes") (.varRef "childRef"))
-        (.unreachable (.list (.struct "Comment"))
-          "All comments must have an entry in commentTreeNodes")
-        "childThread"
-        (.app (.varRef "CommentThread.linearize")
-          [.varRef "threads", .varRef "manager", .varRef "childThread"])) := by
-  have hlookup : KeyValues.lookup? kvs r = some (some node) :=
-    CommentThreads.lookup?_of_node? hnodesField hnode
-  have hthreadsLookup : env.lookup "threads" = some threads := Env.lookup_of_bindings
-    hthreadsBinding
-  have hchildRefLookup : env.lookup "childRef" = some r := Env.lookup_of_bindings hchildRefBinding
-  -- The node the get found is the registered one, whatever derivation found it.
-  have hsome : ∀ u, Eval td env
-      (.hashmapGet (.structGet (.varRef "threads") "commentTreeNodes") (.varRef "childRef"))
-      (.option (some u)) → u = node := by
-    intro u hu
-    obtain ⟨kvs', vk, hm, hk, hl⟩ := Eval.hashmapGet_inv hu
-    have heq := Eval.structGet_varRef_eq hthreadsLookup hnodesField hm
-    simp only [Value.hashmap.injEq] at heq
-    subst heq
-    obtain rfl := Option.some.inj ((Eval.varRef_inv hk).symm.trans hchildRefLookup)
-    exact Option.some.inj (Option.some.inj (hl.symm.trans hlookup))
-  -- The arguments the recursive call passes are the pool, the manager and that node.
-  have hargs : ∀ (u : Value) (vs : List Value),
-      [Expression.varRef "threads", Expression.varRef "manager",
-        Expression.varRef "childThread"].length = vs.length →
-      (∀ p ∈ [Expression.varRef "threads", Expression.varRef "manager",
-        Expression.varRef "childThread"].zip vs,
-        Eval td ⟨("childThread", u) :: env.bindings, env.globals⟩ p.1 p.2) →
-      vs = [threads, manager, u] := by
-    intro u vs hlen hev
-    obtain ⟨x, y, z, rfl⟩ : ∃ x y z, vs = [x, y, z] := by
-      rcases vs with _ | ⟨x, _ | ⟨y, _ | ⟨z, _ | _⟩⟩⟩ <;> simp_all
-    have hxv := Eval.varRef_inv (hev (Expression.varRef "threads", x) (by simp))
-    have hyv := Eval.varRef_inv (hev (Expression.varRef "manager", y) (by simp))
-    have hzv := Eval.varRef_inv (hev (Expression.varRef "childThread", z) (by simp))
-    simp [Env.lookup, List.lookup, hthreadsBinding, hmanagerBinding] at hxv hyv hzv
-    simp [hxv, hyv, hzv]
-  refine Stuck.not_optionMatch_unreachable ?_ (fun v hv => Eval.isOption_hashmapGet hv) ?_
-  · refine Stuck.not_hashmapGet (Stuck.not_structGet_varRef hthreadsLookup hnodesField)
-      (Stuck.not_varRef hchildRefLookup) (fun v hv => ?_) (fun kvs' vk hm hk => ?_)
-    · rw [Eval.structGet_varRef_eq hthreadsLookup hnodesField hv]
-      exact ⟨_, rfl⟩
-    · have heq := Eval.structGet_varRef_eq hthreadsLookup hnodesField hm
-      simp only [Value.hashmap.injEq] at heq
-      subst heq
-      obtain rfl := Option.some.inj ((Eval.varRef_inv hk).symm.trans hchildRefLookup)
-      simp [hlookup]
-  · intro u hu
-    obtain rfl := hsome u hu
-    refine Stuck.not_app_global (d := CommentThread.linearize)
-      (by simpa [hGlobals] using hLinearize) (by simp [List.lookup, hShadow]) ?_ ?_ ?_
-    · intro a ha
-      rcases List.mem_cons.mp ha with rfl | ha'
-      · exact Stuck.not_varRef (v := threads)
-          (by simp [Env.lookup, List.lookup, hthreadsBinding])
-      · rcases List.mem_cons.mp ha' with rfl | ha''
-        · exact Stuck.not_varRef (v := manager)
-            (by simp [Env.lookup, List.lookup, hmanagerBinding])
-        · rcases List.mem_cons.mp ha'' with rfl | ha'''
-          · exact Stuck.not_varRef (v := u) (by simp [Env.lookup, List.lookup])
-          · simp at ha'''
-    · intro vs hlen hev
-      obtain rfl := hargs u vs hlen hev
-      exact .cons "threads" hthreadsTy (.cons "manager" hmanagerTy (.cons "thread" hnodeTy .nil))
-    · intro vs hlen hev
-      obtain rfl := hargs u vs hlen hev
-      simpa [hGlobals] using hrec
+What stood here was that proof read a second time for failure — one lemma per declaration
+(`CommentManager.get`, `expectComment`, `comparisonFunction`, the body of the flat mapping over the
+children) refuting each rule of `Stuck` in turn, with an inversion principle at every field read and
+every call to the closure, because a mismatch rule speaks of the value a subexpression produced
+rather than of a derivation.  Determinism (`Eval.unique`) is what makes all of that unnecessary: the
+value a `Stuck` derivation's premise produced *is* the one the construction produced. -/
 
 /-- A call to `linearize` on a node the pool holds never goes wrong.
 
-`CommentThread.linearize.apply_exists` read for failure: the same induction on `childEdgeWf`, the
-same invariants, spent in the same places.  What `Stuck` adds over the construction is that every
-value a subexpression *could* have produced has to be answered for and not just the ones a
-derivation was built from, so the inversions — `Eval.structGet_varRef_eq` at every field read,
-`eval_expectComment_eq` at every call to the closure — are where this proof's work goes, where the
-construction's went into the rules of `Eval`.
+`CommentThread.linearize.apply_exists` through `Eval.not_stuck`: the call has a value, and an
+expression with a value does not reach a form no rule of `Eval` can fire on.
 
-`hWellTyped` is the one hypothesis the construction proof did not need.  Two mismatch rules ask what
-a *call* produced — `Stuck.optionMatchNotOption` of the get inside `expectComment`, and
-`Stuck.listFlatMapCallNotList` of the recursive call — and the answer is the declaration's result
-type, which is `FuncDecl.Apply.hasType` and so the globals checking. -/
+So this asks for exactly what the construction proof asks for and nothing more — `Globals.WellTyped`
+in particular is gone, where the mirrored refutation proof needed it to read the result type of the
+two calls whose values its mismatch rules objected to. -/
 theorem CommentThread.linearize.not_stuck_body {td : TypeDecls} {gs : Globals}
     {threads manager thread ref : Value}
-    (hWellTyped : Globals.WellTyped td gs)
     (hDeclares : Model.Declares td gs)
     (hThreadsWF : CommentThreads.WellFormed td threads)
     (hManagerWF : CommentManager.WellFormed td manager)
@@ -1417,158 +911,9 @@ theorem CommentThread.linearize.not_stuck_body {td : TypeDecls} {gs : Globals}
     (hNode : CommentThreads.node? threads ref = some thread) :
     ¬Stuck td (CommentThread.linearize.callEnv gs [threads, manager, thread])
       CommentThread.linearize.body := by
-  -- The pool and the map its nodes are read out of, as *values*, exactly as in `apply_exists`.
-  obtain ⟨thfvs, rfl⟩ := Value.eq_struct_of_hasType hThreadsWF.hasType
-  obtain ⟨mv, hmfield, hmty⟩ :=
-    Value.hasType_field hThreadsWF.hasType hDeclares.commentThreads
-      (f := "commentTreeNodes") (t := .hashmap (.struct "CommentRef") (.struct "CommentThread")) rfl
-  obtain ⟨kvs, rfl⟩ := Value.eq_hashmap_of_hasType hmty
-  refine WellFounded.induction hThreadsWF.childEdgeWf
-    (C := fun t => (∃ r, CommentThreads.node? (.struct "CommentThreads" thfvs) r = some t) →
-      ¬Stuck td (CommentThread.linearize.callEnv gs
-        [.struct "CommentThreads" thfvs, manager, t]) CommentThread.linearize.body)
-    thread (fun t ih hreg => ?_) ⟨ref, hNode⟩
-  obtain ⟨tref, htref⟩ := hreg
-  have ht : t.HasType td (.struct "CommentThread") :=
-    CommentThreads.hasType_node? hDeclares.toDeclaresTypes hThreadsWF htref
-  obtain ⟨tfvs, rfl⟩ := Value.eq_struct_of_hasType ht
-  -- The node names the ref it is registered under, and the manager has a comment for that ref.
-  have hrootField : (Value.struct "CommentThread" tfvs).field? "value" = some tref :=
-    hThreadsWF.rootMatchesKey _ _ htref
-  have hrootTy : tref.HasType td (.struct "CommentRef") := by
-    obtain ⟨rootv, hrootField', hrootTy⟩ :=
-      Value.hasType_field ht hDeclares.commentThread (f := "value") (t := .struct "CommentRef") rfl
-    obtain rfl : rootv = tref := Option.some.inj (hrootField'.symm.trans hrootField)
-    exact hrootTy
-  obtain ⟨rootComment, hrootGet⟩ := hCovered tref _ htref
-  -- The children, every one of them registered and so every one of them covered.
-  obtain ⟨chv, hchField, hchTy⟩ :=
-    Value.hasType_field ht hDeclares.commentThread (f := "children")
-      (t := .list (.struct "CommentRef")) rfl
-  obtain ⟨childRefs, rfl, hchildTy⟩ := Value.eq_list_of_hasType hchTy
-  have hchildNode : ∀ r ∈ childRefs, ∃ node,
-      CommentThreads.node? (.struct "CommentThreads" thfvs) r = some node := fun r hr =>
-    hThreadsWF.childrenRegistered tref _ childRefs r htref hchField hr
-  have hchildStamp : ∀ r ∈ childRefs, ∃ c k, CommentManager.get? manager r = some c ∧
-      c.field? "createdTimestamp" = some (.int k) := by
-    intro r hr
-    obtain ⟨node, hnode⟩ := hchildNode r hr
-    obtain ⟨c, hc⟩ := hCovered r node hnode
-    obtain ⟨k, hk⟩ := CommentManager.timestampIsInt hDeclares.toDeclaresTypes hManagerWF hc
-    exact ⟨c, k, hc, hk⟩
-  -- What `expectComment`'s body reads of the environment the call it is let over built.
-  have hGlobals : (CommentThread.linearize.callEnv gs
-      [Value.struct "CommentThreads" thfvs, manager,
-        Value.struct "CommentThread" tfvs]).globals = gs := by
-    simp [CommentThread.linearize, FuncDecl.callEnv, Env.extend, Globals.env]
-  have hShadow : (CommentThread.linearize.callEnv gs
-      [Value.struct "CommentThreads" thfvs, manager,
-        Value.struct "CommentThread" tfvs]).bindings.lookup "CommentManager.get" = none := by
-    simp [CommentThread.linearize, FuncDecl.callEnv, Env.extend, Globals.env, List.lookup]
-  have hManagerBinding : (CommentThread.linearize.callEnv gs
-      [Value.struct "CommentThreads" thfvs, manager,
-        Value.struct "CommentThread" tfvs]).bindings.lookup "manager" = some manager := by
-    simp [CommentThread.linearize, FuncDecl.callEnv, Env.extend, Globals.env, List.lookup]
-  -- The two closures the body lets over itself are never stuck, and what they are is their
-  -- equations: a `lam` evaluates to the closure and to nothing else.
-  refine Stuck.not_let Stuck.not_lam fun ec hec => ?_
-  have hecEq := Eval.lam_inv hec
-  refine Stuck.not_let Stuck.not_lam fun cf hcf => ?_
-  have hcfEq := Eval.lam_inv hcf
-  -- The sort over the children: the comparison is the one place a pair of values is compared.
-  refine Stuck.not_let (Stuck.not_listSortBy
-    (Stuck.not_structGet_varRef (by simp [CommentThread.linearize, FuncDecl.callEnv, Env.extend,
-      Globals.env, Env.lookup, List.lookup]) hchField)
-    (Stuck.not_varRef (v := cf) (by simp [Env.lookup, List.lookup]))
-    (fun v hv => ?_) (fun v hv => ?_)
-    (fun vs cb cg ps body hel hfl a ha b hb => ?_)) fun sc hsc => ?_
-  · rw [Eval.structGet_varRef_eq (by simp [CommentThread.linearize, FuncDecl.callEnv, Env.extend,
-      Globals.env, Env.lookup, List.lookup]) hchField hv]
-    exact ⟨_, rfl⟩
-  · have hv' := Eval.varRef_inv hv
-    simp [Env.lookup, List.lookup, hcfEq] at hv'
-    subst hv'
-    exact ⟨_, _, _, _, rfl⟩
-  · -- one pair of children the sort asked about
-    obtain rfl : vs = childRefs := by
-      simpa using Eval.structGet_varRef_eq (by simp [CommentThread.linearize, FuncDecl.callEnv,
-        Env.extend, Globals.env, Env.lookup, List.lookup]) hchField hel
-    obtain ⟨rfl, rfl, rfl, rfl⟩ : _ ∧ _ ∧ _ ∧ _ := by
-      simpa [Env.lookup, List.lookup, hcfEq, Env.closure, Value.closure.injEq] using
-        Eval.varRef_inv hfl
-    obtain ⟨cav, ki, hcaGet, hcai⟩ := hchildStamp a ha
-    obtain ⟨cbv, kj, hcbGet, hcbj⟩ := hchildStamp b hb
-    exact ⟨.cons "a" (hchildTy a ha) (.cons "b" (hchildTy b hb) .nil),
-      CommentThread.linearize.not_stuck_comparisonFunction_body hWellTyped hDeclares.get hGlobals
-        hShadow hManagerBinding hManagerWF.hasType (hchildTy a ha) (hchildTy b hb) hcaGet hcbGet
-        hcai hcbj (by simp [Env.extend, Env.lookup])
-        (by simp [Env.extend, Env.lookup, List.lookup])
-        (by simp [Env.extend, Env.lookup, List.lookup, hecEq]),
-      fun u hu => Eval.isBool_le hu⟩
-  · -- The sort rearranged the children and did nothing else.
-    obtain ⟨vs0, cmp, hvs0, rfl⟩ := Eval.listSortBy_inv hsc
-    obtain rfl : childRefs = vs0 := by
-      simpa using (Eval.structGet_varRef_eq (by simp [CommentThread.linearize, FuncDecl.callEnv,
-        Env.extend, Globals.env, Env.lookup, List.lookup]) hchField hvs0).symm
-    refine Stuck.not_lcons ?_ ?_ fun v hv => ?_
-    · -- the head of the list: the thread's own comment
-      refine Stuck.not_app_varRef (by simpa [Env.lookup, List.lookup] using hecEq) ?_ ?_ ?_
-      · intro e he
-        obtain rfl : e = (Expression.varRef "thread").structGet "value" := by simpa using he
-        exact Stuck.not_structGet_varRef (by simp [CommentThread.linearize, FuncDecl.callEnv,
-          Env.extend, Globals.env, Env.lookup, List.lookup]) hrootField
-      · intro vs hlen hev
-        obtain ⟨w, rfl⟩ : ∃ w, vs = [w] := by
-          rcases vs with _ | ⟨w, _ | _⟩ <;> simp_all
-        obtain rfl := Eval.structGet_varRef_eq (by simp [CommentThread.linearize, FuncDecl.callEnv,
-          Env.extend, Globals.env, Env.lookup, List.lookup]) hrootField
-          (hev ((Expression.varRef "thread").structGet "value", w) (by simp))
-        exact .cons "ref" hrootTy .nil
-      · intro vs hlen hev
-        obtain ⟨w, rfl⟩ : ∃ w, vs = [w] := by
-          rcases vs with _ | ⟨w, _ | _⟩ <;> simp_all
-        obtain rfl := Eval.structGet_varRef_eq (by simp [CommentThread.linearize, FuncDecl.callEnv,
-          Env.extend, Globals.env, Env.lookup, List.lookup]) hrootField
-          (hev ((Expression.varRef "thread").structGet "value", w) (by simp))
-        exact CommentThread.linearize.not_stuck_expectComment_body hWellTyped hDeclares.get
-          hGlobals hShadow hManagerBinding hManagerWF.hasType hrootTy hrootGet
-    · -- the rest of the list: one run per child
-      refine Stuck.not_listFlatMap
-        (Stuck.not_varRef (v := .list (Value.sortWith cmp childRefs))
-          (by simp [Env.lookup, List.lookup]))
-        Stuck.not_lam (fun u hu => ?_) (fun u hu => ?_)
-        (fun vs cb cg ps body hel hfl w hw => ?_)
-      · have hu' := Eval.varRef_inv hu
-        simp [Env.lookup, List.lookup] at hu'
-        subst hu'
-        exact ⟨_, rfl⟩
-      · obtain rfl := Eval.lam_inv hu
-        exact ⟨_, _, _, _, rfl⟩
-      · obtain rfl : vs = Value.sortWith cmp childRefs := by
-          have hel' := Eval.varRef_inv hel
-          simp [Env.lookup, List.lookup] at hel'
-          exact hel'.symm
-        obtain ⟨rfl, rfl, rfl, rfl⟩ : _ ∧ _ ∧ _ ∧ _ := by
-          simpa [Env.closure, Value.closure.injEq] using Eval.lam_inv hfl
-        have hw' : w ∈ childRefs := Value.mem_sortWith.mp hw
-        obtain ⟨node, hnode⟩ := hchildNode w hw'
-        exact ⟨.cons "childRef" (hchildTy w hw') .nil,
-          CommentThread.linearize.not_stuck_childBody (kvs := kvs) hDeclares.linearize
-            (by simp [CommentThread.linearize, FuncDecl.callEnv, Env.extend, Globals.env])
-            (by simp [CommentThread.linearize, FuncDecl.callEnv, Env.extend, Globals.env,
-              List.lookup])
-            (by simp [CommentThread.linearize, FuncDecl.callEnv, Env.extend, Globals.env,
-              List.lookup])
-            (by simp [CommentThread.linearize, FuncDecl.callEnv, Env.extend, Globals.env,
-              List.lookup])
-            (by simp [Env.extend]) hmfield hThreadsWF.hasType hManagerWF.hasType
-            (CommentThreads.hasType_node? hDeclares.toDeclaresTypes hThreadsWF hnode) hnode
-            (ih node ⟨tref, childRefs, w, htref, hchField, hw', hnode⟩ ⟨w, hnode⟩),
-          fun u hu => CommentThread.linearize.isList_childBody hWellTyped hDeclares.linearize
-            (by simp [CommentThread.linearize, FuncDecl.callEnv, Env.extend, Globals.env])
-            (by simp [CommentThread.linearize, FuncDecl.callEnv, Env.extend, Globals.env,
-              List.lookup]) hu⟩
-    · obtain ⟨_, _, _, _, _, _, -, -, -, -, rfl⟩ := Eval.listFlatMap_inv hv
-      exact ⟨_, rfl⟩
+  obtain ⟨cs, happly⟩ :=
+    CommentThread.linearize.apply_exists hDeclares hThreadsWF hManagerWF hCovered hNode
+  cases happly with
+  | EApply _ _ hbody => exact Eval.not_stuck hbody
 
 end

@@ -857,6 +857,82 @@ public theorem Value.sortWith_perm {cmp : Value → Value → Bool} {vs : List V
     (Value.sortWith cmp vs).length = vs.length :=
   Value.sortWith_perm.length_eq
 
+/-! ### A sort only asks about the elements it was given
+
+`EListSortBy` holds its `cmp` to the DSL function at pairs drawn from the list and says nothing
+about any other pair, so two derivations of one `listSortBy` hand back `Value.sortWith` of two
+comparisons that agree only on members of the list.  Determinism (`Eval.unique`) therefore needs the
+sort to be blind to what a comparison answers off the list, and nothing in Lean core says so:
+`Init/Data/List/Sort/Lemmas.lean` has `mergeSort_perm`, `mergeSort_cons`, `mergeSort_append` and
+`mergeSort_of_pairwise`, and no congruence.
+
+So the two lemmas below, each following the recursion of the function it is about.  `List.merge`
+compares a head against a head and recurses on one side or the other, which is an induction on the
+two lengths together; `List.mergeSort` splits, sorts the halves and merges, which is an induction on
+the one length through `List.mergeSort_append` — the handle that gives the split without unfolding a
+definition the module system does not expose.  Both are stated over *membership* rather than over
+all of `α`, which is the whole point: that is the hypothesis `Eval` can supply. -/
+
+/-- Merging is blind to what the comparison answers about a pair it is never asked about: only a
+left element against a right one is ever compared. -/
+public theorem List.merge_congr {α : Type} {le₁ le₂ : α → α → Bool} :
+    ∀ (xs ys : List α), (∀ a ∈ xs, ∀ b ∈ ys, le₁ a b = le₂ a b) →
+      List.merge xs ys le₁ = List.merge xs ys le₂
+  | [], _, _ => by simp
+  | _ :: _, [], _ => by simp
+  | x :: xs, y :: ys, h => by
+    rw [List.cons_merge_cons, List.cons_merge_cons, h x (by simp) y (by simp)]
+    split
+    · rw [List.merge_congr xs (y :: ys) fun a ha b hb => h a (by simp [ha]) b hb]
+    · rw [List.merge_congr (x :: xs) ys fun a ha b hb => h a ha b (by simp [hb])]
+termination_by xs ys => xs.length + ys.length
+
+/-- And so is sorting: two comparisons that agree on every pair of elements of the list sort it the
+same way, whatever they say about anything else.
+
+The halves are `take` and `drop` at the balanced point, which is the split `List.mergeSort_append`
+asks for; their elements are elements of the list (a sublist's are), so the hypothesis descends to
+each half, and `List.mem_mergeSort` carries it through the sorted halves to the merge. -/
+public theorem List.mergeSort_congr {α : Type} {le₁ le₂ : α → α → Bool} :
+    ∀ (xs : List α), (∀ a ∈ xs, ∀ b ∈ xs, le₁ a b = le₂ a b) →
+      xs.mergeSort le₁ = xs.mergeSort le₂
+  | [], _ => by simp
+  | [_], _ => by simp
+  | a :: b :: xs, h => by
+    have hlen : ((a :: b :: xs).take ((xs.length + 3) / 2)).length = (xs.length + 3) / 2 := by
+      simp; omega
+    have hlen' : ((a :: b :: xs).drop ((xs.length + 3) / 2)).length = (xs.length + 2) / 2 := by
+      simp; omega
+    have hle₁ : ((a :: b :: xs).drop ((xs.length + 3) / 2)).length ≤
+        ((a :: b :: xs).take ((xs.length + 3) / 2)).length := by rw [hlen, hlen']; omega
+    have hle₂ : ((a :: b :: xs).take ((xs.length + 3) / 2)).length ≤
+        ((a :: b :: xs).drop ((xs.length + 3) / 2)).length + 1 := by rw [hlen, hlen']; omega
+    have hmem : ∀ x ∈ (a :: b :: xs).take ((xs.length + 3) / 2), x ∈ a :: b :: xs :=
+      fun x hx => (List.take_sublist _ _).mem hx
+    have hmem' : ∀ x ∈ (a :: b :: xs).drop ((xs.length + 3) / 2), x ∈ a :: b :: xs :=
+      fun x hx => (List.drop_sublist _ _).mem hx
+    -- The two halves are shorter than the list, which is what the recursion is on.
+    have hdec : ((a :: b :: xs).take ((xs.length + 3) / 2)).length < (a :: b :: xs).length := by
+      rw [hlen]; simp; omega
+    have hdec' : ((a :: b :: xs).drop ((xs.length + 3) / 2)).length < (a :: b :: xs).length := by
+      rw [hlen']; simp; omega
+    have happ₁ := List.mergeSort_append (le := le₁) _ _ hle₁ hle₂
+    have happ₂ := List.mergeSort_append (le := le₂) _ _ hle₁ hle₂
+    rw [List.take_append_drop] at happ₁ happ₂
+    rw [happ₁, happ₂,
+      List.mergeSort_congr _ fun p hp q hq => h p (hmem p hp) q (hmem q hq),
+      List.mergeSort_congr _ fun p hp q hq => h p (hmem' p hp) q (hmem' q hq),
+      List.merge_congr _ _ fun p hp q hq =>
+        h p (hmem p (List.mem_mergeSort.mp hp)) q (hmem' q (List.mem_mergeSort.mp hq))]
+termination_by xs => xs.length
+
+/-- Which is the congruence `Eval.unique` spends at `EListSortBy`: the sort is settled by what the
+comparison answers about pairs of elements of the list, and `EListSortBy` pins exactly those. -/
+public theorem Value.sortWith_congr {cmp₁ cmp₂ : Value → Value → Bool} {vs : List Value}
+    (h : ∀ a ∈ vs, ∀ b ∈ vs, cmp₁ a b = cmp₂ a b) :
+    Value.sortWith cmp₁ vs = Value.sortWith cmp₂ vs :=
+  List.mergeSort_congr vs h
+
 /-! ## Reading an element of a list
 
 What `Expression.listIndex` hands back: the element at a position, or nothing where the list has no
@@ -1059,6 +1135,64 @@ public theorem Env.lookup_of_globals {env : Env} {x : String}
     (h : env.bindings.lookup x = none) :
     env.lookup x = (env.globals.lookup x).map (Globals.value env.globals) := by
   simp [Env.lookup, h]
+
+/-! ### The walk, one binding at a time
+
+`Env.lookup` reads the bindings and then the globals, and a proof about a body spends almost nothing
+else: every `varRef` in it is one of these.  Unfolding `Env.lookup` into `List.lookup` and that into
+its `if`s reduces the walk and is what these proofs used to do, at the cost of leaving the whole
+environment to `decide` at every step.  The three lemmas below are the same walk as *rewrites* — one
+per shape the bindings can have — so a lookup in an environment with a variable in it, which has no
+`if` to reduce, takes the same steps as one in an environment written out.
+
+`lgtm_env`, below `FuncDecl.callEnv`, is the set these are gathered in, together with the two that
+put `Env.extend` and `FuncDecl.callEnv` into this shape. -/
+
+/-- No bindings left: the globals are what answers, which is where `Globals.value` builds the
+closure a global's name denotes. -/
+public theorem Env.lookup_nil_bindings {gs : Globals} {x : String} :
+    (Env.mk [] gs).lookup x = (gs.lookup x).map (Globals.value gs) := rfl
+
+public theorem Env.lookup_cons_self {bs : Bindings} {gs : Globals} {x : String} {v : Value} :
+    (Env.mk ((x, v) :: bs) gs).lookup x = some v := by
+  simp [Env.lookup]
+
+/-- And a binding of another name is stepped over, which is the one step with a side condition: two
+string literals are `decide`d, and a name that is not a literal is where a caller has to say. -/
+public theorem Env.lookup_cons_of_ne {bs : Bindings} {gs : Globals} {x y : String} {v : Value}
+    (h : ¬y = x) : (Env.mk ((x, v) :: bs) gs).lookup y = (Env.mk bs gs).lookup y := by
+  simp [Env.lookup, List.lookup_cons, show (y == x) = false by simpa using h]
+
+/-- Rebuilding an environment out of its own halves, which is what the step above leaves behind when
+the bindings it walks into are a hypothesis's rather than a literal list. -/
+public theorem Env.mk_bindings_globals {env : Env} : Env.mk env.bindings env.globals = env := rfl
+
+/-- `Env.Describes env gs binds free`: everything a lemma about a body needs to know about the
+environment that body runs in.  The globals it can reach, the names it reads and what they are bound
+to, and the names it must resolve *through* the globals rather than through a binding.
+
+Three facts rather than a claim about the environment itself, because an environment a progress proof
+builds is never in hand as a value: a lemma stated under every environment with these properties
+applies at whatever the `let`s above it turn out to have built, which is what lets the facts about a
+body be had before the body is reached.  That is why these are stated at `env.bindings` rather than
+at `Env.lookup` — a name a global of that name would also answer for is not the same name read, and
+`free` is the clause that settles the difference: `Env.lookup` reads the bindings first, so a global
+is the value of its name only where nothing local has that name.
+
+Both lists are literal at every call, so a caller builds one of these with `constructor` and one
+environment-lookup discharge apiece rather than one hypothesis apiece. -/
+public structure Env.Describes (env : Env) (gs : Globals) (binds : Bindings)
+    (free : List String) : Prop where
+  globals : env.globals = gs
+  bound : ∀ p ∈ binds, env.bindings.lookup p.1 = some p.2
+  unshadowed : ∀ x ∈ free, env.bindings.lookup x = none
+
+/-- One of the named bindings read out, which is the form `Eval.EVarRef` and `Eval.Yields.varRef`
+ask for: the membership is `by simp` wherever `binds` is written out. -/
+public theorem Env.Describes.lookup {env : Env} {gs : Globals} {binds : Bindings}
+    {free : List String} (h : Env.Describes env gs binds free) {x : String} {v : Value}
+    (hp : (x, v) ∈ binds) : env.lookup x = some v :=
+  Env.lookup_of_bindings (h.bound (x, v) hp)
 
 /-- The `Ty` a value's representation agrees with.
 
@@ -1667,6 +1801,23 @@ same length; `ArgsHaveType` is what supplies that. -/
 @[simp] public theorem Env.globals_extend (env : Env) (ps : Context) (vs : List Value) :
     (env.extend ps vs).globals = env.globals := by simp [Env.extend]
 
+/-! An extension read as a run of bindings on the front of the environment, which is the shape
+`Env.lookup_cons_self` and `Env.lookup_cons_of_ne` walk.  One parameter apiece and nothing said
+about the lengths: the zip stops at the shorter list, so a parameter list that runs out is an
+extension by nothing, which is what `Env.extend_nil` covers from either side. -/
+
+public theorem Env.extend_nil {env : Env} {vs : List Value} : env.extend [] vs = env := by
+  simp [Env.extend]
+
+public theorem Env.extend_nil_args {env : Env} {ps : Context} : env.extend ps [] = env := by
+  simp [Env.extend]
+
+public theorem Env.extend_cons {env : Env} {x : String} {t : Ty} {ps : Context} {v : Value}
+    {vs : List Value} :
+    env.extend ((x, t) :: ps) (v :: vs) =
+      Env.mk ((x, v) :: (env.extend ps vs).bindings) env.globals := by
+  simp [Env.extend]
+
 /-- `ArgsHaveType ps args`: `args` are values a function with parameters `ps` can be called with,
 one argument per parameter and each of the type its parameter declares.
 
@@ -1755,6 +1906,52 @@ the argument of its leftmost occurrence, and a parameter named like a global sha
 @[expose] public def FuncDecl.callEnv (d : FuncDecl) (gs : Globals) (args : List Value) : Env :=
   (Globals.env gs).extend d.parameters args
 
+/-- `FuncDecl.callEnv` with `Globals.env` already taken apart, which is where the walk of
+`Env.lookup_cons_self` and its neighbours starts for a call: the parameters in front of no bindings
+at all. -/
+public theorem FuncDecl.callEnv_eq {d : FuncDecl} {gs : Globals} {args : List Value} :
+    d.callEnv gs args = (Env.mk [] gs).extend d.parameters args := rfl
+
+section
+open Lean.Parser.Tactic
+
+/-- `lgtm_env`: the lemmas above as one name.
+
+The rewrites that reduce a lookup — the three steps of `Env.lookup`'s walk, the two that put an
+extension and a call environment into the shape that walk takes, and `List.lookup`'s own two for
+the places a proof reads `env.bindings` directly.  A lookup therefore *rewrites* rather than
+unfolding into an `if`-chain, which is what makes the symbolic cases — an extension by arguments
+that are not literals, a binding that comes from a hypothesis — take the same steps as the ones
+written out.
+
+A tactic rather than a `register_simp_attr` set: the attribute lives in `Lean`, which this layer
+does not import, and the only thing it would add is the ability to tag a lemma from another module.
+The three forms are the three a `simp` is written in in these proofs — at the goal, at a hypothesis,
+and `using` a fact to be transported — and the bracket takes whatever else the goal needs, which is
+in practice the declaration whose parameter list the environment was built from.
+
+`yields_lookup` (Eval/Yields.lean) is the one place a progress proof reaches this through. -/
+syntax "lgtm_env" ("[" simpLemma,* "]")? (location)? (" using " term)? : tactic
+
+macro_rules
+  | `(tactic| lgtm_env) => `(tactic| lgtm_env [])
+  | `(tactic| lgtm_env $loc:location) => `(tactic| lgtm_env [] $loc)
+  | `(tactic| lgtm_env using $h) => `(tactic| lgtm_env [] using $h)
+  | `(tactic| lgtm_env [$ts,*]) =>
+    `(tactic| simp [FuncDecl.callEnv_eq, Env.extend_cons, Env.extend_nil, Env.extend_nil_args,
+      Env.lookup_cons_self, Env.lookup_cons_of_ne, Env.lookup_nil_bindings,
+      Env.mk_bindings_globals, Env.closure, List.lookup_cons, List.lookup_nil, $ts,*])
+  | `(tactic| lgtm_env [$ts,*] $loc:location) =>
+    `(tactic| simp [FuncDecl.callEnv_eq, Env.extend_cons, Env.extend_nil, Env.extend_nil_args,
+      Env.lookup_cons_self, Env.lookup_cons_of_ne, Env.lookup_nil_bindings,
+      Env.mk_bindings_globals, Env.closure, List.lookup_cons, List.lookup_nil, $ts,*] $loc)
+  | `(tactic| lgtm_env [$ts,*] using $h) =>
+    `(tactic| simpa [FuncDecl.callEnv_eq, Env.extend_cons, Env.extend_nil, Env.extend_nil_args,
+      Env.lookup_cons_self, Env.lookup_cons_of_ne, Env.lookup_nil_bindings,
+      Env.mk_bindings_globals, Env.closure, List.lookup_cons, List.lookup_nil, $ts,*] using $h)
+
+end
+
 /-- Binding well-typed arguments to a declaration's parameters over its globals gives an environment
 the parameter list describes.
 
@@ -1803,6 +2000,68 @@ per binding asks of its second operand. -/
 
 /-- `v` is a value of an inductive type: what `indMatch` asks of its scrutinee. -/
 @[expose] public def Value.IsInd (v : Value) : Prop := ∃ name c vs, v = .ind name c vs
+
+/-! ### The shapes as one datum
+
+The ten predicates above read as one function, so that a fact about *which* shape a value has can be
+carried as an equation rather than as a choice of predicate.  `Eval.shape` (Eval.lean) is what that
+buys: one theorem answers for every form whose rules all build a value of one shape, where the
+predicates would need one lemma per form.
+
+Nothing a constructor carries appears here — a struct's name included, so this says `.struct` of
+every struct value whatever it was declared as.  The names are nominal and `Eval`'s mismatch rules
+do not ask about them: `Stuck.structGetNotStruct` objects to a value that is not a struct at all. -/
+
+public inductive Value.Shape where
+  | bool | int | string | option | list | hashmap | tuple | closure | struct | ind
+  deriving DecidableEq
+
+@[expose] public def Value.shape : Value → Value.Shape
+  | .bool _ => .bool
+  | .int _ => .int
+  | .string _ => .string
+  | .option _ => .option
+  | .list _ => .list
+  | .hashmap _ => .hashmap
+  | .tuple _ => .tuple
+  | .closure .. => .closure
+  | .struct .. => .struct
+  | .ind .. => .ind
+
+/-! And back: a shape known by its equation read as the predicate a mismatch rule negates.  One per
+predicate, each one `cases` on the value and nothing else — which is the whole of what makes a
+`Eval.shape` fact spendable where a `Stuck.not_*` lemma wants an `IsBool`. -/
+
+public theorem Value.isBool_of_shape {v : Value} (h : v.shape = .bool) : v.IsBool := by
+  cases v <;> simp_all [Value.shape, Value.IsBool]
+
+public theorem Value.isInt_of_shape {v : Value} (h : v.shape = .int) : v.IsInt := by
+  cases v <;> simp_all [Value.shape, Value.IsInt]
+
+public theorem Value.isString_of_shape {v : Value} (h : v.shape = .string) :
+    ∃ s, v = .string s := by
+  cases v <;> simp_all [Value.shape]
+
+public theorem Value.isOption_of_shape {v : Value} (h : v.shape = .option) : v.IsOption := by
+  cases v <;> simp_all [Value.shape, Value.IsOption]
+
+public theorem Value.isList_of_shape {v : Value} (h : v.shape = .list) : v.IsList := by
+  cases v <;> simp_all [Value.shape, Value.IsList]
+
+public theorem Value.isHashmap_of_shape {v : Value} (h : v.shape = .hashmap) : v.IsHashmap := by
+  cases v <;> simp_all [Value.shape, Value.IsHashmap]
+
+public theorem Value.isTuple_of_shape {v : Value} (h : v.shape = .tuple) : v.IsTuple := by
+  cases v <;> simp_all [Value.shape, Value.IsTuple]
+
+public theorem Value.isClosure_of_shape {v : Value} (h : v.shape = .closure) : v.IsClosure := by
+  cases v <;> simp_all [Value.shape, Value.IsClosure]
+
+public theorem Value.isStruct_of_shape {v : Value} (h : v.shape = .struct) : v.IsStruct := by
+  cases v <;> simp_all [Value.shape, Value.IsStruct]
+
+public theorem Value.isInd_of_shape {v : Value} (h : v.shape = .ind) : v.IsInd := by
+  cases v <;> simp_all [Value.shape, Value.IsInd]
 
 /-! ### The shapes typing gives
 
