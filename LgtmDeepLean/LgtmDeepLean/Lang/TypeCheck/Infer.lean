@@ -548,6 +548,20 @@ comes out of a nest of forms names the innermost expression that nothing could b
       .ok r
     | .ok t => .error s!"an option match needs an option, but its scrutinee has type {t}"
     | .error m => .error m
+  | .exceptOk et e => do
+    let t ← e.inferE td ctx
+    .ok (.except et t)
+  | .exceptError ot e => do
+    let t ← e.inferE td ctx
+    .ok (.except t ot)
+  | .exceptMatch scrut x ebody y obody =>
+    match scrut.inferE td ctx with
+    | .ok (.except et ot) => do
+      let r ← ebody.inferE td ((x, et) :: ctx)
+      (obody.inferE td ((y, ot) :: ctx)).expect r "the `ok` case of an except match"
+      .ok r
+    | .ok t => .error s!"an except match needs an except, but its scrutinee has type {t}"
+    | .error m => .error m
   | .lnil t => .ok (.list t)
   | .lcons hd tl => do
     let t ← hd.inferE td ctx
@@ -1099,6 +1113,45 @@ public theorem Expression.infer_optionMatch_eq_some {td : TypeDecls} {ctx : Cont
           nbody.infer td ctx = some t ∧ sbody.infer td ((x, t') :: ctx) = some t := by
   simp only [Expression.infer, Expression.inferE, Except.toOption_eq_some_iff]
   split <;> simp_all
+
+/-- An `exceptOk` is typeable exactly when the value it holds is, and then it is an except of the
+annotation and that value's type.
+
+`optionSome`'s rule with the annotation beside it: a success says what the payload half is and the
+annotation is the error half, which is the half nothing in the expression could say. -/
+@[simp, grind =]
+public theorem Expression.infer_exceptOk_eq_some {td : TypeDecls} {ctx : Context} {et : Ty}
+    {e : Expression} {t : Ty} :
+    (Expression.exceptOk et e).infer td ctx = some t ↔
+      ∃ t', e.infer td ctx = some t' ∧ t = .except et t' := by
+  simp [Expression.infer, Expression.inferE]
+  grind
+
+/-- And an `exceptError` the same read at the other half: the error it holds is what the error half
+is, and the annotation is the payload half. -/
+@[simp, grind =]
+public theorem Expression.infer_exceptError_eq_some {td : TypeDecls} {ctx : Context} {ot : Ty}
+    {e : Expression} {t : Ty} :
+    (Expression.exceptError ot e).infer td ctx = some t ↔
+      ∃ e', e.infer td ctx = some e' ∧ t = .except e' ot := by
+  simp [Expression.infer, Expression.inferE]
+  grind
+
+/-- An `exceptMatch` is typeable when its scrutinee is an except and its two cases have one type —
+and then that is its type.
+
+`optionMatch`'s rule with a name in both cases rather than in one: an error carries a value where an
+empty option carries nothing, so each case has a binding, and each stands at the half of the
+scrutinee's type its case is for. -/
+@[simp, grind =]
+public theorem Expression.infer_exceptMatch_eq_some {td : TypeDecls} {ctx : Context}
+    {scrut ebody obody : Expression} {x y : String} {t : Ty} :
+    (Expression.exceptMatch scrut x ebody y obody).infer td ctx = some t ↔
+      ∃ et ot,
+        scrut.infer td ctx = some (.except et ot) ∧
+          ebody.infer td ((x, et) :: ctx) = some t ∧ obody.infer td ((y, ot) :: ctx) = some t := by
+  simp only [Expression.infer, Expression.inferE, Except.toOption_eq_some_iff]
+  split <;> simp_all <;> grind
 
 /-- A `lam` is typeable when its body is, under its parameters extended with the enclosing
 context, and then it is a function from the parameters' types to the body's.

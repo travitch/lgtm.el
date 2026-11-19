@@ -1428,6 +1428,229 @@ annotation is all there is to go on. -/
 #guard_msgs (error) in
 #check [lgtm| match o with | none(x) => 0 | some(y) => y]
 
+/-! ### Excepts -/
+
+-- An except type is written with the two types it relates, the error first, and is a type like any
+-- other: it nests both ways and needs no declaration to be written.
+example : [lgtm_ty| except string int] = Ty.except .string .int :=
+  rfl
+
+example : [lgtm_ty| except int string] = Ty.except .int .string :=
+  rfl
+
+example : [lgtm_ty| except string list int] = Ty.except .string (.list .int) :=
+  rfl
+
+example : [lgtm_ty| except list string int] = Ty.except (.list .string) .int :=
+  rfl
+
+example : [lgtm_ty| except string except string int] = Ty.except .string (.except .string .int) :=
+  rfl
+
+example : [lgtm_ty| option except string int] = Ty.option (.except .string .int) :=
+  rfl
+
+example : [lgtm_ty| except string struct Point] = Ty.except .string (.struct "Point") :=
+  rfl
+
+example : [lgtm_ty| except string((int) -> int)] = Ty.except .string (.fn [.int] .int) :=
+  rfl
+
+example : [lgtm_ty| (except string int) -> int] = Ty.fn [.except .string .int] .int :=
+  rfl
+
+-- Both values carry a type, and in both it is the half the value itself does not say: a success
+-- says the payload type, so its annotation is the error type, and a failure the other way round.
+example : [lgtm| ok(1) : string] = Expression.exceptOk .string (.intLit 1) :=
+  rfl
+
+example : [lgtm| error("no") : int] = Expression.exceptError .int (.stringLit "no") :=
+  rfl
+
+example :
+    [lgtm| ok(x + 1) : string] =
+      Expression.exceptOk .string (.plus (.varRef "x") (.intLit 1)) :=
+  rfl
+
+example : [lgtm| ok(1) : list string] = Expression.exceptOk (.list .string) (.intLit 1) :=
+  rfl
+
+example : [lgtm| ok(1) : ((int) -> int)] = Expression.exceptOk (.fn [.int] .int) (.intLit 1) :=
+  rfl
+
+example :
+    [lgtm| ok(ok(1) : string) : string] =
+      Expression.exceptOk .string (.exceptOk .string (.intLit 1)) :=
+  rfl
+
+-- The bare form above is what the grammar accepts, but DSL code writes the parenthesized spelling
+-- for the reason it writes `(none : T)`; it is the existing `(e)` form, and elaborates the same.
+example : [lgtm| (ok(1) : string)] = Expression.exceptOk .string (.intLit 1) :=
+  rfl
+
+example : [lgtm| (error("no") : int)] = Expression.exceptError .int (.stringLit "no") :=
+  rfl
+
+-- `ok` and `error` are keywords, so neither is a variable name inside a DSL term; outside one they
+-- are Lean's own, which declaring them with `&` is what preserves.
+example : [lgtm| var"ok"] = Expression.varRef "ok" :=
+  rfl
+
+example : [lgtm| var"error"] = Expression.varRef "error" :=
+  rfl
+
+example : (Except.ok 1 : Except String Nat) = .ok 1 :=
+  rfl
+
+-- Both are ordinary operands: the annotation stops at the type, so a `==` after one applies to the
+-- whole of it, and neither form needs parentheses to be an argument.
+example :
+    [lgtm| ok(1) : string == error("no") : int] =
+      Expression.equals (.exceptOk .string (.intLit 1)) (.exceptError .int (.stringLit "no")) :=
+  rfl
+
+example :
+    [lgtm| f(ok(1) : string, error("no") : int)] =
+      Expression.app (.varRef "f")
+        [.exceptOk .string (.intLit 1), .exceptError .int (.stringLit "no")] :=
+  rfl
+
+example :
+    [lgtm| if b then (ok(1) : string) else (error("no") : int)] =
+      Expression.ite (.varRef "b") (.exceptOk .string (.intLit 1))
+        (.exceptError .int (.stringLit "no")) :=
+  rfl
+
+example :
+    [lgtm| fun(r : except string int) => r] =
+      Expression.lam [("r", .except .string .int)] (.varRef "r") :=
+  rfl
+
+-- A list literal ends with an annotation of its own, so an except inside one is parenthesized to
+-- say which `:` is which.
+example :
+    [lgtm| [(ok(1) : string) : except string int]] =
+      Expression.lcons (.exceptOk .string (.intLit 1)) (.lnil (.except .string .int)) :=
+  rfl
+
+-- A `match` on an except is the two cases it has, which is an `exceptMatch` rather than an
+-- `indMatch`: each case binds what its half of the value carried.
+example :
+    [lgtm| match r with | error(e) => 0 | ok(x) => x + 1] =
+      Expression.exceptMatch (.varRef "r") "e" (.intLit 0) "x"
+        (.plus (.varRef "x") (.intLit 1)) :=
+  rfl
+
+example :
+    [lgtm| match f(1) with | error(m) => m | ok(s) => s] =
+      Expression.exceptMatch (.app (.varRef "f") [.intLit 1]) "m" (.varRef "m") "s"
+        (.varRef "s") :=
+  rfl
+
+-- An alternative's expression extends as far right as it can here too, so a match nested in one
+-- needs no parentheses and one nested in the scrutinee does.
+example :
+    [lgtm| match r with | error(e) => 0 | ok(x) => match x with | error(e2) => 1 | ok(y) => y] =
+      Expression.exceptMatch (.varRef "r") "e" (.intLit 0) "x"
+        (.exceptMatch (.varRef "x") "e2" (.intLit 1) "y" (.varRef "y")) :=
+  rfl
+
+example :
+    [lgtm| (match r with | error(e) => 0 | ok(x) => x) + 1] =
+      Expression.plus (.exceptMatch (.varRef "r") "e" (.intLit 0) "x" (.varRef "x")) (.intLit 1) :=
+  rfl
+
+-- The heads `error` and `ok` are keywords, but only exactly: a constructor whose name begins with
+-- one of them is the identifier it looks like, and the alternative an `indMatch`'s.
+example :
+    [lgtm| match c with | errorish => 0 | okish(y) => y] =
+      Expression.indMatch (.varRef "c")
+        [("errorish", [], .intLit 0), ("okish", ["y"], .varRef "y")] :=
+  rfl
+
+/-- What `r` holds, and zero when it failed: the two except forms and the match between them, which
+is what a declaration returning an `int` from an except looks like. -/
+@[lgtm] def intOrZero as"int-or-zero"(r : except string int) : int :=
+  match r with | error(e) => 0 | ok(x) => x
+
+-- An except needs no declaration to be well formed, so this checks against no `TypeDecls` at all.
+#guard (intOrZero.check {} []).isOk
+
+-- The two cases have to share a type, and each name is bound at its half of the scrutinee's type —
+-- so `x` is an `int` and `e` a `string` because the parameter is an `except string int`.
+#guard
+  !(({ intOrZero with body := [lgtm| match r with | error(e) => 0 | ok(x) => "a"] } :
+        FuncDecl).check {} []).isOk
+
+#guard
+  !(({ intOrZero with body := [lgtm| match r with | error(e) => e | ok(x) => x] } :
+        FuncDecl).check {} []).isOk
+
+#guard
+  !(({ intOrZero with parameters := [("r", [lgtm_ty| except string string])] } : FuncDecl).check {}
+        []).isOk
+
+-- And the scrutinee has to be an except: an option is not one, however much the match looks like it
+-- could take one apart.
+#guard
+  !(({ intOrZero with parameters := [("r", [lgtm_ty| option int])] } : FuncDecl).check {} []).isOk
+
+/-- `n`, held in a successful except, which is the other half: a value put into one rather than
+taken out.  The annotation is the error type, which nothing here carries a value of. -/
+@[lgtm] def okInt as"ok-int"(n : int) : except string int := ok(n) : string
+
+#guard (okInt.check {} []).isOk
+
+#guard !(({ okInt with resultType := [lgtm_ty| except int int] } : FuncDecl).check {} []).isOk
+
+/-- A failure at `except string int`, where the annotation is the payload type instead. -/
+@[lgtm] def failInt as"fail-int"(m : string) : except string int := error(m) : int
+
+#guard (failInt.check {} []).isOk
+
+#guard !(({ failInt with resultType := [lgtm_ty| except string string] } : FuncDecl).check {}
+    []).isOk
+
+/-- Whether two excepts are the same, which an except is as comparable as both of its halves. -/
+@[lgtm] def sameExcept as"same-except"(a : except string int)(b : except string int) : bool :=
+  a == b
+
+#guard (sameExcept.check {} []).isOk
+
+-- So an except of function type on either half is no more comparable than the functions it holds.
+#guard
+  !(({ sameExcept with
+        parameters := [("a", .except fnTy .int), ("b", .except fnTy .int)] } : FuncDecl).check {}
+        []).isOk
+
+#guard
+  !(({ sameExcept with
+        parameters := [("a", .except .string fnTy), ("b", .except .string fnTy)] } :
+      FuncDecl).check {} []).isOk
+
+-- And an except has no ordering, where an option of the same types has one: an error and a success
+-- carry values of two unrelated types, so neither comes first.
+#guard
+  !(({ sameExcept with body := [lgtm| a <= b] } : FuncDecl).check {} []).isOk
+
+-- Both alternatives are required and in the order `exceptMatch` holds them, since there is nothing
+-- else a `match` naming `error` could have meant.
+/-- error: a match on an except takes `error` first and `ok` second -/
+#guard_msgs (error) in
+#check [lgtm| match r with | ok(x) => x | error(e) => 0]
+
+/-- error: a match on an except has two alternatives: `| error(e) => ... | ok(x) => ...` -/
+#guard_msgs (error) in
+#check [lgtm| match r with | error(e) => 0]
+
+/-- error: `ok` holds one value, so its alternative binds one name: `| ok(x) => ...` -/
+#guard_msgs (error) in
+#check [lgtm| match r with | error(e) => 0 | ok(x, y) => x]
+
+/-- error: `error` holds one value, so its alternative binds one name: `| error(e) => ...` -/
+#guard_msgs (error) in
+#check [lgtm| match r with | error() => 0 | ok(y) => y]
+
 /-! ### Hashmaps -/
 
 -- A hashmap type is written with the two types it relates, in that order, and is a type like any

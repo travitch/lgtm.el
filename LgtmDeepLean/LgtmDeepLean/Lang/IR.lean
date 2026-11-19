@@ -5,6 +5,16 @@ public inductive Ty where
   | int
   | string
   | option : Ty → Ty
+  /-- A value of the second type, or an error of the first: Lean's own `Except`, read in the order
+`Except ε α` relates them — the error type first and the payload second.
+
+Like `option` and unlike `struct` and `inductive` it carries the types it relates rather than naming
+a declaration, so there is nothing to declare and nothing for `TypeDecls` to resolve, and two except
+types are the same when both halves are.
+
+Where an option says whether there is a value, this says what there is *instead* of one: an error
+carries a value of its own, which is the whole of what separates the two type formers. -/
+  | except : Ty → Ty → Ty
   | list : Ty → Ty
   | hashmap : Ty → Ty → Ty
   /-- A fixed-length sequence of values, each at the type its position gives it: `tuple [int, string]`
@@ -57,6 +67,7 @@ mutual
   | .int, .int => true
   | .string, .string => true
   | .option a, .option b => Ty.beq a b
+  | .except e1 a1, .except e2 a2 => Ty.beq e1 e2 && Ty.beq a1 a2
   | .list a, .list b => Ty.beq a b
   | .hashmap k1 v1, .hashmap k2 v2 => Ty.beq k1 k2 && Ty.beq v1 v2
   | .tuple as, .tuple bs => Ty.beqList as bs
@@ -81,6 +92,7 @@ public theorem Ty.beq_iff_eq : ∀ (a b : Ty), Ty.beq a b = true ↔ a = b
   | .int, b => by cases b <;> simp [Ty.beq]
   | .string, b => by cases b <;> simp [Ty.beq]
   | .option a, b => by cases b <;> simp [Ty.beq, Ty.beq_iff_eq a]
+  | .except e a, b => by cases b <;> simp [Ty.beq, Ty.beq_iff_eq e, Ty.beq_iff_eq a]
   | .list a, b => by cases b <;> simp [Ty.beq, Ty.beq_iff_eq a]
   | .hashmap k v, b => by cases b <;> simp [Ty.beq, Ty.beq_iff_eq k, Ty.beq_iff_eq v]
   | .tuple as, b => by cases b <;> simp [Ty.beq, Ty.beqList_iff_eq as]
@@ -106,6 +118,7 @@ public def Ty.renderWith (parens : Bool) : Ty → String
   | .int => "int"
   | .string => "string"
   | .option t => s!"option {Ty.renderWith true t}"
+  | .except e t => s!"except {Ty.renderWith true e} {Ty.renderWith true t}"
   | .list t => s!"list {Ty.renderWith true t}"
   | .hashmap k v => s!"hashmap {Ty.renderWith true k} {Ty.renderWith true v}"
   | .tuple ts => s!"tuple({Ty.renderGroup ts})"
@@ -226,6 +239,32 @@ to evaluate under it.
 
 This is a special form (instead of `indMatch`) because options get compiled away during extraction. -/
   | optionMatch : Expression → Expression → String → Expression → Expression
+  /-- A successful `except`, holding the value it succeeded with, annotated with the type an error
+would have had.
+
+The annotation is there for the reason `optionNone`'s is, one half over: an `except` relates two
+types and a success carries a value of only the second, so the error type is what nothing in the
+expression says.  `optionSome` needs none because an option has one half and the value is it.
+
+What it is *not* is the type of this expression: that is `except` of the annotation and the type
+inferred for the value, so the payload type is still read off what is held, exactly as `optionSome`
+reads it. -/
+  | exceptOk : Ty → Expression → Expression
+  /-- A failed `except`, holding the error, annotated with the type a success would have carried —
+`exceptOk`'s annotation on the other side, and for the same reason. -/
+  | exceptError : Ty → Expression → Expression
+  /-- Case analysis on a value of except type: the expression to take apart, then the name to bind
+the error to together with the expression to evaluate under it, then the same for the value a
+success carries.
+
+The error case comes first, the order `Except ε α` lists its constructors in and the order
+`optionMatch` puts its empty case in.  Both cases bind a name, which is the whole of what separates
+this from `optionMatch`: an error carries a value where an empty option carries nothing.
+
+A special form rather than an `indMatch` for the reason `optionMatch` is one: the type names no
+declaration, so there is no constructor list for a match to be exhaustive against — the form holds
+both cases and nothing can be missing. -/
+  | exceptMatch : Expression → String → Expression → String → Expression → Expression
   /-- The empty list annotated with its element type -/
   | lnil : Ty → Expression
   | lcons : Expression → Expression → Expression

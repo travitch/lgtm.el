@@ -6,9 +6,11 @@ public import LgtmDeepLean.Lang.Eval.Unique
 
 `Eval.unique` says an expression has at most one value, so "`e` evaluates to `v`" and "`e`
 evaluates to *exactly* `v`" are the same proposition.  `Eval.Yields` is that proposition read the
-second way, and the lemmas below are its composition rules: one per form the model's bodies use,
-each asking for the *facts* that form consumes — an environment lookup, a field read, the `= some _`
-answer a partial operation gave — rather than for derivations of its subexpressions.
+second way, and the lemmas below are its composition rules: one per form the model's bodies use —
+together with the except forms, which nothing uses yet and which are here so that the first body to
+write one is not the thing that has to supply them — each asking for the *facts* that form consumes,
+an environment lookup, a field read, the `= some _` answer a partial operation gave, rather than for
+derivations of its subexpressions.
 
 This is the forward counterpart of the `Eval.*_inv` family (Eval.lean) and of `Stuck.not_*`
 (Progress.lean).  An inversion lemma takes a derivation apart and hands back existentials; a
@@ -237,6 +239,36 @@ public theorem optionMatch_none {td : TypeDecls} {env : Env} {scrut nbody : Expr
     (hbody : Yields td env nbody v) : Yields td env (.optionMatch scrut nbody x sbody) v :=
   Eval.EOptionMatchNone _ _ _ _ hscrut hbody
 
+/-! The except forms.  The two values are one rule apiece and their annotation goes nowhere, so each
+is its operand's `Yields` and nothing else; the match is two rules, and which of them a caller is
+building is decided by the half its scrutinee came out carrying. -/
+
+public theorem exceptOk {td : TypeDecls} {env : Env} {ty : Ty} {e : Expression} {v : Value}
+    (he : Yields td env e v) : Yields td env (.exceptOk ty e) (.except (.ok v)) :=
+  Eval.EOk _ _ he
+
+public theorem exceptError {td : TypeDecls} {env : Env} {ty : Ty} {e : Expression} {v : Value}
+    (he : Yields td env e v) : Yields td env (.exceptError ty e) (.except (.error v)) :=
+  Eval.EError _ _ he
+
+/-- A match on an except that came out carrying an error, stated of any `ok` case: only one of the
+two is ever evaluated, so the case that did not run is not mentioned — exactly as in
+`EExceptMatchError`, and as `optionMatch_some` does not mention the empty case. -/
+public theorem exceptMatch_error {td : TypeDecls} {env : Env} {scrut : Expression} {x : String}
+    {ebody : Expression} {y : String} {obody : Expression} {w v : Value}
+    (hscrut : Yields td env scrut (.except (.error w)))
+    (hbody : Yields td ⟨(x, w) :: env.bindings, env.globals⟩ ebody v) :
+    Yields td env (.exceptMatch scrut x ebody y obody) v :=
+  Eval.EExceptMatchError _ _ _ _ _ hscrut hbody
+
+/-- And one that came out carrying a value, which is the same lemma read at the other half. -/
+public theorem exceptMatch_ok {td : TypeDecls} {env : Env} {scrut : Expression} {x : String}
+    {ebody : Expression} {y : String} {obody : Expression} {w v : Value}
+    (hscrut : Yields td env scrut (.except (.ok w)))
+    (hbody : Yields td ⟨(y, w) :: env.bindings, env.globals⟩ obody v) :
+    Yields td env (.exceptMatch scrut x ebody y obody) v :=
+  Eval.EExceptMatchOk _ _ _ _ _ hscrut hbody
+
 public theorem listLength {td : TypeDecls} {env : Env} {e : Expression} {vs : List Value}
     (he : Yields td env e (.list vs)) : Yields td env (.listLength e) (.int (vs.length : Int)) :=
   Eval.EListLength _ he
@@ -447,11 +479,18 @@ empty list — are finished here, the lookup going to `yields_lookup`; every oth
 its subexpressions and its side conditions (a field read, a comparison's answer, an index in range)
 as goals.
 
-Three kinds of form are left out deliberately.  A call is one: which declaration it reaches and what
+Four kinds of form are left out deliberately.  A call is one: which declaration it reaches and what
 that declaration answers is the theorem the proof is spending, not something a step can decide.  The
 forms that call a function per element are another: their value is a list the caller has to produce.
 And `optionMatch` has two rules, of which this takes the one the model's `unreachable`-on-none shape
-needs — a scrutinee that came out empty is a case for the caller to write out. -/
+needs — a scrutinee that came out empty is a case for the caller to write out.
+
+`exceptMatch` has two rules and neither is taken, which is where it parts company with
+`optionMatch`: there, the case the model writes is settled in advance by the `unreachable`, while
+either case of an except binds a name and nothing yet says which one a body means.  An alternative
+here would commit every match to that half and leave a scrutinee goal no caller in the other half
+could discharge, so `Eval.Yields.exceptMatch_error` and `Eval.Yields.exceptMatch_ok` are applied by
+name until a shape the model writes makes one of them the default. -/
 syntax "yields_step" ("[" simpLemma,* "]")? : tactic
 
 macro_rules
@@ -477,6 +516,8 @@ macro_rules
       | apply Eval.Yields.listIndex
       | apply Eval.Yields.hashmapGet
       | apply Eval.Yields.optionMatch_some
+      | apply Eval.Yields.exceptOk
+      | apply Eval.Yields.exceptError
       | apply Eval.YieldsFields.cons
       | exact Eval.YieldsFields.nil
       | apply Eval.YieldsAll.cons

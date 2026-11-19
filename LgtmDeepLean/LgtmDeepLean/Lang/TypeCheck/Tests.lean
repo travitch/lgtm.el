@@ -58,6 +58,8 @@ private def ctx : Context :=
     ("p", .struct "Point"), ("b", .struct "Box"), ("c", .ind "Color"), ("sh", .ind "Shape"),
     ("t", .ind "Tree"), ("flag", .bool), ("wf", .struct "WithFn"), ("hd", .ind "Holder"),
     ("o", .option .int), ("op", .option (.struct "Point")), ("ofn", .option (.fn [.int] .int)),
+    ("r", .except .string .int), ("rp", .except .string (.struct "Point")),
+    ("rfn", .except .string (.fn [.int] .int)), ("rfne", .except (.fn [.int] .int) .int),
     ("m", .hashmap .string .int), ("mp", .hashmap .string (.struct "Point")),
     ("mfn", .hashmap .string (.fn [.int] .int)), ("mbad", .hashmap (.fn [.int] .int) .int),
     ("tu", .tuple [.string, .int]), ("tu3", .tuple [.int, .string, .bool]), ("tue", .tuple []),
@@ -2609,6 +2611,208 @@ private def nothing : FuncDecl where
 
 #guard
   ((Expression.optionMatch (.varRef "o") (.intLit 0) "x" (.varRef "x")).check types ctx .int).isOk
+
+/-! ### Excepts
+
+An except relates two types and names no declaration, so it is structural the way `option` is and
+`types` has nothing to say about it.  `ctx` gives `r` an `except string int`, `rp` one whose payload
+is a declared struct, and `rfn` and `rfne` ones carrying a function type on either half — which is
+the one thing a comparison cannot reach the bottom of, under either half as under a list. -/
+
+-- An except type is its two halves and nothing else, so two of them agree exactly when both halves
+-- do, and the order of the halves is part of the type.
+#guard Ty.except .string .int == Ty.except .string .int
+
+#guard Ty.except .string .int != Ty.except .int .string
+
+#guard Ty.except .string .int != Ty.option .int
+
+#guard Ty.except .string (.except .string .int) != Ty.except .string .int
+
+-- An `ok` takes the payload half from the value it holds and the error half from its annotation.
+#guard (Expression.exceptOk .string (.intLit 1)).infer types ctx == some (.except .string .int)
+
+#guard
+  (Expression.exceptOk .int (.varRef "s")).infer types ctx == some (.except .int .string)
+
+#guard
+  (Expression.exceptOk .string (.varRef "p")).infer types ctx ==
+    some (.except .string (.struct "Point"))
+
+#guard
+  (Expression.exceptOk (.list .string) (.intLit 1)).infer types ctx ==
+    some (.except (.list .string) .int)
+
+-- And an `error` the other way round: the error half is the value it holds, the payload half the
+-- annotation.
+#guard
+  (Expression.exceptError .int (.stringLit "no")).infer types ctx == some (.except .string .int)
+
+#guard
+  (Expression.exceptError (.struct "Point") (.varRef "s")).infer types ctx ==
+    some (.except .string (.struct "Point"))
+
+-- An annotation names a type rather than being checked against the table, exactly as `optionNone`'s
+-- does: it is what *builds* a value of one that the table is consulted for.
+#guard
+  (Expression.exceptOk (.struct "Nope") (.intLit 1)).infer types ctx ==
+    some (.except (.struct "Nope") .int)
+
+-- An ill-typed value makes either form ill typed.
+#guard (Expression.exceptOk .string (.varRef "nope")).infer types ctx == none
+
+#guard (Expression.exceptError .int (.plus (.intLit 1) (.stringLit "a"))).infer types ctx == none
+
+-- A match gives the type its two cases agree on, with each case's name bound to what that half of
+-- the scrutinee carries.
+#guard
+  (Expression.exceptMatch (.varRef "r") "e" (.intLit 0) "x" (.varRef "x")).infer types ctx ==
+    some .int
+
+#guard
+  (Expression.exceptMatch (.varRef "r") "e" (.intLit 0) "x"
+          (.plus (.varRef "x") (.intLit 1))).infer types ctx ==
+    some .int
+
+#guard
+  (Expression.exceptMatch (.varRef "r") "e" (.varRef "e") "x" (.stringLit "a")).infer types ctx ==
+    some .string
+
+#guard
+  (Expression.exceptMatch (.varRef "rp") "e" (.intLit 0) "q"
+          (.structGet (.varRef "q") "x")).infer types ctx ==
+    some .int
+
+-- Each name is bound at its own half, so using either at the other's type is ill typed, and each is
+-- in scope in its own case alone.
+#guard
+  (Expression.exceptMatch (.varRef "r") "e" (.plus (.varRef "e") (.intLit 1)) "x"
+          (.varRef "x")).infer types ctx ==
+    none
+
+#guard
+  (Expression.exceptMatch (.varRef "r") "e" (.intLit 0) "x" (.varRef "e")).infer types ctx == none
+
+#guard
+  (Expression.exceptMatch (.varRef "r") "e" (.varRef "x") "x" (.varRef "x")).infer types ctx == none
+
+-- Each shadows an enclosing binding of the same name inside its own case, the way a `let`'s does.
+#guard
+  (Expression.exceptMatch (.varRef "r") "n" (.varRef "n") "x" (.varRef "x")).infer types ctx ==
+    none
+
+#guard
+  (Expression.exceptMatch (.varRef "r") "e" (.intLit 0) "s"
+          (.plus (.varRef "s") (.intLit 1))).infer types ctx ==
+    some .int
+
+-- Both cases are held to one type, which is what makes the form have a type at all.
+#guard
+  (Expression.exceptMatch (.varRef "r") "e" (.intLit 0) "x" (.stringLit "a")).infer types ctx ==
+    none
+
+-- The scrutinee has to be an except, and an option will not do however alike the two forms look.
+#guard
+  (Expression.exceptMatch (.varRef "o") "e" (.intLit 0) "x" (.varRef "x")).infer types ctx == none
+
+#guard
+  (Expression.exceptMatch (.varRef "n") "e" (.intLit 0) "x" (.varRef "x")).infer types ctx == none
+
+#guard
+  (Expression.exceptMatch (.varRef "nope") "e" (.intLit 0) "x" (.varRef "x")).infer types ctx ==
+    none
+
+-- An ill-typed case on either side makes the match ill typed, however the other one goes.
+#guard
+  (Expression.exceptMatch (.varRef "r") "e" (.varRef "nope") "x" (.varRef "x")).infer types ctx ==
+    none
+
+#guard
+  (Expression.exceptMatch (.varRef "r") "e" (.intLit 0) "x" (.varRef "nope")).infer types ctx ==
+    none
+
+-- An except is comparable exactly when both halves are, where an option is comparable when its one
+-- half is: an error carries a value of its own, so neither half is one a comparison is sure not to
+-- be handed.
+#guard Ty.comparable types (.except .string .int)
+
+#guard Ty.comparable types (.except .string (.struct "Point"))
+
+#guard !Ty.comparable types (.except .string (.fn [.int] .int))
+
+#guard !Ty.comparable types (.except (.fn [.int] .int) .int)
+
+#guard !Ty.comparable types (.except .string (.struct "WithFn"))
+
+#guard (Expression.equals (.varRef "r") (.exceptOk .string (.intLit 1))).infer types ctx == some .bool
+
+#guard (Expression.equals (.varRef "r") (.exceptOk .int (.intLit 1))).infer types ctx == none
+
+#guard (Expression.equals (.varRef "rfn") (.varRef "rfn")).infer types ctx == none
+
+#guard (Expression.equals (.varRef "rfne") (.varRef "rfne")).infer types ctx == none
+
+-- And it has no ordering at all, where an option of the same types has one.
+#guard Ty.orderable (.option .int)
+
+#guard !Ty.orderable (.except .string .int)
+
+#guard (Expression.le (.varRef "r") (.varRef "r")).infer types ctx == none
+
+#guard (Expression.lt (.varRef "r") (.varRef "r")).infer types ctx == none
+
+/-- `fun (r : except string int) => match r with | error(e) => 0 | ok(x) => x + 1` -/
+private def succOrFail : FuncDecl where
+  docstring := "One more than what `r` holds, and `0` when it failed."
+  name := "succ-or-fail"
+  parameters := [("r", .except .string .int)]
+  body := .exceptMatch (.varRef "r") "e" (.intLit 0) "x" (.plus (.varRef "x") (.intLit 1))
+  resultType := .int
+
+-- A declaration over the new forms checks like any other, and against no table at all: an except
+-- names nothing for a `TypeDecls` to resolve.
+#guard (succOrFail.check {} []).isOk
+
+#guard !(({ succOrFail with resultType := .except .string .int } : FuncDecl).check {} []).isOk
+
+#guard !(({ succOrFail with parameters := [("r", .option .int)] } : FuncDecl).check {} []).isOk
+
+/-- `fun (n : int) => ok(n) : string` -/
+private def okIt : FuncDecl where
+  docstring := "`n`, held in a successful except."
+  name := "ok-it"
+  parameters := [("n", .int)]
+  body := .exceptOk .string (.varRef "n")
+  resultType := .except .string .int
+
+#guard (okIt.check {} []).isOk
+
+#guard !(({ okIt with resultType := .except .int .int } : FuncDecl).check {} []).isOk
+
+/-- `fun (m : string) => error(m) : int`, the other half: the annotation is the payload type, which
+nothing here carries a value of. -/
+private def failIt : FuncDecl where
+  docstring := "`m`, held as the error of an except."
+  name := "fail-it"
+  parameters := [("m", .string)]
+  body := .exceptError .int (.varRef "m")
+  resultType := .except .string .int
+
+#guard (failIt.check {} []).isOk
+
+#guard !(({ failIt with body := Expression.exceptError .string (.varRef "m") } : FuncDecl).check {}
+    []).isOk
+
+-- Checking agrees with inference on the new forms too.
+#guard ((Expression.exceptOk .string (.intLit 1)).check types ctx (.except .string .int)).isOk
+
+#guard !((Expression.exceptOk .string (.intLit 1)).check types ctx (.except .int .int)).isOk
+
+#guard ((Expression.exceptError .int (.stringLit "no")).check types ctx (.except .string .int)).isOk
+
+#guard
+  ((Expression.exceptMatch (.varRef "r") "e" (.intLit 0) "x" (.varRef "x")).check types ctx
+      .int).isOk
 
 /-! ### Hashmaps
 

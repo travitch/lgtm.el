@@ -289,6 +289,28 @@ public theorem Eval.unique {td : TypeDecls} {env : Env} {e : Expression} {v w : 
     | EOptionMatchSome _ _ _ _ hscrut' hsbody' =>
       obtain rfl := Option.some.inj (Value.option.inj (ihscrut hscrut'))
       exact ihsbody hsbody'
+  | EOk ty e he ihe =>
+    cases h₂ with
+    | EOk _ _ he' =>
+      obtain rfl := ihe he'
+      rfl
+  | EError ty e he ihe =>
+    cases h₂ with
+    | EError _ _ he' =>
+      obtain rfl := ihe he'
+      rfl
+  | EExceptMatchError scrut x ebody y obody hscrut hebody ihscrut ihebody =>
+    cases h₂ with
+    | EExceptMatchError _ _ _ _ _ hscrut' hebody' =>
+      obtain rfl := Except.error.inj (Value.except.inj (ihscrut hscrut'))
+      exact ihebody hebody'
+    | EExceptMatchOk _ _ _ _ _ hscrut' _ => exact absurd (ihscrut hscrut') (by simp)
+  | EExceptMatchOk scrut x ebody y obody hscrut hobody ihscrut ihobody =>
+    cases h₂ with
+    | EExceptMatchError _ _ _ _ _ hscrut' _ => exact absurd (ihscrut hscrut') (by simp)
+    | EExceptMatchOk _ _ _ _ _ hscrut' hobody' =>
+      obtain rfl := Except.ok.inj (Value.except.inj (ihscrut hscrut'))
+      exact ihobody hobody'
   | ENil ty => cases h₂; rfl
   | ECons e₁ e₂ h1 h2 ih1 ih2 =>
     cases h₂ with

@@ -213,6 +213,38 @@ The name is bound in front of the environment, so it shadows what was there, the
     Eval td env scrut (.option (some w)) →
       Eval td ⟨(x, w) :: env.bindings, env.globals⟩ sbody v →
       Eval td env (.optionMatch scrut nbody x sbody) v
+  /-- A success evaluates what it holds and wraps it, and a failure does the same with its error.
+The annotation goes nowhere, as `ENone` drops `optionNone`'s: a value carries no type, so what the
+annotation is for is `Expression.infer` alone. -/
+  |
+  EOk (ty : Ty) (e : Expression) :
+    Eval td env e v → Eval td env (.exceptOk ty e) (.except (.ok v))
+  |
+  EError (ty : Ty) (e : Expression) :
+    Eval td env e v → Eval td env (.exceptError ty e) (.except (.error v))
+  /-- A match on an except binds what the scrutinee carried to the name the case for that half
+gives, and evaluates that case.
+
+`EOptionMatchNone` and `EOptionMatchSome` with a binding in both rules rather than in one, which is
+the whole of what separates the two forms: an error carries a value where an empty option carries
+nothing.  Two rules for the reason those are two — only one case is ever evaluated, so the case that
+did not run is not mentioned — and, as there, nothing is resolved and no case can be missing: a
+scrutinee that evaluates to something that is not an except is the only thing that can go wrong
+here, and that is what typing rules out.
+
+The name is bound in front of the environment, so it shadows what was there, the way a `let`'s is. -/
+  |
+  EExceptMatchError (scrut : Expression) (x : String) (ebody : Expression) (y : String)
+      (obody : Expression) :
+    Eval td env scrut (.except (.error w)) →
+      Eval td ⟨(x, w) :: env.bindings, env.globals⟩ ebody v →
+      Eval td env (.exceptMatch scrut x ebody y obody) v
+  |
+  EExceptMatchOk (scrut : Expression) (x : String) (ebody : Expression) (y : String)
+      (obody : Expression) :
+    Eval td env scrut (.except (.ok w)) →
+      Eval td ⟨(y, w) :: env.bindings, env.globals⟩ obody v →
+      Eval td env (.exceptMatch scrut x ebody y obody) v
   | ENil (ty : Ty) : Eval td env (.lnil ty) (.list [])
   |
   ECons (e₁ : Expression) (e₂ : Expression) :
@@ -649,6 +681,39 @@ for an `unreachable`, so a value for the match at all is a value for the scrutin
   | EOptionMatchNone _ _ _ _ _ hnone => exact absurd hnone Eval.not_unreachable
   | EOptionMatchSome _ _ _ _ hscrut hbody => exact ⟨_, hscrut, hbody⟩
 
+/-! The three except forms inverted.  The two that build a value hand back what they wrapped, as an
+equation rather than a choice: each has one rule, and the annotation appears in neither — there is no
+evaluation in it for a value to carry. -/
+
+@[grind →] public theorem Eval.exceptOk_inv {td : TypeDecls} {env : Env} {ty : Ty} {e : Expression}
+    {v : Value} (h : Eval td env (.exceptOk ty e) v) :
+    ∃ w, Eval td env e w ∧ v = .except (.ok w) := by
+  cases h with
+  | EOk _ _ he => exact ⟨_, he, rfl⟩
+
+@[grind →] public theorem Eval.exceptError_inv {td : TypeDecls} {env : Env} {ty : Ty}
+    {e : Expression} {v : Value} (h : Eval td env (.exceptError ty e) v) :
+    ∃ w, Eval td env e w ∧ v = .except (.error w) := by
+  cases h with
+  | EError _ _ he => exact ⟨_, he, rfl⟩
+
+/-- A match on an except inverted is its two rules read as the two halves its scrutinee can carry.
+
+A disjunction, unlike the option version here, which is stated for the one shape the model writes —
+an `unreachable` on the case that did not run.  Either case of an except binds a name and either may
+be the one meant, so there is no half to rule out and the case split is what a proof makes. -/
+@[grind →] public theorem Eval.exceptMatch_inv {td : TypeDecls} {env : Env} {scrut : Expression}
+    {x : String} {ebody : Expression} {y : String} {obody : Expression} {v : Value}
+    (h : Eval td env (.exceptMatch scrut x ebody y obody) v) :
+    ∃ w,
+      (Eval td env scrut (.except (.error w)) ∧
+          Eval td ⟨(x, w) :: env.bindings, env.globals⟩ ebody v) ∨
+        Eval td env scrut (.except (.ok w)) ∧
+          Eval td ⟨(y, w) :: env.bindings, env.globals⟩ obody v := by
+  cases h with
+  | EExceptMatchError _ _ _ _ _ hscrut hbody => exact ⟨_, .inl ⟨hscrut, hbody⟩⟩
+  | EExceptMatchOk _ _ _ _ _ hscrut hbody => exact ⟨_, .inr ⟨hscrut, hbody⟩⟩
+
 /-- An index inverted is its one rule read backwards: the list, the position, and the option
 `Value.index?` made of the two.
 
@@ -756,7 +821,7 @@ than a lemma of its own. -/
 
 /-- The shape every value of this form has, where the form has one.
 
-`none` at the ten forms that do not: a name, a call, a conditional, a `let`, the four matches, a
+`none` at the eleven forms that do not: a name, a call, a conditional, a `let`, the five matches, a
 field or element read, and an `unreachable`.  Those produce whatever their subexpressions or their
 environment produced, so there is nothing syntactic to read — what a proof has instead is the
 inversion principle, which hands back the subexpression's own value.
@@ -772,6 +837,7 @@ constructor rather than passing one through. -/
   | .stringLit _ => some .string
   | .optionNone _ | .optionSome _ | .listIndex .. | .listFindIndex .. | .hashmapGet .. =>
     some .option
+  | .exceptOk .. | .exceptError .. => some .except
   | .lnil _ | .lcons .. | .listMap .. | .listFlatMap .. | .listReverse _ | .listSortOn .. |
       .listSortBy .. | .hashmapToList _ => some .list
   | .hashmapEmpty .. | .hashmapPut .. | .hashmapMap .. => some .hashmap
@@ -779,7 +845,7 @@ constructor rather than passing one through. -/
   | .structNew .. | .structUpdate .. => some .struct
   | .indNew .. => some .ind
   | .app .. | .ite .. | .let_ .. | .varRef _ | .structGet .. | .indMatch .. | .optionMatch .. |
-      .listMatch .. | .tupleGet .. | .unreachable .. => none
+      .exceptMatch .. | .listMatch .. | .tupleGet .. | .unreachable .. => none
 
 /-- And what it says is true of the value: the whole family of shape lemmas, one theorem.
 
@@ -978,6 +1044,28 @@ public theorem Eval.hasType {td : TypeDecls} {env : Env} {ctx : Context} {e : Ex
     obtain ⟨t'', hw, heq⟩ := Value.hasType_option_some_iff.mp (ihscrut henv hsc)
     obtain rfl : t'' = t' := by simpa using heq.symm
     exact ihsbody (Env.hasType_cons hw henv) (by simpa using hsb)
+  | EOk ty e _
+    ihe =>
+    obtain ⟨t', he, rfl⟩ := Expression.infer_exceptOk_eq_some.mp ht
+    exact .exceptOk (ihe henv he)
+  | EError ty e _
+    ihe =>
+    obtain ⟨e', he, rfl⟩ := Expression.infer_exceptError_eq_some.mp ht
+    exact .exceptError (ihe henv he)
+  | EExceptMatchError scrut x ebody y obody _ _ ihscrut
+    ihebody =>
+    obtain ⟨et, ot, hsc, heb, -⟩ := Expression.infer_exceptMatch_eq_some.mp ht
+    -- The name the error case binds stands at the error half of the scrutinee's type, which is the
+    -- half the value it took apart carries a value at.
+    obtain ⟨et', ot', hw, heq⟩ := Value.hasType_except_error_iff.mp (ihscrut henv hsc)
+    obtain rfl : et' = et := by simpa using (Ty.except.inj heq.symm).1
+    exact ihebody (Env.hasType_cons hw henv) (by simpa using heb)
+  | EExceptMatchOk scrut x ebody y obody _ _ ihscrut
+    ihobody =>
+    obtain ⟨et, ot, hsc, -, hob⟩ := Expression.infer_exceptMatch_eq_some.mp ht
+    obtain ⟨et', ot', hw, heq⟩ := Value.hasType_except_ok_iff.mp (ihscrut henv hsc)
+    obtain rfl : ot' = ot := by simpa using (Ty.except.inj heq.symm).2
+    exact ihobody (Env.hasType_cons hw henv) (by simpa using hob)
   | EListMatchNil scrut nbody hd tl cbody _ _ _
     ihnbody =>
     obtain ⟨-, -, hnb, -⟩ := Expression.infer_listMatch_eq_some.mp ht

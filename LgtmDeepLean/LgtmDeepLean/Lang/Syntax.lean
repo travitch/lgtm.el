@@ -61,8 +61,10 @@ the IR name `Foo.bar` when an `lgtm` command has declared that IR name, and othe
 (`LgtmDeepLean.Lang.Syntax.Scope`), where it used to be the Lean names a `meta import` brought in —
 so a module calling another's declarations no longer needs to import it twice.
 
-The keywords inside a DSL term — `bool`, `int`, `string`, `list`, `option`, `hashmap`, `tuple`,
-`true`, `false`, `some`, `none`, `min`, `max`, `reverse`, `length`, `map`, `flatMap`, `findIndex`,
+The keywords inside a DSL term — `bool`, `int`, `string`, `list`, `option`, `except`, `hashmap`,
+`tuple`,
+`true`, `false`, `some`, `none`, `ok`, `error`, `min`, `max`, `reverse`, `length`, `map`, `flatMap`,
+`findIndex`,
 `sortOn`, `sortBy`,
 `toList`,
 `unreachable`, `var`,
@@ -109,6 +111,17 @@ syntax :max &"list" lgtmTy:max : lgtmTy
 Like `list` and unlike `struct` and `inductive`, it carries the type it holds rather than naming a
 declaration, so there is no `lgtm` command declaring one and no `TypeDecls` entry to resolve. -/
 syntax :max &"option" lgtmTy:max : lgtmTy
+
+/-- `except string int` is an `int`, or a `string` instead of one: the error type first and the
+payload second, the order `Except ε α` relates them in.
+
+Both halves are at `max` and are read in order, the way `hashmap`'s two are, so
+`except string list int` is an except of a list and `except list string int` one whose errors are
+lists, while a function type on either side takes parentheses: `except string ((int) -> int)`.
+
+Like `list`, `option` and `hashmap` it carries the types it relates, so there is no `lgtm` command
+declaring one and no `TypeDecls` entry to resolve. -/
+syntax :max &"except" lgtmTy:max lgtmTy:max : lgtmTy
 
 /-- `hashmap string int` is a finite map from `string` keys to `int` values.
 
@@ -359,6 +372,7 @@ meta partial def elabLgtmTy (stx : TSyntax `lgtmTy) : LgtmElabM Ty := do
   | `(lgtmTy| string) => return .string
   | `(lgtmTy| list $t) => return .list (← elabLgtmTy t)
   | `(lgtmTy| option $t) => return .option (← elabLgtmTy t)
+  | `(lgtmTy| except $e $t) => return .except (← elabLgtmTy e) (← elabLgtmTy t)
   | `(lgtmTy| hashmap $k $v) => return .hashmap (← elabLgtmTy k) (← elabLgtmTy v)
   | `(lgtmTy| tuple($ts,*)) => return .tuple (← ts.getElems.toList.mapM elabLgtmTy)
   | `(lgtmTy| struct $n:ident) => do
@@ -437,6 +451,11 @@ The two option values are written `some(1)` and `none : int`, and a `match` whos
 named `none` and `some` takes one apart.  The empty one carries a type for the reason an empty list
 literal does — it holds nothing to read one off — while `some` needs none, since what it holds says
 it.
+
+The two except values are written `ok(1) : string` and `error("no") : int`, and a `match` whose
+alternatives are named `error` and `ok` takes one apart.  Both carry a type, and in both it is the
+half the value does not say: an except relates two types and either value pins exactly one of
+them.
 
 The five hashmap forms are `hashmap(string, int)`, `m[k]` — the brackets again, read as a lookup for
 everything that is not a list — `{ m with [k] = v }`, `map m f` — the keyword again, read as a
@@ -559,6 +578,25 @@ annotation of its own, the option takes parentheses to say which `:` is which:
 `none` is a keyword, so neither it nor `some` is available as a variable name inside a DSL term;
 `var "none"` is the escape hatch, the same one `true` and `new` leave. -/
 syntax :max &"none" " : " lgtmTy:max : lgtmExpr
+
+/-- `ok(1) : string` is the successful `except string int` holding `1`, and
+`error("no") : int` the failed one carrying `"no"`.
+
+Both are annotated, and in both the annotation is the *other* half — the one the value says nothing
+about.  A success carries a value of the payload type, so what is written after the `:` is the error
+type; a failure carries an error, so what is written there is the payload type.  That is
+`optionSome` needing no annotation and `optionNone` needing one, read at a type with two halves
+instead of one: either value pins exactly the half it carries and leaves the other to be written.
+
+The annotation is a type at `max` and reads the way `none : int` does, so `ok(1) : list string`
+needs no parentheses while a function type does — `ok(1) : ((int) -> int)` — and inside a list
+literal, which ends with an annotation of its own, it takes parentheses to say which `:` is which.
+
+`ok` and `error` are keywords, so neither is available as a variable name inside a DSL term;
+`var "ok"` is the escape hatch, the same one `true`, `none` and `new` leave. -/
+syntax :max &"ok" "(" lgtmExpr ")" " : " lgtmTy:max : lgtmExpr
+
+syntax :max &"error" "(" lgtmExpr ")" " : " lgtmTy:max : lgtmExpr
 
 /-- `unreachable "why" : int` is a branch nothing reaches, at `int`, with a note saying why.
 
@@ -808,13 +846,14 @@ syntax :max lgtmExpr:max noWs "." noWs num : lgtmExpr
 and the expression to evaluate when the value was built by it.  A constructor that carries nothing
 takes no parentheses.
 
-`none` and `some` are read as keywords here rather than as identifiers, so that an editor colours
-them the way it colours the `none` and `some` expression forms — a token is what semantic
-highlighting is given, and an identifier the DSL binds no Lean variable for is given nothing.  The
-heads are tried in that order and an identifier last, so every other constructor still parses as
-one; `elabLgtmExpr` stands the identifier a keyword head names back in its place, so nothing after
-the parser tells the two apart. -/
-public syntax lgtmAlt := " | " (&"none" <|> &"some" <|> ident) ("(" ident,* ")")? " => " lgtmExpr
+`none`, `some`, `error` and `ok` are read as keywords here rather than as identifiers, so that an
+editor colours them the way it colours the expression forms of those names — a token is what
+semantic highlighting is given, and an identifier the DSL binds no Lean variable for is given
+nothing.  The heads are tried in that order and an identifier last, so every other constructor still
+parses as one; `elabLgtmExpr` stands the identifier a keyword head names back in its place, so
+nothing after the parser tells the two apart. -/
+public syntax lgtmAlt :=
+  " | " (&"none" <|> &"some" <|> &"error" <|> &"ok" <|> ident) ("(" ident,* ")")? " => " lgtmExpr
 
 /-- `match c with | Red => 0 | Rgb(r, g, b) => r` takes a value of an inductive type apart.
 
@@ -822,14 +861,15 @@ The alternatives have to be the type's constructors in the order it declares the
 checker's business rather than the parser's.  An alternative's expression extends as far right as it
 can, so a `match` nested inside one needs parentheses — the same way a `let` does.
 
-`match o with | none => 0 | some(x) => x` is the one special case: alternatives named `none` and
-`some` make an `optionMatch` rather than an `indMatch`, since an option is taken apart by a form of
-its own.  The two have to be both of them and in that order, which the parser does not ask of the
-alternatives of an `indMatch` but which `optionMatch` asks here — it holds the two cases an option
-has rather than a list to check against a declaration, so there is nothing for a third alternative
-or a missing one to mean.  The cost is that an inductive type declaring a constructor called `none`
-or `some` is one this syntax cannot match on; `~(Expression.indMatch ...)` is the way to write that
-one. -/
+`match o with | none => 0 | some(x) => x` and
+`match r with | error(e) => 0 | ok(x) => x` are the two special cases: alternatives named `none` and
+`some` make an `optionMatch` and ones named `error` and `ok` an `exceptMatch`, since each of those
+types is taken apart by a form of its own.  Either pair has to be both of its alternatives and in
+that order, which the parser does not ask of the alternatives of an `indMatch` but which these ask
+here — each form holds the two cases its type has rather than a list to check against a declaration,
+so there is nothing for a third alternative or a missing one to mean.  The cost is that an inductive
+type declaring a constructor called `none`, `some`, `error` or `ok` is one this syntax cannot match
+on; `~(Expression.indMatch ...)` is the way to write that one. -/
 syntax :10 "match " lgtmExpr " with" lgtmAlt* : lgtmExpr
 
 /-! A match on a list is a `listMatch`, which is a form of its own the way `optionMatch` is, and its
@@ -963,6 +1003,32 @@ meta def optionMatchAlts
     throwErrorAt sc
         "`some` holds one value, so its alternative binds one name: `| some(x) => ...`"
   return some (nbody, x, sbody)
+
+/-- The alternatives of a `match` read as an except's, when they are: the name its `error` case
+binds and the body under it, then the same for its `ok` case.
+
+`optionMatchAlts` with a name in both cases rather than in one, and read the same way: `none` when
+no alternative names either `error` or `ok`, and an error when one does and the rest of the shape is
+not an except's, because there is no second reading to fall back on. -/
+meta def exceptMatchAlts
+    (alts : Array (Ident × Array Ident × TSyntax `lgtmExpr)) :
+    LgtmElabM (Option (Ident × TSyntax `lgtmExpr × Ident × TSyntax `lgtmExpr)) := do
+  let isExceptCtor (c : Ident) : Bool := c.getId == `error || c.getId == `ok
+  let some (named, _, _) := alts.find? (fun (c, _, _) => isExceptCtor c) | return none
+  let #[(ec, exs, ebody), (oc, oxs, obody)] := alts
+    |
+    throwErrorAt named
+        "a match on an except has two alternatives: `| error(e) => ... | ok(x) => ...`"
+  unless ec.getId == `error && oc.getId == `ok do
+    throwErrorAt named "a match on an except takes `error` first and `ok` second"
+  let #[x] := exs
+    |
+    throwErrorAt ec
+        "`error` holds one value, so its alternative binds one name: `| error(e) => ...`"
+  let #[y] := oxs
+    |
+    throwErrorAt oc "`ok` holds one value, so its alternative binds one name: `| ok(x) => ...`"
+  return some (x, ebody, y, obody)
 
 /-- The alternatives of a match on a list read as the two cases it has: the body of its `[]` case,
 the names its `::` case binds, and the body under them.
@@ -1253,6 +1319,8 @@ meta partial def elabLgtmExprCore (ctx : Context) (stx : TSyntax `lgtmExpr) :
   | `(lgtmExpr| $e.$i:num) => return .tupleGet (← elabLgtmExpr ctx e) i.getNat
   | `(lgtmExpr| some($e)) => return .optionSome (← elabLgtmExpr ctx e)
   | `(lgtmExpr| none : $t) => return .optionNone (← elabLgtmTy t)
+  | `(lgtmExpr| ok($e) : $t) => return .exceptOk (← elabLgtmTy t) (← elabLgtmExpr ctx e)
+  | `(lgtmExpr| error($e) : $t) => return .exceptError (← elabLgtmTy t) (← elabLgtmExpr ctx e)
   | `(lgtmExpr| unreachable $why:str : $t) => return .unreachable (← elabLgtmTy t) why.getString
   | `(lgtmExpr| match $e with $alts:lgtmListAlt*) => do
       let scrut ← elabLgtmExpr ctx e
@@ -1297,6 +1365,20 @@ meta partial def elabLgtmExprCore (ctx : Context) (stx : TSyntax `lgtmExpr) :
         let name := x.getId.toString
         return .optionMatch scrut (← elabLgtmExpr ctx nbody) name
           (← elabLgtmExpr ((name, elemTy) :: ctx) sbody)
+      -- And one named `error` or `ok` a match on an except, the other type taken apart by a form of
+      -- its own.
+      if let some (x, ebody, y, obody) ← exceptMatchAlts parsed then
+        -- Each case binds at the half of the scrutinee's type its case is for, which is how
+        -- `Expression.inferE` reads the two.
+        let (errTy, okTy) := match scrutTy with
+          | .except e t => (e, t)
+          | _ => (unknownTy, unknownTy)
+        addBinderTyInfo x errTy
+        addBinderTyInfo y okTy
+        let errName := x.getId.toString
+        let okName := y.getId.toString
+        return .exceptMatch scrut errName (← elabLgtmExpr ((errName, errTy) :: ctx) ebody) okName
+          (← elabLgtmExpr ((okName, okTy) :: ctx) obody)
       -- An alternative binds at the types its constructor carries, which the declaration of the
       -- scrutinee's type is what gives.
       let inds := (← read).allInductives

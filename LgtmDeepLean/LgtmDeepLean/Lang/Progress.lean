@@ -227,6 +227,29 @@ the case the scrutinee chose.  There is no rule for an option whose case is miss
     Eval td env scrut (.option (some w)) →
       Stuck td ⟨(x, w) :: env.bindings, env.globals⟩ sbody →
       Stuck td env (.optionMatch scrut nbody x sbody)
+  /-- A success and a failure are each stuck exactly where the value they wrap is.  Neither has a
+mismatch rule: whatever came back is what gets wrapped, the way `optionSome`'s is. -/
+  | exceptOkInner : Stuck td env e → Stuck td env (.exceptOk ty e)
+  | exceptErrorInner : Stuck td env e → Stuck td env (.exceptError ty e)
+  /-- A match on an except is stuck in its scrutinee, on a scrutinee that is not an except, or in
+the case the scrutinee chose.  A match on an option's four rules with `Value.IsExcept` in place of
+`Value.IsOption` and a binding in both case rules rather than in one: an except has two cases and
+the form carries both, so there is no rule for a case that is missing, and an error is a value like
+any other rather than a failure. -/
+  | exceptMatchScrut : Stuck td env scrut → Stuck td env (.exceptMatch scrut x ebody y obody)
+  |
+  exceptMatchNotExcept :
+    Eval td env scrut v → ¬v.IsExcept → Stuck td env (.exceptMatch scrut x ebody y obody)
+  |
+  exceptMatchError :
+    Eval td env scrut (.except (.error w)) →
+      Stuck td ⟨(x, w) :: env.bindings, env.globals⟩ ebody →
+      Stuck td env (.exceptMatch scrut x ebody y obody)
+  |
+  exceptMatchOk :
+    Eval td env scrut (.except (.ok w)) →
+      Stuck td ⟨(y, w) :: env.bindings, env.globals⟩ obody →
+      Stuck td env (.exceptMatch scrut x ebody y obody)
   /-- A cons is stuck in either operand, or on a tail that is not a list.  Nothing is asked of the
 head: a list's element type is whatever the head turned out to be. -/
   | lconsHead : Stuck td env e₁ → Stuck td env (.lcons e₁ e₂)
@@ -736,6 +759,32 @@ public theorem Eval.not_stuck {td : TypeDecls} {env : Env} {e : Expression} {v :
     | optionMatchSome hev h =>
       obtain rfl := Option.some.inj (Value.option.inj (Eval.unique hscrut hev))
       exact ihsbody h
+  | EOk ty e he ihe =>
+    rintro hs
+    cases hs with
+    | exceptOkInner h => exact ihe h
+  | EError ty e he ihe =>
+    rintro hs
+    cases hs with
+    | exceptErrorInner h => exact ihe h
+  | EExceptMatchError scrut x ebody y obody hscrut hebody ihscrut ihebody =>
+    rintro hs
+    cases hs with
+    | exceptMatchScrut h => exact ihscrut h
+    | exceptMatchNotExcept hev hn => obtain rfl := Eval.unique hscrut hev; exact hn ⟨_, rfl⟩
+    | exceptMatchError hev h =>
+      obtain rfl := Except.error.inj (Value.except.inj (Eval.unique hscrut hev))
+      exact ihebody h
+    | exceptMatchOk hev _ => exact absurd (Eval.unique hscrut hev) (by simp)
+  | EExceptMatchOk scrut x ebody y obody hscrut hobody ihscrut ihobody =>
+    rintro hs
+    cases hs with
+    | exceptMatchScrut h => exact ihscrut h
+    | exceptMatchNotExcept hev hn => obtain rfl := Eval.unique hscrut hev; exact hn ⟨_, rfl⟩
+    | exceptMatchError hev _ => exact absurd (Eval.unique hscrut hev) (by simp)
+    | exceptMatchOk hev h =>
+      obtain rfl := Except.ok.inj (Value.except.inj (Eval.unique hscrut hev))
+      exact ihobody h
   | ENil ty => rintro hs; cases hs
   | ECons e₁ e₂ h₁ h₂ ih₁ ih₂ =>
     rintro hs
@@ -1004,7 +1053,8 @@ evaluates every call, where `Stuck` names the one element whose call went wrong.
 proves both from the same facts about the element.
 
 One lemma per form the model's bodies use, each asking for the premises of its own rules and
-nothing else. -/
+nothing else — together with the three except forms, which nothing uses yet and which are here so
+that the first body to write one is not the thing that has to supply them. -/
 
 public theorem Stuck.not_varRef {td : TypeDecls} {env : Env} {x : String} {v : Value}
     (h : env.lookup x = some v) : ¬Stuck td env (.varRef x) := by
@@ -1204,6 +1254,45 @@ public theorem Stuck.not_optionMatch_unreachable {td : TypeDecls} {env : Env} {s
   | optionMatchNotOption hev hn => exact hn (hopt _ hev)
   | optionMatchNone _ h => exact Stuck.not_unreachable h
   | optionMatchSome hev h => exact hbody _ hev h
+
+/-- A success and a failure are each not stuck where the value they wrap is not stuck.  One rule
+apiece and no mismatch rule to refute, the way `optionSome` has none: whatever came back is what
+gets wrapped. -/
+public theorem Stuck.not_exceptOk {td : TypeDecls} {env : Env} {ty : Ty} {e : Expression}
+    (he : ¬Stuck td env e) : ¬Stuck td env (.exceptOk ty e) := by
+  rintro hs
+  cases hs with
+  | exceptOkInner h => exact he h
+
+public theorem Stuck.not_exceptError {td : TypeDecls} {env : Env} {ty : Ty} {e : Expression}
+    (he : ¬Stuck td env e) : ¬Stuck td env (.exceptError ty e) := by
+  rintro hs
+  cases hs with
+  | exceptErrorInner h => exact he h
+
+/-- A match on an except is not stuck where its scrutinee is not stuck, produces excepts, and leaves
+whichever case ran not stuck under what that case bound.  The four rules of `Stuck` it has, one
+apiece.
+
+Both cases are asked about, where `Stuck.not_optionMatch_unreachable` asks about one: the shape the
+model writes there is an `unreachable` on the empty case, which `Stuck.not_unreachable` refutes
+whatever the scrutinee did, while either case of an except binds a name and either may be the one
+that runs.  A caller whose error case *is* an `unreachable` spends that fact here instead —
+`fun _ _ => Stuck.not_unreachable` discharges `herr` — so this covers that shape too. -/
+public theorem Stuck.not_exceptMatch {td : TypeDecls} {env : Env} {scrut : Expression} {x : String}
+    {ebody : Expression} {y : String} {obody : Expression} (hscrut : ¬Stuck td env scrut)
+    (hexc : ∀ v, Eval td env scrut v → v.IsExcept)
+    (herr : ∀ w, Eval td env scrut (.except (.error w)) →
+      ¬Stuck td ⟨(x, w) :: env.bindings, env.globals⟩ ebody)
+    (hok : ∀ w, Eval td env scrut (.except (.ok w)) →
+      ¬Stuck td ⟨(y, w) :: env.bindings, env.globals⟩ obody) :
+    ¬Stuck td env (.exceptMatch scrut x ebody y obody) := by
+  rintro hs
+  cases hs with
+  | exceptMatchScrut h => exact hscrut h
+  | exceptMatchNotExcept hev hn => exact hn (hexc _ hev)
+  | exceptMatchError hev h => exact herr _ hev h
+  | exceptMatchOk hev h => exact hok _ hev h
 
 /-- A cons is not stuck where neither operand is and the tail produces lists.  Nothing is asked of
 the head: a list's element type is whatever the head turned out to be. -/

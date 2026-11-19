@@ -25,6 +25,18 @@ they hold, and `Eval`'s two match rules are the two cases of this field.  It is 
 exactly as `list` is, and it holds no type: an empty option is empty whatever it could have held, the
 same way an empty list is, so it is `Value.HasType` that says at which type. -/
 | option : Option Value → Value
+/-- A value of except type: the value a success carried, or the error a failure did.  Lean's own
+`Except`, since the IR's except is Lean's.
+
+Carrying an `Except Value Value` rather than splitting this into two constructors is what keeps every
+rule about one of these a rule about the `Except` it holds, exactly as `option` carries an `Option`:
+`Value.beq?` compares two by comparing what they hold, and `Eval`'s two match rules are the two cases
+of this field.
+
+It holds no types, as `option` holds none — which half it carries says only *one* of the two its
+type relates, so an error has every except type whose error half its value has, and `Value.HasType`
+is what says at which. -/
+| except : Except Value Value → Value
 | list : List Value → Value
 /-- A hashmap, as the bindings it carries: one pair per key it binds, each key beside the value it
 is bound to.
@@ -271,9 +283,9 @@ a closure is, and there is no equality between values of different types for the
 about.
 
 What decides `false` without looking further is a difference in shape *within* one type: two lists of
-different lengths, an empty option against one that holds a value, and two values of an inductive
-type built by different constructors.  All are genuinely different values, and none needs anything
-underneath it compared to say so. -/
+different lengths, an empty option against one that holds a value, a success against an error, and
+two values of an inductive type built by different constructors.  All are genuinely different values,
+and none needs anything underneath it compared to say so. -/
 @[expose] public def Value.beq? : Value → Value → Option Bool
   | .bool a, .bool b => some (a == b)
   | .int a, .int b => some (a == b)
@@ -281,6 +293,9 @@ underneath it compared to say so. -/
   | .option (some a), .option (some b) => Value.beq? a b
   | .option none, .option none => some true
   | .option _, .option _ => some false
+  | .except (.ok a), .except (.ok b) => Value.beq? a b
+  | .except (.error a), .except (.error b) => Value.beq? a b
+  | .except _, .except _ => some false
   | .list as, .list bs => Value.beqList? as bs
   | .tuple as, .tuple bs => Value.beqList? as bs
   | .struct n fas, .struct m fbs => if n == m then Value.beqFields? fas fbs else none
@@ -371,6 +386,8 @@ mutual
   | .int a, .int b => a = b
   | .string a, .string b => a = b
   | .option (some a), .option (some b) => Value.Equiv a b
+  | .except (.ok a), .except (.ok b) => Value.Equiv a b
+  | .except (.error a), .except (.error b) => Value.Equiv a b
   | .list as, .list bs => Value.EquivList as bs
   | .tuple as, .tuple bs => Value.EquivList as bs
   | .struct n fas, .struct m fbs => n = m ∧ Value.EquivFields fas fbs
@@ -409,6 +426,8 @@ public theorem Value.Equiv.refl : ∀ (a : Value), Value.Equiv a a
   | .string s => by simp [Value.Equiv]
   | .option none => by simp [Value.Equiv]
   | .option (some a) => by simpa [Value.Equiv] using Value.Equiv.refl a
+  | .except (.ok a) => by simpa [Value.Equiv] using Value.Equiv.refl a
+  | .except (.error a) => by simpa [Value.Equiv] using Value.Equiv.refl a
   | .list as => by simpa [Value.Equiv] using Value.EquivList.refl as
   | .tuple as => by simpa [Value.Equiv] using Value.EquivList.refl as
   | .hashmap kvs => by simp [Value.Equiv]
@@ -464,6 +483,23 @@ public theorem Value.beq?_eq_some_iff : ∀ (a b : Value) (r : Bool),
         cases ob with
         | none => simp [Value.beq?, Value.Equiv]
         | some b =>
+          intro h
+          simpa [Value.Equiv] using Value.beq?_eq_some_iff a b r (by simpa [Value.beq?] using h)
+    | _ => simp [Value.beq?]
+  | .except ra, b, r => by
+    cases b with
+    | except rb =>
+      cases ra with
+      | error a =>
+        cases rb with
+        | error b =>
+          intro h
+          simpa [Value.Equiv] using Value.beq?_eq_some_iff a b r (by simpa [Value.beq?] using h)
+        | ok b => simp [Value.beq?, Value.Equiv]
+      | ok a =>
+        cases rb with
+        | error b => simp [Value.beq?, Value.Equiv]
+        | ok b =>
           intro h
           simpa [Value.Equiv] using Value.beq?_eq_some_iff a b r (by simpa [Value.beq?] using h)
     | _ => simp [Value.beq?]
@@ -623,9 +659,11 @@ with Lean's own `==`.  An empty option comes before one that holds a value, and 
 are their values compared.  Lists and tuples are compared lexicographically by the same walk — a
 tuple is positional too — so the first position they disagree at is what decides them.
 
-`none` is what a `bool`, a hashmap, a closure, a struct value and a value of an inductive type all
-get, which is one fewer answer than `Value.beq?` gives: an ordering is claimed here only for the
-types `Ty.orderable` accepts, and those are exactly the ones above.  It also covers the pairs that
+`none` is what a `bool`, an except, a hashmap, a closure, a struct value and a value of an inductive
+type all get, which is fewer answers than `Value.beq?` gives: an ordering is claimed here only for
+the types `Ty.orderable` accepts, and those are exactly the ones above.  An except is the one of
+them an *option* of the same types would be answered for — see `Ty.orderable_except` for why the two
+part company.  It also covers the pairs that
 disagree about which type they carry, as `Value.beq?`'s does — those are pairs typing rules out, and
 there is no ordering between values of different types to be an answer about. -/
 @[expose] public def Value.cmp? : Value → Value → Option Ordering
@@ -722,6 +760,7 @@ public theorem Value.eq_of_cmp? : ∀ (a b : Value), Value.cmp? a b = some .eq �
       simpa using Value.eq_of_cmpList? as bs (by simpa [Value.cmp?] using h)
     | _ => simp [Value.cmp?]
   | .bool x, b => by cases b <;> simp [Value.cmp?]
+  | .except r, b => by cases b <;> simp [Value.cmp?]
   | .hashmap kvs, b => by cases b <;> simp [Value.cmp?]
   | .closure cb cg ps body, b => by cases b <;> simp [Value.cmp?]
   | .struct n fvs, b => by cases b <;> simp [Value.cmp?]
@@ -1257,6 +1296,18 @@ on `Expression.optionNone` settles. -/
 | optionNone {t : Ty} : HasType td (.option none) (.option t)
 /-- And one that holds a value has the option type of that value's type. -/
 | optionSome {v : Value} {t : Ty} : HasType td v t → HasType td (.option (some v)) (.option t)
+/-- A success has every except type whose payload half is the type of the value it carries: the
+error half is unconstrained, because there is no error in it for a type to be required of.  Which
+one it has in a given place is what the annotation on `Expression.exceptOk` settles.
+
+The option case split in two, with half of each one left over: an empty option constrains neither
+half of an `option t` because it holds nothing, where a success constrains exactly the half it
+carries a value at. -/
+| exceptOk {v : Value} {e t : Ty} : HasType td v t → HasType td (.except (.ok v)) (.except e t)
+/-- And a failure the other way round: the error half is the type of the value it carries and the
+payload half is what `Expression.exceptError`'s annotation settles. -/
+| exceptError {v : Value} {e t : Ty} :
+    HasType td v e → HasType td (.except (.error v)) (.except e t)
 | closure {cbindings : Bindings} {cglobals : Globals} {ps : Context}
     {body : Expression} {cctx : Context} {r : Ty} :
     Globals.WellTyped td cglobals →
@@ -1376,6 +1427,32 @@ exactly why `Expression.optionNone` carries an annotation. -/
     | optionSome hv => exact ⟨_, hv, rfl⟩
   · rintro ⟨t', hv, rfl⟩
     exact .optionSome hv
+
+/-- What it takes for a success to have a type: the type is an except type whose payload half is the
+type of the value it carries, and the error half is anything at all.
+
+Two existentials where `Value.hasType_option_some_iff` has one, and only one of them is pinned by
+the value: the error half is what `Expression.exceptOk` carries an annotation for. -/
+@[simp] public theorem Value.hasType_except_ok_iff {td : TypeDecls} {v : Value} {t : Ty} :
+    Value.HasType td (.except (.ok v)) t ↔
+      ∃ e t', Value.HasType td v t' ∧ t = .except e t' := by
+  constructor
+  · intro h
+    cases h with
+    | exceptOk hv => exact ⟨_, _, hv, rfl⟩
+  · rintro ⟨e, t', hv, rfl⟩
+    exact .exceptOk hv
+
+/-- And what it takes for a failure: the same read at the other half. -/
+@[simp] public theorem Value.hasType_except_error_iff {td : TypeDecls} {v : Value} {t : Ty} :
+    Value.HasType td (.except (.error v)) t ↔
+      ∃ e' t', Value.HasType td v e' ∧ t = .except e' t' := by
+  constructor
+  · intro h
+    cases h with
+    | exceptError hv => exact ⟨_, _, hv, rfl⟩
+  · rintro ⟨e', t', hv, rfl⟩
+    exact .exceptError hv
 
 /-- The elements a mapping over a list produces are all of the type its function returns: every
 element of the result is what the call for the element in that position produced.
@@ -1959,6 +2036,9 @@ its index. -/
 /-- `v` is an option: what `optionMatch` asks of its scrutinee. -/
 @[expose] public def Value.IsOption (v : Value) : Prop := ∃ o, v = .option o
 
+/-- `v` is an except: what `exceptMatch` asks of its scrutinee. -/
+@[expose] public def Value.IsExcept (v : Value) : Prop := ∃ r, v = .except r
+
 /-- `v` is a list: what the list forms ask of their first operand, and `listFlatMap` of what each of
 its calls produced. -/
 @[expose] public def Value.IsList (v : Value) : Prop := ∃ vs, v = .list vs
@@ -1982,7 +2062,7 @@ per binding asks of its second operand. -/
 
 /-! ### The shapes as one datum
 
-The ten predicates above read as one function, so that a fact about *which* shape a value has can be
+The eleven predicates above read as one function, so that a fact about *which* shape a value has can be
 carried as an equation rather than as a choice of predicate.  `Eval.shape` (Eval.lean) is what that
 buys: one theorem answers for every form whose rules all build a value of one shape, where the
 predicates would need one lemma per form.
@@ -1992,7 +2072,7 @@ every struct value whatever it was declared as.  The names are nominal and `Eval
 do not ask about them: `Stuck.structGetNotStruct` objects to a value that is not a struct at all. -/
 
 public inductive Value.Shape where
-  | bool | int | string | option | list | hashmap | tuple | closure | struct | ind
+  | bool | int | string | option | except | list | hashmap | tuple | closure | struct | ind
   deriving DecidableEq
 
 @[expose] public def Value.shape : Value → Value.Shape
@@ -2000,6 +2080,7 @@ public inductive Value.Shape where
   | .int _ => .int
   | .string _ => .string
   | .option _ => .option
+  | .except _ => .except
   | .list _ => .list
   | .hashmap _ => .hashmap
   | .tuple _ => .tuple
@@ -2023,6 +2104,9 @@ public theorem Value.isString_of_shape {v : Value} (h : v.shape = .string) :
 
 public theorem Value.isOption_of_shape {v : Value} (h : v.shape = .option) : v.IsOption := by
   cases v <;> simp_all [Value.shape, Value.IsOption]
+
+public theorem Value.isExcept_of_shape {v : Value} (h : v.shape = .except) : v.IsExcept := by
+  cases v <;> simp_all [Value.shape, Value.IsExcept]
 
 public theorem Value.isList_of_shape {v : Value} (h : v.shape = .list) : v.IsList := by
   cases v <;> simp_all [Value.shape, Value.IsList]
@@ -2076,6 +2160,15 @@ public theorem Value.isOption_of_hasType {td : TypeDecls} {v : Value} {t : Ty}
   cases h with
   | optionNone => exact ⟨_, rfl⟩
   | optionSome _ => exact ⟨_, rfl⟩
+
+/-- Both shapes an except type's values have, and it says nothing about which of the two halves is
+carried for the reason the option version says nothing about what is inside: a success and a failure
+are equally what `Stuck.exceptMatchNotExcept` is refuted by. -/
+public theorem Value.isExcept_of_hasType {td : TypeDecls} {v : Value} {e t : Ty}
+    (h : v.HasType td (.except e t)) : v.IsExcept := by
+  cases h with
+  | exceptOk _ => exact ⟨_, rfl⟩
+  | exceptError _ => exact ⟨_, rfl⟩
 
 /-- A value a field can be read off is a struct value: `Value.field?` answers for nothing else.
 What `Stuck.structGetNotStruct` is refuted by, stated over `field?` so that a caller holding a field

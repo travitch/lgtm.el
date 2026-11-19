@@ -3211,6 +3211,184 @@ example (v : Value) :
             FuncDecl).check
         {} []).isOk
 
+/-! ## Excepts
+
+The except forms are the two values and the match between them.  There is no table here, for the
+reason there is none in the option section: an `except` carries the two types it relates rather than
+naming a declaration, so nothing about one is resolved anywhere.
+
+Unlike the option forms these are written in the DSL rather than spliced: `ok(e) : E` and
+`error(e) : A` are surface syntax, and so is the `match` between them. -/
+
+-- Either form evaluates what it holds and keeps the value; the annotation goes nowhere, so the two
+-- successes below produce the same value and only the type checker tells them apart.
+example : Eval {} ∅ [lgtm| ok(1) : string] (.except (.ok (.int 1))) :=
+  .EOk _ _ (.EIntLit 1)
+
+example : Eval {} ∅ [lgtm| ok(1) : bool] (.except (.ok (.int 1))) :=
+  .EOk _ _ (.EIntLit 1)
+
+example : Eval {} ∅ [lgtm| error("no") : int] (.except (.error (.string "no"))) :=
+  .EError _ _ (.EStringLit "no")
+
+example : Eval {} ∅ [lgtm| ok(1 + 2) : string] (.except (.ok (.int 3))) :=
+  .EOk _ _ (.EPlus (n₁ := 1) (n₂ := 2) _ _ (.EIntLit 1) (.EIntLit 2))
+
+-- And a success is not a failure, whatever either holds: that is the shape difference
+-- `Value.beq?` settles without looking inside.
+example : ¬Eval {} ∅ [lgtm| ok(1) : string] (.except (.error (.int 1))) := by
+  intro h; cases h
+
+/-- A success holding an `int` has every except type whose payload half is `int`: the error half is
+unconstrained, because there is no error in it for a type to be required of. -/
+private theorem hasType_okInt {a : Int} :
+    Value.HasType td (.except (.ok (.int a))) (.except .string .int) :=
+  .exceptOk (.int a)
+
+/-- And a failure the other way round. -/
+private theorem hasType_errString {s : String} :
+    Value.HasType td (.except (.error (.string s))) (.except .string .int) :=
+  .exceptError (.string s)
+
+/-- One more than what `r` holds, and the length of the message when it failed. -/
+@[lgtm] private def succOrLen as"succ-or-len"(r : except string int) : int :=
+  match r with | error(e) => 0 - 1 | ok(x) => x + 1
+
+#guard (succOrLen.check {} []).isOk
+
+-- Which case runs is decided by the value the scrutinee produced, and it is `EExceptMatchOk` or
+-- `EExceptMatchError` that says so — the two rules a match on an option has two of for the same
+-- reason.
+example : FuncDecl.Apply succOrLen {} [] [.except (.ok (.int 4))] (.int 5) :=
+  .EApply _ (.cons "r" hasType_okInt .nil)
+    (.EExceptMatchOk _ _ _ _ _ (.EVarRef "r" rfl)
+      (.EPlus (n₁ := 4) (n₂ := 1) _ _ (.EVarRef "x" rfl) (.EIntLit 1)))
+
+example : FuncDecl.Apply succOrLen {} [] [.except (.error (.string "no"))] (.int (-1)) :=
+  .EApply _ (.cons "r" hasType_errString .nil)
+    (.EExceptMatchError _ _ _ _ _ (.EVarRef "r" rfl)
+      (.EMinus (n₁ := 0) (n₂ := 1) _ _ (.EIntLit 0) (.EIntLit 1)))
+
+-- Soundness covers the new forms: the declared result type comes back from `succOrLen` checking,
+-- with nothing said about which case ran — which is the reason both cases were held to one type.
+example (v : Value) (rv : Except Value Value)
+    (h : FuncDecl.Apply succOrLen {} [] [.except rv] v) : v.HasType {} .int :=
+  h.hasType Globals.wellTyped_nil (by simp [succOrLen, List.lookup])
+
+-- The case that did not run is never evaluated, the way the branch of an `ite` that did not is: the
+-- error case below has no value at all, and the match still has one.
+example :
+    Eval {} ∅ [lgtm| match ok(1) : string with | error(e) => missing() | ok(x) => x] (.int 1) :=
+  .EExceptMatchOk _ _ _ _ _ (.EOk _ _ (.EIntLit 1)) (.EVarRef "x" rfl)
+
+-- Each name is bound in front of the environment, so it shadows what was there, and only inside its
+-- own case.
+example :
+    Eval {} ⟨[("x", .int 9)], []⟩ [lgtm| match ok(1) : string with | error(x) => x | ok(x) => x]
+      (.int 1) :=
+  .EExceptMatchOk _ _ _ _ _ (.EOk _ _ (.EIntLit 1)) (.EVarRef "x" rfl)
+
+example :
+    Eval {} ⟨[("x", .int 9)], []⟩
+      [lgtm| match error(7) : int with | error(e) => x | ok(x) => x] (.int 9) :=
+  .EExceptMatchError _ _ _ _ _ (.EError _ _ (.EIntLit 7)) (.EVarRef "x" rfl)
+
+-- A match on a value that is not an except is stuck: neither rule applies, which is exactly what
+-- the scrutinee having to be an except rules out.  As for an option, there is nothing else that can
+-- get one stuck — the two cases are the two an except value comes in, so none has to be found.
+example (v : Value) : ¬Eval {} ∅ [lgtm| match 1 with | error(e) => 0 | ok(x) => x] v := by
+  intro h
+  cases h with
+  | EExceptMatchError _ _ _ _ _ hsc _ => cases hsc
+  | EExceptMatchOk _ _ _ _ _ hsc _ => cases hsc
+
+-- And an *option* is as much not an except as an `int` is, however alike the two matches look.
+example (v : Value) :
+    ¬Eval {} ∅ [lgtm| match some(1) with | error(e) => 0 | ok(x) => x] v := by
+  intro h
+  cases h with
+  | EExceptMatchError _ _ _ _ _ hsc _ => cases hsc
+  | EExceptMatchOk _ _ _ _ _ hsc _ => cases hsc
+
+/-- `n`, held in a successful except: a value put into one rather than taken out. -/
+@[lgtm] private def okIt as"ok-it"(n : int) : except string int := ok(n) : string
+
+#guard (okIt.check {} []).isOk
+
+example : FuncDecl.Apply okIt {} [] [.int 7] (.except (.ok (.int 7))) :=
+  .EApply _ (.cons "n" (.int 7) .nil) (.EOk _ _ (.EVarRef "n" rfl))
+
+example (v : Value) (a : Int) (h : FuncDecl.Apply okIt {} [] [.int a] v) :
+    v.HasType {} (.except .string .int) :=
+  h.hasType Globals.wellTyped_nil (by simp [okIt, List.lookup])
+
+/-- `m`, held as the error: the other half, where the annotation is the payload type. -/
+@[lgtm] private def failIt as"fail-it"(m : string) : except string int := error(m) : int
+
+#guard (failIt.check {} []).isOk
+
+example : FuncDecl.Apply failIt {} [] [.string "no"] (.except (.error (.string "no"))) :=
+  .EApply _ (.cons "m" (.string "no") .nil) (.EError _ _ (.EVarRef "m" rfl))
+
+-- The value says only which half it carries, so it is the declaration that says the other: the
+-- error half comes back as `string` because `failIt` says `except string int`.
+example (v : Value) (s : String) (h : FuncDecl.Apply failIt {} [] [.string s] v) :
+    v.HasType {} (.except .string .int) :=
+  h.hasType Globals.wellTyped_nil (by simp [failIt, List.lookup])
+
+/-! ### Comparing excepts
+
+`Value.beq?` compares two excepts that carry the same half by comparing what they carry there, and
+decides a success against a failure without looking at either value — the same way it decides an
+empty option against a full one.
+
+There is no *ordering*, which is the one place an except parts company with an option of the same
+types: `Ty.orderable` turns it down, so `Value.cmp?` has no answer for one. -/
+
+example : Eval {} ∅ [lgtm| (ok(1) : string) == (ok(1) : string)] (.bool true) :=
+  .EEquals _ _ (.EOk _ _ (.EIntLit 1)) (.EOk _ _ (.EIntLit 1)) rfl
+
+example : Eval {} ∅ [lgtm| (ok(1) : string) == (ok(2) : string)] (.bool false) :=
+  .EEquals _ _ (.EOk _ _ (.EIntLit 1)) (.EOk _ _ (.EIntLit 2)) rfl
+
+example : Eval {} ∅ [lgtm| (error("a") : int) == (error("a") : int)] (.bool true) :=
+  .EEquals _ _ (.EError _ _ (.EStringLit "a")) (.EError _ _ (.EStringLit "a")) rfl
+
+-- A success against a failure is `false` with neither value compared, which is what makes this the
+-- answer even where the two carry values of different types.
+example : Eval {} ∅ [lgtm| (ok(1) : string) == (error("a") : int)] (.bool false) :=
+  .EEquals _ _ (.EOk _ _ (.EIntLit 1)) (.EError _ _ (.EStringLit "a")) rfl
+
+-- An except carrying a function on either half is one there is no comparing, so a comparison of two
+-- of them is stuck — and `Ty.comparable` is what keeps a well-typed program from reaching it.
+example (v : Value) :
+    ¬Eval {} ∅
+        [lgtm| (ok(fun(x : int) => x) : string) == (ok(fun(x : int) => x) : string)] v := by
+  intro h
+  cases h with
+  | EEquals _ _ h₁ h₂ hb =>
+    cases h₁ with
+    | EOk _ _ hl =>
+      cases h₂ with
+      | EOk _ _ hr =>
+        cases hl
+        cases hr
+        simp [Env.closure, Value.beq?] at hb
+
+-- And an ordering of two excepts is stuck whatever they carry, where the same comparison of two
+-- options is not: `Value.cmp?` has no answer for an except at all.
+example (v : Value) : ¬Eval {} ∅ [lgtm| (ok(1) : string) <= (ok(1) : string)] v := by
+  intro h
+  cases h with
+  | ELe _ _ h₁ h₂ hb =>
+    cases h₁ with
+    | EOk _ _ hl =>
+      cases h₂ with
+      | EOk _ _ hr =>
+        cases hl
+        cases hr
+        simp [Value.le?, Value.cmp?] at hb
+
 /-! ## Hashmaps
 
 A hashmap value is the bindings it carries, as an association list: one pair per key, each key

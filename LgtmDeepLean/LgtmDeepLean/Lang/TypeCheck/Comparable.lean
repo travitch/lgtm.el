@@ -55,6 +55,7 @@ canonical form for hashmap values would lift. -/
   | .fn _ _ => false
   | .hashmap _ _ => false
   | .option t => Ty.comparableWith sOk iOk t
+  | .except e t => Ty.comparableWith sOk iOk e && Ty.comparableWith sOk iOk t
   | .list t => Ty.comparableWith sOk iOk t
   | .tuple ts => Ty.comparableWithList sOk iOk ts
   | .struct name => sOk name
@@ -139,6 +140,15 @@ a comparison has anything to look at is the value it holds. -/
 @[simp, grind =] public theorem Ty.comparable_option {td : TypeDecls} {t : Ty} :
     Ty.comparable td (.option t) = Ty.comparable td t := rfl
 
+/-- And an except exactly when both halves are: a comparison of two of them that agree about which
+half they carry is a comparison of the values they carry there, so either half is one it may have to
+reach the bottom of.
+
+Both rather than one, which is where this parts company with `option`: an error carries a value of
+its own, so there is no half a comparison is sure not to be handed. -/
+@[simp, grind =] public theorem Ty.comparable_except {td : TypeDecls} {e t : Ty} :
+    Ty.comparable td (.except e t) = (Ty.comparable td e && Ty.comparable td t) := rfl
+
 /-- A tuple is comparable exactly when every type it holds is, which is the list case read
 positionally: the two tuples a comparison is given are the same length — that is their type — so
 every position is one it has to be able to reach the bottom of.
@@ -174,13 +184,14 @@ that are?
 with, but a `bool` is what a comparison *produces* here rather than something it is given, so there
 is nothing an ordering on it would be for.  A hashmap is turned down for the reason `Ty.comparable`
 turns it down — the order its bindings are carried in is not canonical, so no comparison of two maps
-answers about the maps — and a function type for the reason that one turns it down. -/
+answers about the maps — and a function type for the reason that one turns it down.  An except is
+turned down for a reason of its own: see `Ty.orderable_except`. -/
 @[expose] public def Ty.orderable : Ty → Bool
   | .int | .string => true
   | .option t => Ty.orderable t
   | .list t => Ty.orderable t
   | .tuple ts => Ty.orderableList ts
-  | .bool | .fn _ _ | .hashmap _ _ | .struct _ | .ind _ => false
+  | .bool | .fn _ _ | .hashmap _ _ | .except _ _ | .struct _ | .ind _ => false
 
 /-- The same question of every type in a list: the types a `tuple` holds, each of which a
 lexicographic comparison may have to reach before it has an answer.
@@ -216,6 +227,14 @@ through.  All but the tuple case are the definition's own equations; they are st
 
 @[simp, grind =] public theorem Ty.orderable_hashmap {kt vt : Ty} :
     Ty.orderable (.hashmap kt vt) = false := rfl
+
+/-- An except is ordered by nothing, whatever the two types it relates are, where an option of them
+would be: an empty option comes before one that holds a value because there is one thing an option
+can hold and either there is one or there is not, while an error and a success carry values of two
+unrelated types — so neither "an error comes first" nor the reverse is an ordering the type
+suggests, and Lean's own `Except` is given no `Ord` either. -/
+@[simp, grind =] public theorem Ty.orderable_except {e t : Ty} :
+    Ty.orderable (.except e t) = false := rfl
 
 /-- A declared type is turned down whatever it declares, which is where this parts company with
 `Ty.comparable`: there is no walk over the declarations, because no ordering is being claimed for
